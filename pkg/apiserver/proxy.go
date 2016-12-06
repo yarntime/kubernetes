@@ -17,6 +17,7 @@ limitations under the License.
 package apiserver
 
 import (
+	"errors"
 	"io"
 	"math/rand"
 	"net/http"
@@ -27,27 +28,27 @@ import (
 	"time"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
+	apierrors "k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/api/rest"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apiserver/metrics"
 	"k8s.io/kubernetes/pkg/httplog"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/util/httpstream"
 	"k8s.io/kubernetes/pkg/util/net"
 	proxyutil "k8s.io/kubernetes/pkg/util/proxy"
 
 	"github.com/golang/glog"
+	"k8s.io/kubernetes/pkg/apiserver/request"
 )
 
 // ProxyHandler provides a http.Handler which will proxy traffic to locations
 // specified by items implementing Redirector.
 type ProxyHandler struct {
-	prefix              string
-	storage             map[string]rest.Storage
-	serializer          runtime.NegotiatedSerializer
-	context             api.RequestContextMapper
-	requestInfoResolver *RequestInfoResolver
+	prefix     string
+	storage    map[string]rest.Storage
+	serializer runtime.NegotiatedSerializer
+	mapper     api.RequestContextMapper
 }
 
 func (r *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -59,8 +60,20 @@ func (r *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	reqStart := time.Now()
 	defer metrics.Monitor(&verb, &apiResource, net.GetHTTPClient(req), w.Header().Get("Content-Type"), httpCode, reqStart)
 
-	requestInfo, err := r.requestInfoResolver.GetRequestInfo(req)
-	if err != nil || !requestInfo.IsResourceRequest {
+	ctx, ok := r.mapper.Get(req)
+	if !ok {
+		internalError(w, req, errors.New("Error getting request context"))
+		httpCode = http.StatusInternalServerError
+		return
+	}
+
+	requestInfo, ok := request.RequestInfoFrom(ctx)
+	if !ok {
+		internalError(w, req, errors.New("Error getting RequestInfo from context"))
+		httpCode = http.StatusInternalServerError
+		return
+	}
+	if !requestInfo.IsResourceRequest {
 		notFound(w, req)
 		httpCode = http.StatusNotFound
 		return
@@ -68,10 +81,6 @@ func (r *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	verb = requestInfo.Verb
 	namespace, resource, parts := requestInfo.Namespace, requestInfo.Resource, requestInfo.Parts
 
-	ctx, ok := r.context.Get(req)
-	if !ok {
-		ctx = api.NewContext()
-	}
 	ctx = api.WithNamespace(ctx, namespace)
 	if len(parts) < 2 {
 		notFound(w, req)
@@ -99,12 +108,12 @@ func (r *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	apiResource = resource
 
-	gv := unversioned.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}
+	gv := schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}
 
 	redirector, ok := storage.(rest.Redirector)
 	if !ok {
 		httplog.LogOf(req, w).Addf("'%v' is not a redirector", resource)
-		httpCode = errorNegotiated(errors.NewMethodNotSupported(api.Resource(resource), "proxy"), r.serializer, gv, w, req)
+		httpCode = errorNegotiated(apierrors.NewMethodNotSupported(api.Resource(resource), "proxy"), r.serializer, gv, w, req)
 		return
 	}
 
@@ -206,7 +215,7 @@ func (r *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // tryUpgrade returns true if the request was handled.
-func (r *ProxyHandler) tryUpgrade(w http.ResponseWriter, req, newReq *http.Request, location *url.URL, transport http.RoundTripper, gv unversioned.GroupVersion) bool {
+func (r *ProxyHandler) tryUpgrade(w http.ResponseWriter, req, newReq *http.Request, location *url.URL, transport http.RoundTripper, gv schema.GroupVersion) bool {
 	if !httpstream.IsUpgradeRequest(req) {
 		return false
 	}

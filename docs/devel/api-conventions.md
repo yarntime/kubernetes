@@ -1,36 +1,3 @@
-<!-- BEGIN MUNGE: UNVERSIONED_WARNING -->
-
-<!-- BEGIN STRIP_FOR_RELEASE -->
-
-<img src="http://kubernetes.io/kubernetes/img/warning.png" alt="WARNING"
-     width="25" height="25">
-<img src="http://kubernetes.io/kubernetes/img/warning.png" alt="WARNING"
-     width="25" height="25">
-<img src="http://kubernetes.io/kubernetes/img/warning.png" alt="WARNING"
-     width="25" height="25">
-<img src="http://kubernetes.io/kubernetes/img/warning.png" alt="WARNING"
-     width="25" height="25">
-<img src="http://kubernetes.io/kubernetes/img/warning.png" alt="WARNING"
-     width="25" height="25">
-
-<h2>PLEASE NOTE: This document applies to the HEAD of the source tree</h2>
-
-If you are using a released version of Kubernetes, you should
-refer to the docs that go with that version.
-
-<!-- TAG RELEASE_LINK, added by the munger automatically -->
-<strong>
-The latest release of this document can be found
-[here](http://releases.k8s.io/release-1.4/docs/devel/api-conventions.md).
-
-Documentation for other releases can be found at
-[releases.k8s.io](http://releases.k8s.io).
-</strong>
---
-
-<!-- END STRIP_FOR_RELEASE -->
-
-<!-- END MUNGE: UNVERSIONED_WARNING -->
 API Conventions
 ===============
 
@@ -63,7 +30,7 @@ resources](../user-guide/working-with-resources.md).*
     - [List Operations](#list-operations)
     - [Map Operations](#map-operations)
   - [Idempotency](#idempotency)
-  - [Optional vs Required](#optional-vs-required)
+  - [Optional vs. Required](#optional-vs-required)
   - [Defaulting](#defaulting)
   - [Late Initialization](#late-initialization)
   - [Concurrency Control and Consistency](#concurrency-control-and-consistency)
@@ -658,7 +625,7 @@ exists - instead, it will either return 201 Created or 504 with Reason
 allotted, and the client should retry (optionally after the time indicated in
 the Retry-After header).
 
-## Optional vs Required
+## Optional vs. Required
 
 Fields must be either optional or required.
 
@@ -1182,7 +1149,7 @@ than capitalization of the initial letter, the two should almost always match.
 No underscores nor dashes in either.
 * Field and resource names should be declarative, not imperative (DoSomething,
 SomethingDoer, DoneBy, DoneAt).
-* `Minion` has been deprecated in favor of `Node`. Use `Node` where referring to
+* Use `Node` where referring to
 the node resource in the context of the cluster. Use `Host` where referring to
 properties of the individual physical/virtual system, such as `hostname`,
 `hostPath`, `hostNetwork`, etc.

@@ -20,6 +20,7 @@ package options
 import (
 	"time"
 
+	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/validation"
 	genericoptions "k8s.io/kubernetes/pkg/genericapiserver/options"
 	kubeletclient "k8s.io/kubernetes/pkg/kubelet/client"
@@ -28,61 +29,67 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// APIServer runs a kubernetes api server.
-type APIServer struct {
-	*genericoptions.ServerRunOptions
-	AllowPrivileged             bool
-	EventTTL                    time.Duration
-	KubeletConfig               kubeletclient.KubeletClientConfig
-	MaxConnectionBytesPerSec    int64
-	SSHKeyfile                  string
-	SSHUser                     string
-	ServiceAccountKeyFile       string
-	ServiceAccountLookup        bool
-	WebhookTokenAuthnConfigFile string
-	WebhookTokenAuthnCacheTTL   time.Duration
+// ServerRunOptions runs a kubernetes api server.
+type ServerRunOptions struct {
+	GenericServerRunOptions *genericoptions.ServerRunOptions
+	Etcd                    *genericoptions.EtcdOptions
+	SecureServing           *genericoptions.SecureServingOptions
+	InsecureServing         *genericoptions.ServingOptions
+	Authentication          *genericoptions.BuiltInAuthenticationOptions
+	Authorization           *genericoptions.BuiltInAuthorizationOptions
+
+	AllowPrivileged          bool
+	EventTTL                 time.Duration
+	KubeletConfig            kubeletclient.KubeletClientConfig
+	MaxConnectionBytesPerSec int64
+	SSHKeyfile               string
+	SSHUser                  string
 }
 
-// NewAPIServer creates a new APIServer object with default parameters
-func NewAPIServer() *APIServer {
-	s := APIServer{
-		ServerRunOptions: genericoptions.NewServerRunOptions().WithEtcdOptions(),
-		EventTTL:         1 * time.Hour,
+// NewServerRunOptions creates a new ServerRunOptions object with default parameters
+func NewServerRunOptions() *ServerRunOptions {
+	s := ServerRunOptions{
+		GenericServerRunOptions: genericoptions.NewServerRunOptions(),
+		Etcd:            genericoptions.NewEtcdOptions(),
+		SecureServing:   genericoptions.NewSecureServingOptions(),
+		InsecureServing: genericoptions.NewInsecureServingOptions(),
+		Authentication:  genericoptions.NewBuiltInAuthenticationOptions().WithAll(),
+		Authorization:   genericoptions.NewBuiltInAuthorizationOptions(),
+
+		EventTTL: 1 * time.Hour,
 		KubeletConfig: kubeletclient.KubeletClientConfig{
-			Port:        ports.KubeletPort,
+			Port: ports.KubeletPort,
+			PreferredAddressTypes: []string{
+				string(api.NodeHostName),
+				string(api.NodeInternalIP),
+				string(api.NodeExternalIP),
+				string(api.NodeLegacyHostIP),
+			},
 			EnableHttps: true,
 			HTTPTimeout: time.Duration(5) * time.Second,
 		},
-		WebhookTokenAuthnCacheTTL: 2 * time.Minute,
 	}
 	return &s
 }
 
 // AddFlags adds flags for a specific APIServer to the specified FlagSet
-func (s *APIServer) AddFlags(fs *pflag.FlagSet) {
+func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	// Add the generic flags.
-	s.ServerRunOptions.AddUniversalFlags(fs)
-	//Add etcd specific flags.
-	s.ServerRunOptions.AddEtcdStorageFlags(fs)
+	s.GenericServerRunOptions.AddUniversalFlags(fs)
+
+	s.Etcd.AddFlags(fs)
+	s.SecureServing.AddFlags(fs)
+	s.SecureServing.AddDeprecatedFlags(fs)
+	s.InsecureServing.AddFlags(fs)
+	s.InsecureServing.AddDeprecatedFlags(fs)
+	s.Authentication.AddFlags(fs)
+	s.Authorization.AddFlags(fs)
+
 	// Note: the weird ""+ in below lines seems to be the only way to get gofmt to
 	// arrange these text blocks sensibly. Grrr.
 
 	fs.DurationVar(&s.EventTTL, "event-ttl", s.EventTTL,
 		"Amount of time to retain events. Default is 1h.")
-
-	fs.StringVar(&s.ServiceAccountKeyFile, "service-account-key-file", s.ServiceAccountKeyFile, ""+
-		"File containing PEM-encoded x509 RSA private or public key, used to verify "+
-		"ServiceAccount tokens. If unspecified, --tls-private-key-file is used.")
-
-	fs.BoolVar(&s.ServiceAccountLookup, "service-account-lookup", s.ServiceAccountLookup,
-		"If true, validate ServiceAccount tokens exist in etcd as part of authentication.")
-
-	fs.StringVar(&s.WebhookTokenAuthnConfigFile, "authentication-token-webhook-config-file", s.WebhookTokenAuthnConfigFile, ""+
-		"File with webhook configuration for token authentication in kubeconfig format. "+
-		"The API server will query the remote service to determine authentication for bearer tokens.")
-
-	fs.DurationVar(&s.WebhookTokenAuthnCacheTTL, "authentication-token-webhook-cache-ttl", s.WebhookTokenAuthnCacheTTL,
-		"The duration to cache responses from the webhook token authenticator. Default is 2m.")
 
 	fs.BoolVar(&s.AllowPrivileged, "allow-privileged", s.AllowPrivileged,
 		"If true, allow privileged containers.")
@@ -100,6 +107,9 @@ func (s *APIServer) AddFlags(fs *pflag.FlagSet) {
 	// Kubelet related flags:
 	fs.BoolVar(&s.KubeletConfig.EnableHttps, "kubelet-https", s.KubeletConfig.EnableHttps,
 		"Use https for kubelet connections.")
+
+	fs.StringSliceVar(&s.KubeletConfig.PreferredAddressTypes, "kubelet-preferred-address-types", s.KubeletConfig.PreferredAddressTypes,
+		"List of the preferred NodeAddressTypes to use for kubelet connections.")
 
 	fs.UintVar(&s.KubeletConfig.Port, "kubelet-port", s.KubeletConfig.Port,
 		"DEPRECATED: kubelet port.")

@@ -19,8 +19,8 @@ package deployment
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/apis/extensions"
-	unversionedclient "k8s.io/kubernetes/pkg/client/unversioned"
+	extensions "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
+	"k8s.io/kubernetes/pkg/client/retry"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/util/wait"
 )
@@ -42,7 +42,7 @@ func (dc *DeploymentController) rolloutRecreate(deployment *extensions.Deploymen
 	}
 	if scaledDown {
 		// Update DeploymentStatus
-		return dc.updateDeploymentStatus(allRSs, newRS, deployment)
+		return dc.syncRolloutStatus(allRSs, newRS, deployment)
 	}
 
 	// Wait for all old replica set to scale down to zero.
@@ -67,13 +67,13 @@ func (dc *DeploymentController) rolloutRecreate(deployment *extensions.Deploymen
 	}
 	if scaledUp {
 		// Update DeploymentStatus
-		return dc.updateDeploymentStatus(allRSs, newRS, deployment)
+		return dc.syncRolloutStatus(allRSs, newRS, deployment)
 	}
 
 	dc.cleanupDeployment(oldRSs, deployment)
 
 	// Sync deployment status
-	return dc.syncDeploymentStatus(allRSs, newRS, deployment)
+	return dc.syncRolloutStatus(allRSs, newRS, deployment)
 }
 
 // scaleDownOldReplicaSetsForRecreate scales down old replica sets when deployment strategy is "Recreate"
@@ -82,7 +82,7 @@ func (dc *DeploymentController) scaleDownOldReplicaSetsForRecreate(oldRSs []*ext
 	for i := range oldRSs {
 		rs := oldRSs[i]
 		// Scaling not required.
-		if rs.Spec.Replicas == 0 {
+		if *(rs.Spec.Replicas) == 0 {
 			continue
 		}
 		scaledRS, updatedRS, err := dc.scaleReplicaSetAndRecordEvent(rs, 0, deployment)
@@ -104,22 +104,22 @@ func (dc *DeploymentController) waitForInactiveReplicaSets(oldRSs []*extensions.
 		rs := oldRSs[i]
 		desiredGeneration := rs.Generation
 		observedGeneration := rs.Status.ObservedGeneration
-		specReplicas := rs.Spec.Replicas
+		specReplicas := *(rs.Spec.Replicas)
 		statusReplicas := rs.Status.Replicas
 
-		if err := wait.ExponentialBackoff(unversionedclient.DefaultRetry, func() (bool, error) {
-			replicaSet, err := dc.rsStore.ReplicaSets(rs.Namespace).Get(rs.Name)
+		if err := wait.ExponentialBackoff(retry.DefaultRetry, func() (bool, error) {
+			replicaSet, err := dc.rsLister.ReplicaSets(rs.Namespace).Get(rs.Name)
 			if err != nil {
 				return false, err
 			}
 
-			specReplicas = replicaSet.Spec.Replicas
+			specReplicas = *(replicaSet.Spec.Replicas)
 			statusReplicas = replicaSet.Status.Replicas
 			observedGeneration = replicaSet.Status.ObservedGeneration
 
 			// TODO: We also need to wait for terminating replicas to actually terminate.
 			// See https://github.com/kubernetes/kubernetes/issues/32567
-			return observedGeneration >= desiredGeneration && replicaSet.Spec.Replicas == 0 && replicaSet.Status.Replicas == 0, nil
+			return observedGeneration >= desiredGeneration && *(replicaSet.Spec.Replicas) == 0 && replicaSet.Status.Replicas == 0, nil
 		}); err != nil {
 			if err == wait.ErrWaitTimeout {
 				err = fmt.Errorf("replica set %q never became inactive: synced=%t, spec.replicas=%d, status.replicas=%d",
@@ -133,6 +133,6 @@ func (dc *DeploymentController) waitForInactiveReplicaSets(oldRSs []*extensions.
 
 // scaleUpNewReplicaSetForRecreate scales up new replica set when deployment strategy is "Recreate"
 func (dc *DeploymentController) scaleUpNewReplicaSetForRecreate(newRS *extensions.ReplicaSet, deployment *extensions.Deployment) (bool, error) {
-	scaled, _, err := dc.scaleReplicaSetAndRecordEvent(newRS, deployment.Spec.Replicas, deployment)
+	scaled, _, err := dc.scaleReplicaSetAndRecordEvent(newRS, *(deployment.Spec.Replicas), deployment)
 	return scaled, err
 }

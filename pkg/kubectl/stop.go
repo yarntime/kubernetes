@@ -24,18 +24,18 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/extensions"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	appsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/apps/unversioned"
-	batchclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/batch/unversioned"
-	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/unversioned"
-	extensionsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/extensions/unversioned"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	appsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/apps/internalversion"
+	batchclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/batch/internalversion"
+	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	extensionsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/extensions/internalversion"
 	deploymentutil "k8s.io/kubernetes/pkg/controller/deployment/util"
 	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/util"
 	utilerrors "k8s.io/kubernetes/pkg/util/errors"
 	"k8s.io/kubernetes/pkg/util/uuid"
@@ -56,7 +56,7 @@ type Reaper interface {
 }
 
 type NoSuchReaperError struct {
-	kind unversioned.GroupKind
+	kind schema.GroupKind
 }
 
 func (n *NoSuchReaperError) Error() string {
@@ -68,7 +68,7 @@ func IsNoSuchReaperError(err error) bool {
 	return ok
 }
 
-func ReaperFor(kind unversioned.GroupKind, c internalclientset.Interface) (Reaper, error) {
+func ReaperFor(kind schema.GroupKind, c internalclientset.Interface) (Reaper, error) {
 	switch kind {
 	case api.Kind("ReplicationController"):
 		return &ReplicationControllerReaper{c.Core(), Interval, Timeout}, nil
@@ -88,8 +88,8 @@ func ReaperFor(kind unversioned.GroupKind, c internalclientset.Interface) (Reape
 	case extensions.Kind("Job"), batch.Kind("Job"):
 		return &JobReaper{c.Batch(), c.Core(), Interval, Timeout}, nil
 
-	case apps.Kind("PetSet"):
-		return &PetSetReaper{c.Apps(), c.Core(), Interval, Timeout}, nil
+	case apps.Kind("StatefulSet"):
+		return &StatefulSetReaper{c.Apps(), c.Core(), Interval, Timeout}, nil
 
 	case extensions.Kind("Deployment"):
 		return &DeploymentReaper{c.Extensions(), c.Extensions(), Interval, Timeout}, nil
@@ -130,8 +130,8 @@ type PodReaper struct {
 type ServiceReaper struct {
 	client coreclient.ServicesGetter
 }
-type PetSetReaper struct {
-	client                appsclient.PetSetsGetter
+type StatefulSetReaper struct {
+	client                appsclient.StatefulSetsGetter
 	podClient             coreclient.PodsGetter
 	pollInterval, timeout time.Duration
 }
@@ -222,7 +222,7 @@ func (reaper *ReplicationControllerReaper) Stop(namespace, name string, timeout 
 
 // TODO(madhusudancs): Implement it when controllerRef is implemented - https://github.com/kubernetes/kubernetes/issues/2210
 // getOverlappingReplicaSets finds ReplicaSets that this ReplicaSet overlaps, as well as ReplicaSets overlapping this ReplicaSet.
-func getOverlappingReplicaSets(c client.ReplicaSetInterface, rs *extensions.ReplicaSet) ([]extensions.ReplicaSet, []extensions.ReplicaSet, error) {
+func getOverlappingReplicaSets(c extensionsclient.ReplicaSetInterface, rs *extensions.ReplicaSet) ([]extensions.ReplicaSet, []extensions.ReplicaSet, error) {
 	var overlappingRSs, exactMatchRSs []extensions.ReplicaSet
 	return overlappingRSs, exactMatchRSs, nil
 }
@@ -326,10 +326,10 @@ func (reaper *DaemonSetReaper) Stop(namespace, name string, timeout time.Duratio
 	return reaper.client.DaemonSets(namespace).Delete(name, nil)
 }
 
-func (reaper *PetSetReaper) Stop(namespace, name string, timeout time.Duration, gracePeriod *api.DeleteOptions) error {
-	petsets := reaper.client.PetSets(namespace)
-	scaler := &PetSetScaler{reaper.client}
-	ps, err := petsets.Get(name)
+func (reaper *StatefulSetReaper) Stop(namespace, name string, timeout time.Duration, gracePeriod *api.DeleteOptions) error {
+	statefulsets := reaper.client.StatefulSets(namespace)
+	scaler := &StatefulSetScaler{reaper.client}
+	ps, err := statefulsets.Get(name)
 	if err != nil {
 		return err
 	}
@@ -338,15 +338,15 @@ func (reaper *PetSetReaper) Stop(namespace, name string, timeout time.Duration, 
 		timeout = Timeout + time.Duration(10*numPets)*time.Second
 	}
 	retry := NewRetryParams(reaper.pollInterval, reaper.timeout)
-	waitForPetSet := NewRetryParams(reaper.pollInterval, reaper.timeout)
-	if err = scaler.Scale(namespace, name, 0, nil, retry, waitForPetSet); err != nil {
+	waitForStatefulSet := NewRetryParams(reaper.pollInterval, reaper.timeout)
+	if err = scaler.Scale(namespace, name, 0, nil, retry, waitForStatefulSet); err != nil {
 		return err
 	}
 
-	// TODO: This shouldn't be needed, see corresponding TODO in PetSetHasDesiredPets.
-	// PetSet should track generation number.
+	// TODO: This shouldn't be needed, see corresponding TODO in StatefulSetHasDesiredPets.
+	// StatefulSet should track generation number.
 	pods := reaper.podClient.Pods(namespace)
-	selector, _ := unversioned.LabelSelectorAsSelector(ps.Spec.Selector)
+	selector, _ := metav1.LabelSelectorAsSelector(ps.Spec.Selector)
 	options := api.ListOptions{LabelSelector: selector}
 	podList, err := pods.List(options)
 	if err != nil {
@@ -366,8 +366,8 @@ func (reaper *PetSetReaper) Stop(namespace, name string, timeout time.Duration, 
 	}
 
 	// TODO: Cleanup volumes? We don't want to accidentally delete volumes from
-	// stop, so just leave this up to the petset.
-	return petsets.Delete(name, nil)
+	// stop, so just leave this up to the statefulset.
+	return statefulsets.Delete(name, nil)
 }
 
 func (reaper *JobReaper) Stop(namespace, name string, timeout time.Duration, gracePeriod *api.DeleteOptions) error {
@@ -391,7 +391,7 @@ func (reaper *JobReaper) Stop(namespace, name string, timeout time.Duration, gra
 		return err
 	}
 	// at this point only dead pods are left, that should be removed
-	selector, _ := unversioned.LabelSelectorAsSelector(job.Spec.Selector)
+	selector, _ := metav1.LabelSelectorAsSelector(job.Spec.Selector)
 	options := api.ListOptions{LabelSelector: selector}
 	podList, err := pods.List(options)
 	if err != nil {
@@ -430,14 +430,19 @@ func (reaper *DeploymentReaper) Stop(namespace, name string, timeout time.Durati
 	}
 
 	// Use observedGeneration to determine if the deployment controller noticed the pause.
-	if err := deploymentutil.WaitForObservedDeployment(func() (*extensions.Deployment, error) {
+	if err := deploymentutil.WaitForObservedDeploymentInternal(func() (*extensions.Deployment, error) {
 		return deployments.Get(name)
 	}, deployment.Generation, 1*time.Second, 1*time.Minute); err != nil {
 		return err
 	}
 
+	// Do not cascade deletion for overlapping deployments.
+	if len(deployment.Annotations[deploymentutil.OverlapAnnotation]) > 0 {
+		return deployments.Delete(name, nil)
+	}
+
 	// Stop all replica sets.
-	selector, err := unversioned.LabelSelectorAsSelector(deployment.Spec.Selector)
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return err
 	}

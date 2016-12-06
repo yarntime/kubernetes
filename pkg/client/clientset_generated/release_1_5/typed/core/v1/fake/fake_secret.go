@@ -18,20 +18,20 @@ package fake
 
 import (
 	api "k8s.io/kubernetes/pkg/api"
-	unversioned "k8s.io/kubernetes/pkg/api/unversioned"
 	v1 "k8s.io/kubernetes/pkg/api/v1"
 	core "k8s.io/kubernetes/pkg/client/testing/core"
 	labels "k8s.io/kubernetes/pkg/labels"
+	schema "k8s.io/kubernetes/pkg/runtime/schema"
 	watch "k8s.io/kubernetes/pkg/watch"
 )
 
 // FakeSecrets implements SecretInterface
 type FakeSecrets struct {
-	Fake *FakeCore
+	Fake *FakeCoreV1
 	ns   string
 }
 
-var secretsResource = unversioned.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}
+var secretsResource = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}
 
 func (c *FakeSecrets) Create(secret *v1.Secret) (result *v1.Secret, err error) {
 	obj, err := c.Fake.
@@ -53,14 +53,14 @@ func (c *FakeSecrets) Update(secret *v1.Secret) (result *v1.Secret, err error) {
 	return obj.(*v1.Secret), err
 }
 
-func (c *FakeSecrets) Delete(name string, options *api.DeleteOptions) error {
+func (c *FakeSecrets) Delete(name string, options *v1.DeleteOptions) error {
 	_, err := c.Fake.
 		Invokes(core.NewDeleteAction(secretsResource, c.ns, name), &v1.Secret{})
 
 	return err
 }
 
-func (c *FakeSecrets) DeleteCollection(options *api.DeleteOptions, listOptions api.ListOptions) error {
+func (c *FakeSecrets) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
 	action := core.NewDeleteCollectionAction(secretsResource, c.ns, listOptions)
 
 	_, err := c.Fake.Invokes(action, &v1.SecretList{})
@@ -77,7 +77,7 @@ func (c *FakeSecrets) Get(name string) (result *v1.Secret, err error) {
 	return obj.(*v1.Secret), err
 }
 
-func (c *FakeSecrets) List(opts api.ListOptions) (result *v1.SecretList, err error) {
+func (c *FakeSecrets) List(opts v1.ListOptions) (result *v1.SecretList, err error) {
 	obj, err := c.Fake.
 		Invokes(core.NewListAction(secretsResource, c.ns, opts), &v1.SecretList{})
 
@@ -85,7 +85,7 @@ func (c *FakeSecrets) List(opts api.ListOptions) (result *v1.SecretList, err err
 		return nil, err
 	}
 
-	label := opts.LabelSelector
+	label, _, _ := core.ExtractFromListOptions(opts)
 	if label == nil {
 		label = labels.Everything()
 	}
@@ -99,7 +99,7 @@ func (c *FakeSecrets) List(opts api.ListOptions) (result *v1.SecretList, err err
 }
 
 // Watch returns a watch.Interface that watches the requested secrets.
-func (c *FakeSecrets) Watch(opts api.ListOptions) (watch.Interface, error) {
+func (c *FakeSecrets) Watch(opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
 		InvokesWatch(core.NewWatchAction(secretsResource, c.ns, opts))
 

@@ -31,13 +31,14 @@ import (
 	fed_v1b1 "k8s.io/kubernetes/federation/apis/federation/v1beta1"
 	"k8s.io/kubernetes/federation/cmd/federation-apiserver/app"
 	"k8s.io/kubernetes/federation/cmd/federation-apiserver/app/options"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
 	ext_v1b1 "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 )
 
 func TestLongRunningRequestRegexp(t *testing.T) {
-	regexp := regexp.MustCompile(options.NewServerRunOptions().LongRunningRequestRE)
+	regexp := regexp.MustCompile(options.NewServerRunOptions().GenericServerRunOptions.LongRunningRequestRE)
 	dontMatch := []string{
 		"/api/v1/watch-namespace/",
 		"/api/v1/namespace-proxy/",
@@ -77,19 +78,21 @@ func TestLongRunningRequestRegexp(t *testing.T) {
 	}
 }
 
-var insecurePort = 8082
+var securePort = 6443 + 2
+var insecurePort = 8080 + 2
 var serverIP = fmt.Sprintf("http://localhost:%v", insecurePort)
-var groupVersions = []unversioned.GroupVersion{
+var groupVersions = []schema.GroupVersion{
 	fed_v1b1.SchemeGroupVersion,
 	ext_v1b1.SchemeGroupVersion,
 }
 
 func TestRun(t *testing.T) {
 	s := options.NewServerRunOptions()
-	s.InsecurePort = insecurePort
+	s.SecureServing.ServingOptions.BindPort = securePort
+	s.InsecureServing.BindPort = insecurePort
 	_, ipNet, _ := net.ParseCIDR("10.10.10.0/24")
-	s.ServiceClusterIPRange = *ipNet
-	s.StorageConfig.ServerList = []string{"http://localhost:2379"}
+	s.GenericServerRunOptions.ServiceClusterIPRange = *ipNet
+	s.Etcd.StorageConfig.ServerList = []string{"http://localhost:2379"}
 	go func() {
 		if err := app.Run(s); err != nil {
 			t.Fatalf("Error in bringing up the server: %v", err)
@@ -147,7 +150,7 @@ func testSupport(t *testing.T) {
 	}
 }
 
-func findGroup(groups []unversioned.APIGroup, groupName string) *unversioned.APIGroup {
+func findGroup(groups []metav1.APIGroup, groupName string) *metav1.APIGroup {
 	for _, group := range groups {
 		if group.Name == groupName {
 			return &group
@@ -157,9 +160,9 @@ func findGroup(groups []unversioned.APIGroup, groupName string) *unversioned.API
 }
 
 func testAPIGroupList(t *testing.T) {
-	groupVersionForDiscoveryMap := make(map[string]unversioned.GroupVersionForDiscovery)
+	groupVersionForDiscoveryMap := make(map[string]metav1.GroupVersionForDiscovery)
 	for _, groupVersion := range groupVersions {
-		groupVersionForDiscoveryMap[groupVersion.Group] = unversioned.GroupVersionForDiscovery{
+		groupVersionForDiscoveryMap[groupVersion.Group] = metav1.GroupVersionForDiscovery{
 			GroupVersion: groupVersion.String(),
 			Version:      groupVersion.Version,
 		}
@@ -170,7 +173,7 @@ func testAPIGroupList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var apiGroupList unversioned.APIGroupList
+	var apiGroupList metav1.APIGroupList
 	err = json.Unmarshal(contents, &apiGroupList)
 	if err != nil {
 		t.Fatalf("Error in unmarshalling response from server %s: %v", serverURL, err)
@@ -194,7 +197,7 @@ func testAPIGroup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
-		var apiGroup unversioned.APIGroup
+		var apiGroup metav1.APIGroup
 		err = json.Unmarshal(contents, &apiGroup)
 		if err != nil {
 			t.Fatalf("Error in unmarshalling response from server %s: %v", serverURL, err)
@@ -221,7 +224,7 @@ func testCoreAPIGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var apiVersions unversioned.APIVersions
+	var apiVersions metav1.APIVersions
 	err = json.Unmarshal(contents, &apiVersions)
 	if err != nil {
 		t.Fatalf("Error in unmarshalling response from server %s: %v", serverURL, err)
@@ -231,7 +234,7 @@ func testCoreAPIGroup(t *testing.T) {
 	assert.NotEmpty(t, apiVersions.ServerAddressByClientCIDRs)
 }
 
-func findResource(resources []unversioned.APIResource, resourceName string) *unversioned.APIResource {
+func findResource(resources []metav1.APIResource, resourceName string) *metav1.APIResource {
 	for _, resource := range resources {
 		if resource.Name == resourceName {
 			return &resource
@@ -252,7 +255,7 @@ func testFederationResourceList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var apiResourceList unversioned.APIResourceList
+	var apiResourceList metav1.APIResourceList
 	err = json.Unmarshal(contents, &apiResourceList)
 	if err != nil {
 		t.Fatalf("Error in unmarshalling response from server %s: %v", serverURL, err)
@@ -276,7 +279,7 @@ func testCoreResourceList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var apiResourceList unversioned.APIResourceList
+	var apiResourceList metav1.APIResourceList
 	err = json.Unmarshal(contents, &apiResourceList)
 	if err != nil {
 		t.Fatalf("Error in unmarshalling response from server %s: %v", serverURL, err)
@@ -284,7 +287,7 @@ func testCoreResourceList(t *testing.T) {
 	assert.Equal(t, "", apiResourceList.APIVersion)
 	assert.Equal(t, v1.SchemeGroupVersion.String(), apiResourceList.GroupVersion)
 	// Assert that there are exactly 7 resources.
-	assert.Equal(t, 7, len(apiResourceList.APIResources))
+	assert.Equal(t, 8, len(apiResourceList.APIResources))
 
 	// Verify services.
 	found := findResource(apiResourceList.APIResources, "services")
@@ -314,6 +317,11 @@ func testCoreResourceList(t *testing.T) {
 	found = findResource(apiResourceList.APIResources, "secrets")
 	assert.NotNil(t, found)
 	assert.True(t, found.Namespaced)
+
+	// Verify config maps.
+	found = findResource(apiResourceList.APIResources, "configmaps")
+	assert.NotNil(t, found)
+	assert.True(t, found.Namespaced)
 }
 
 func testExtensionsResourceList(t *testing.T) {
@@ -322,7 +330,7 @@ func testExtensionsResourceList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var apiResourceList unversioned.APIResourceList
+	var apiResourceList metav1.APIResourceList
 	err = json.Unmarshal(contents, &apiResourceList)
 	if err != nil {
 		t.Fatalf("Error in unmarshalling response from server %s: %v", serverURL, err)
@@ -330,8 +338,8 @@ func testExtensionsResourceList(t *testing.T) {
 	// empty APIVersion for extensions group
 	assert.Equal(t, "", apiResourceList.APIVersion)
 	assert.Equal(t, ext_v1b1.SchemeGroupVersion.String(), apiResourceList.GroupVersion)
-	// Assert that there are exactly 5 resources.
-	assert.Equal(t, 5, len(apiResourceList.APIResources))
+	// Assert that there are exactly 11 resources.
+	assert.Equal(t, 11, len(apiResourceList.APIResources))
 
 	// Verify replicasets.
 	found := findResource(apiResourceList.APIResources, "replicasets")
@@ -351,4 +359,24 @@ func testExtensionsResourceList(t *testing.T) {
 	found = findResource(apiResourceList.APIResources, "ingresses/status")
 	assert.NotNil(t, found)
 	assert.True(t, found.Namespaced)
+
+	// Verify daemonsets.
+	found = findResource(apiResourceList.APIResources, "daemonsets")
+	assert.NotNil(t, found)
+	assert.True(t, found.Namespaced)
+	found = findResource(apiResourceList.APIResources, "daemonsets/status")
+	assert.NotNil(t, found)
+	assert.True(t, found.Namespaced)
+
+	// Verify deployments.
+	found = findResource(apiResourceList.APIResources, "deployments")
+	assert.NotNil(t, found)
+	assert.True(t, found.Namespaced)
+	found = findResource(apiResourceList.APIResources, "deployments/status")
+	assert.NotNil(t, found)
+	assert.True(t, found.Namespaced)
+	found = findResource(apiResourceList.APIResources, "deployments/scale")
+	assert.NotNil(t, found)
+	assert.True(t, found.Namespaced)
+	found = findResource(apiResourceList.APIResources, "deployments/rollback")
 }

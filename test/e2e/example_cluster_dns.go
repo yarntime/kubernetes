@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/kubernetes/pkg/api/v1"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/test/e2e/framework"
 
@@ -45,12 +45,12 @@ except:
 var _ = framework.KubeDescribe("ClusterDns [Feature:Example]", func() {
 	f := framework.NewDefaultFramework("cluster-dns")
 
-	var c *client.Client
+	var c clientset.Interface
 	BeforeEach(func() {
-		c = f.Client
+		c = f.ClientSet
 	})
 
-	It("should create pod that uses dns [Conformance]", func() {
+	It("should create pod that uses dns", func() {
 		mkpath := func(file string) string {
 			return filepath.Join(framework.TestContext.RepoRoot, "examples/cluster-dns", file)
 		}
@@ -73,7 +73,7 @@ var _ = framework.KubeDescribe("ClusterDns [Feature:Example]", func() {
 
 		// we need two namespaces anyway, so let's forget about
 		// the one created in BeforeEach and create two new ones.
-		namespaces := []*api.Namespace{nil, nil}
+		namespaces := []*v1.Namespace{nil, nil}
 		for i := range namespaces {
 			var err error
 			namespaces[i], err = f.CreateNamespace(fmt.Sprintf("dnsexample%d", i), nil)
@@ -97,8 +97,8 @@ var _ = framework.KubeDescribe("ClusterDns [Feature:Example]", func() {
 		// the application itself may have not been initialized. Just query the application.
 		for _, ns := range namespaces {
 			label := labels.SelectorFromSet(labels.Set(map[string]string{"name": backendRcName}))
-			options := api.ListOptions{LabelSelector: label}
-			pods, err := c.Pods(ns.Name).List(options)
+			options := v1.ListOptions{LabelSelector: label.String()}
+			pods, err := c.Core().Pods(ns.Name).List(options)
 			Expect(err).NotTo(HaveOccurred())
 			err = framework.PodsResponding(c, ns.Name, backendPodName, false, pods)
 			Expect(err).NotTo(HaveOccurred(), "waiting for all pods to respond")
@@ -117,8 +117,8 @@ var _ = framework.KubeDescribe("ClusterDns [Feature:Example]", func() {
 		// dns error or timeout.
 		// This code is probably unnecessary, but let's stay on the safe side.
 		label := labels.SelectorFromSet(labels.Set(map[string]string{"name": backendPodName}))
-		options := api.ListOptions{LabelSelector: label}
-		pods, err := c.Pods(namespaces[0].Name).List(options)
+		options := v1.ListOptions{LabelSelector: label.String()}
+		pods, err := c.Core().Pods(namespaces[0].Name).List(options)
 
 		if err != nil || pods == nil || len(pods.Items) == 0 {
 			framework.Failf("no running pods found")
@@ -151,6 +151,6 @@ var _ = framework.KubeDescribe("ClusterDns [Feature:Example]", func() {
 	})
 })
 
-func getNsCmdFlag(ns *api.Namespace) string {
+func getNsCmdFlag(ns *v1.Namespace) string {
 	return fmt.Sprintf("--namespace=%v", ns.Name)
 }

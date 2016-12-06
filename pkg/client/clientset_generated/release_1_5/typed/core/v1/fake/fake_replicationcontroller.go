@@ -18,20 +18,20 @@ package fake
 
 import (
 	api "k8s.io/kubernetes/pkg/api"
-	unversioned "k8s.io/kubernetes/pkg/api/unversioned"
 	v1 "k8s.io/kubernetes/pkg/api/v1"
 	core "k8s.io/kubernetes/pkg/client/testing/core"
 	labels "k8s.io/kubernetes/pkg/labels"
+	schema "k8s.io/kubernetes/pkg/runtime/schema"
 	watch "k8s.io/kubernetes/pkg/watch"
 )
 
 // FakeReplicationControllers implements ReplicationControllerInterface
 type FakeReplicationControllers struct {
-	Fake *FakeCore
+	Fake *FakeCoreV1
 	ns   string
 }
 
-var replicationcontrollersResource = unversioned.GroupVersionResource{Group: "", Version: "v1", Resource: "replicationcontrollers"}
+var replicationcontrollersResource = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "replicationcontrollers"}
 
 func (c *FakeReplicationControllers) Create(replicationController *v1.ReplicationController) (result *v1.ReplicationController, err error) {
 	obj, err := c.Fake.
@@ -63,14 +63,14 @@ func (c *FakeReplicationControllers) UpdateStatus(replicationController *v1.Repl
 	return obj.(*v1.ReplicationController), err
 }
 
-func (c *FakeReplicationControllers) Delete(name string, options *api.DeleteOptions) error {
+func (c *FakeReplicationControllers) Delete(name string, options *v1.DeleteOptions) error {
 	_, err := c.Fake.
 		Invokes(core.NewDeleteAction(replicationcontrollersResource, c.ns, name), &v1.ReplicationController{})
 
 	return err
 }
 
-func (c *FakeReplicationControllers) DeleteCollection(options *api.DeleteOptions, listOptions api.ListOptions) error {
+func (c *FakeReplicationControllers) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
 	action := core.NewDeleteCollectionAction(replicationcontrollersResource, c.ns, listOptions)
 
 	_, err := c.Fake.Invokes(action, &v1.ReplicationControllerList{})
@@ -87,7 +87,7 @@ func (c *FakeReplicationControllers) Get(name string) (result *v1.ReplicationCon
 	return obj.(*v1.ReplicationController), err
 }
 
-func (c *FakeReplicationControllers) List(opts api.ListOptions) (result *v1.ReplicationControllerList, err error) {
+func (c *FakeReplicationControllers) List(opts v1.ListOptions) (result *v1.ReplicationControllerList, err error) {
 	obj, err := c.Fake.
 		Invokes(core.NewListAction(replicationcontrollersResource, c.ns, opts), &v1.ReplicationControllerList{})
 
@@ -95,7 +95,7 @@ func (c *FakeReplicationControllers) List(opts api.ListOptions) (result *v1.Repl
 		return nil, err
 	}
 
-	label := opts.LabelSelector
+	label, _, _ := core.ExtractFromListOptions(opts)
 	if label == nil {
 		label = labels.Everything()
 	}
@@ -109,7 +109,7 @@ func (c *FakeReplicationControllers) List(opts api.ListOptions) (result *v1.Repl
 }
 
 // Watch returns a watch.Interface that watches the requested replicationControllers.
-func (c *FakeReplicationControllers) Watch(opts api.ListOptions) (watch.Interface, error) {
+func (c *FakeReplicationControllers) Watch(opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
 		InvokesWatch(core.NewWatchAction(replicationcontrollersResource, c.ns, opts))
 

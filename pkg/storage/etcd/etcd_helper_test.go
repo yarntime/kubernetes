@@ -29,6 +29,7 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	apitesting "k8s.io/kubernetes/pkg/api/testing"
+	"k8s.io/kubernetes/pkg/apimachinery/registered"
 	"k8s.io/kubernetes/pkg/conversion"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
@@ -45,7 +46,7 @@ const validEtcdVersion = "etcd 2.0.9"
 func testScheme(t *testing.T) (*runtime.Scheme, runtime.Codec) {
 	scheme := runtime.NewScheme()
 	scheme.Log(t)
-	scheme.AddKnownTypes(*testapi.Default.GroupVersion(), &storagetesting.TestResource{})
+	scheme.AddKnownTypes(registered.GroupOrDie(api.GroupName).GroupVersion, &storagetesting.TestResource{})
 	scheme.AddKnownTypes(testapi.Default.InternalGroupVersion(), &storagetesting.TestResource{})
 	if err := scheme.AddConversionFuncs(
 		func(in *storagetesting.TestResource, out *storagetesting.TestResource, s conversion.Scope) error {
@@ -59,7 +60,7 @@ func testScheme(t *testing.T) (*runtime.Scheme, runtime.Codec) {
 	); err != nil {
 		panic(err)
 	}
-	codec := serializer.NewCodecFactory(scheme).LegacyCodec(*testapi.Default.GroupVersion())
+	codec := serializer.NewCodecFactory(scheme).LegacyCodec(registered.GroupOrDie(api.GroupName).GroupVersion)
 	return scheme, codec
 }
 
@@ -239,7 +240,7 @@ func TestGet(t *testing.T) {
 		t.Errorf("Unexpected error %#v", err)
 	}
 	expect = got
-	if err := helper.Get(context.TODO(), key, &got, false); err != nil {
+	if err := helper.Get(context.TODO(), key, "", &got, false); err != nil {
 		t.Errorf("Unexpected error %#v", err)
 	}
 	if !reflect.DeepEqual(got, expect) {
@@ -255,7 +256,7 @@ func TestGetNotFoundErr(t *testing.T) {
 	helper := newEtcdHelper(server.Client, testapi.Default.Codec(), key)
 
 	var got api.Pod
-	err := helper.Get(context.TODO(), boguskey, &got, false)
+	err := helper.Get(context.TODO(), boguskey, "", &got, false)
 	if !storage.IsNotFound(err) {
 		t.Errorf("Unexpected reponse on key=%v, err=%v", key, err)
 	}
@@ -275,7 +276,7 @@ func TestCreate(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error %#v", err)
 	}
-	err = helper.Get(context.TODO(), "/some/key", returnedObj, false)
+	err = helper.Get(context.TODO(), "/some/key", "", returnedObj, false)
 	if err != nil {
 		t.Errorf("Unexpected error %#v", err)
 	}
@@ -331,7 +332,7 @@ func TestGuaranteedUpdate(t *testing.T) {
 	}
 
 	objCheck := &storagetesting.TestResource{}
-	err = helper.Get(context.TODO(), key, objCheck, false)
+	err = helper.Get(context.TODO(), key, "", objCheck, false)
 	if err != nil {
 		t.Errorf("Unexpected error %#v", err)
 	}
@@ -441,7 +442,7 @@ func TestGuaranteedUpdate_CreateCollision(t *testing.T) {
 	wgDone.Wait()
 
 	stored := &storagetesting.TestResource{}
-	err := helper.Get(context.TODO(), key, stored, false)
+	err := helper.Get(context.TODO(), key, "", stored, false)
 	if err != nil {
 		t.Errorf("Unexpected error %#v", stored)
 	}
@@ -561,7 +562,7 @@ func TestDeleteWithRetry(t *testing.T) {
 	if fake.getCount != expectedRetries {
 		t.Errorf("Expect %d retries, got %d", expectedRetries, fake.getCount)
 	}
-	err = helper.Get(context.TODO(), "/some/key", obj, false)
+	err = helper.Get(context.TODO(), "/some/key", "", obj, false)
 	if !storage.IsNotFound(err) {
 		t.Errorf("Expect an NotFound error, got %v", err)
 	}

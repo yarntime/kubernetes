@@ -23,6 +23,7 @@ import (
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/apis/rbac"
 	"k8s.io/kubernetes/pkg/apis/rbac/validation"
+	rbacregistry "k8s.io/kubernetes/pkg/registry/rbac"
 	"k8s.io/kubernetes/pkg/runtime"
 )
 
@@ -32,20 +33,15 @@ type Storage struct {
 	rest.StandardStorage
 
 	ruleResolver validation.AuthorizationRuleResolver
-
-	// user which skips privilege escalation checks
-	superUser string
 }
 
-func NewStorage(s rest.StandardStorage, ruleResolver validation.AuthorizationRuleResolver, superUser string) *Storage {
-	return &Storage{s, ruleResolver, superUser}
+func NewStorage(s rest.StandardStorage, ruleResolver validation.AuthorizationRuleResolver) *Storage {
+	return &Storage{s, ruleResolver}
 }
 
 func (s *Storage) Create(ctx api.Context, obj runtime.Object) (runtime.Object, error) {
-	if user, ok := api.UserFrom(ctx); ok {
-		if s.superUser != "" && user.GetName() == s.superUser {
-			return s.StandardStorage.Create(ctx, obj)
-		}
+	if rbacregistry.EscalationAllowed(ctx) {
+		return s.StandardStorage.Create(ctx, obj)
 	}
 
 	clusterRole := obj.(*rbac.ClusterRole)
@@ -57,10 +53,8 @@ func (s *Storage) Create(ctx api.Context, obj runtime.Object) (runtime.Object, e
 }
 
 func (s *Storage) Update(ctx api.Context, name string, obj rest.UpdatedObjectInfo) (runtime.Object, bool, error) {
-	if user, ok := api.UserFrom(ctx); ok {
-		if s.superUser != "" && user.GetName() == s.superUser {
-			return s.StandardStorage.Update(ctx, name, obj)
-		}
+	if rbacregistry.EscalationAllowed(ctx) {
+		return s.StandardStorage.Update(ctx, name, obj)
 	}
 
 	nonEscalatingInfo := wrapUpdatedObjectInfo(obj, func(ctx api.Context, obj runtime.Object, oldObj runtime.Object) (runtime.Object, error) {

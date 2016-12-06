@@ -21,7 +21,7 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/fake"
 	"k8s.io/kubernetes/pkg/quota"
 )
 
@@ -99,7 +99,7 @@ func TestPodConstraintsFunc(t *testing.T) {
 
 func TestPodEvaluatorUsage(t *testing.T) {
 	kubeClient := fake.NewSimpleClientset()
-	evaluator := NewPodEvaluator(kubeClient)
+	evaluator := NewPodEvaluator(kubeClient, nil)
 	testCases := map[string]struct {
 		pod   *api.Pod
 		usage api.ResourceList

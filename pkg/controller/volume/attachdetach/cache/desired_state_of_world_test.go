@@ -19,8 +19,9 @@ package cache
 import (
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
 	controllervolumetesting "k8s.io/kubernetes/pkg/controller/volume/attachdetach/testing"
+	k8stypes "k8s.io/kubernetes/pkg/types"
 	volumetesting "k8s.io/kubernetes/pkg/volume/testing"
 	"k8s.io/kubernetes/pkg/volume/util/types"
 )
@@ -31,7 +32,7 @@ func Test_AddNode_Positive_NewNode(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 
 	// Act
 	dsw.AddNode(nodeName)
@@ -56,7 +57,7 @@ func Test_AddNode_Positive_ExistingNode(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 
 	// Act
 	dsw.AddNode(nodeName)
@@ -90,9 +91,9 @@ func Test_AddPod_Positive_NewPodNodeExistsVolumeDoesntExist(t *testing.T) {
 	podName := "pod-uid"
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	volumeExists := dsw.VolumeExists(volumeName, nodeName)
 	if volumeExists {
@@ -138,9 +139,9 @@ func Test_AddPod_Positive_NewPodNodeExistsVolumeExists(t *testing.T) {
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	pod1Name := "pod1-uid"
 	pod2Name := "pod2-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	volumeExists := dsw.VolumeExists(volumeName, nodeName)
 	if volumeExists {
@@ -211,9 +212,9 @@ func Test_AddPod_Positive_PodExistsNodeExistsVolumeExists(t *testing.T) {
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	podName := "pod-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	volumeExists := dsw.VolumeExists(volumeName, nodeName)
 	if volumeExists {
@@ -277,9 +278,9 @@ func Test_AddPod_Negative_NewPodNodeDoesntExistVolumeDoesntExist(t *testing.T) {
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	podName := "pod-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	volumeExists := dsw.VolumeExists(volumeName, nodeName)
 	if volumeExists {
 		t.Fatalf(
@@ -317,7 +318,7 @@ func Test_DeleteNode_Positive_NodeExists(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 
 	// Act
@@ -345,7 +346,7 @@ func Test_DeleteNode_Positive_NodeDoesntExist(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	notAddedNodeName := "node-not-added-name"
+	notAddedNodeName := k8stypes.NodeName("node-not-added-name")
 
 	// Act
 	err := dsw.DeleteNode(notAddedNodeName)
@@ -373,10 +374,10 @@ func Test_DeleteNode_Negative_NodeExistsHasChildVolumes(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	podName := "pod-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
 	generatedVolumeName, podAddErr := dsw.AddPod(types.UniquePodName(podName), controllervolumetesting.NewPod(podName, podName), volumeSpec, nodeName)
 	if podAddErr != nil {
@@ -415,9 +416,9 @@ func Test_DeletePod_Positive_PodExistsNodeExistsVolumeExists(t *testing.T) {
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	podName := "pod-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	generatedVolumeName, podAddErr := dsw.AddPod(types.UniquePodName(podName), controllervolumetesting.NewPod(podName, podName), volumeSpec, nodeName)
 	if podAddErr != nil {
@@ -463,9 +464,9 @@ func Test_DeletePod_Positive_2PodsExistNodeExistsVolumesExist(t *testing.T) {
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	pod1Name := "pod1-uid"
 	pod2Name := "pod2-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	generatedVolumeName1, pod1AddErr := dsw.AddPod(types.UniquePodName(pod1Name), controllervolumetesting.NewPod(pod1Name, pod1Name), volumeSpec, nodeName)
 	if pod1AddErr != nil {
@@ -524,9 +525,9 @@ func Test_DeletePod_Positive_PodDoesNotExist(t *testing.T) {
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	pod1Name := "pod1-uid"
 	pod2Name := "pod2-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	generatedVolumeName, pod1AddErr := dsw.AddPod(types.UniquePodName(pod1Name), controllervolumetesting.NewPod(pod1Name, pod1Name), volumeSpec, nodeName)
 	if pod1AddErr != nil {
@@ -572,9 +573,9 @@ func Test_DeletePod_Positive_NodeDoesNotExist(t *testing.T) {
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	podName := "pod-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
-	node1Name := "node1-name"
+	node1Name := k8stypes.NodeName("node1-name")
 	dsw.AddNode(node1Name)
 	generatedVolumeName, podAddErr := dsw.AddPod(types.UniquePodName(podName), controllervolumetesting.NewPod(podName, podName), volumeSpec, node1Name)
 	if podAddErr != nil {
@@ -591,7 +592,7 @@ func Test_DeletePod_Positive_NodeDoesNotExist(t *testing.T) {
 			generatedVolumeName,
 			node1Name)
 	}
-	node2Name := "node2-name"
+	node2Name := k8stypes.NodeName("node2-name")
 
 	// Act
 	dsw.DeletePod(types.UniquePodName(podName), generatedVolumeName, node2Name)
@@ -627,9 +628,9 @@ func Test_DeletePod_Positive_VolumeDoesNotExist(t *testing.T) {
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
 	podName := "pod-uid"
-	volume1Name := api.UniqueVolumeName("volume1-name")
+	volume1Name := v1.UniqueVolumeName("volume1-name")
 	volume1Spec := controllervolumetesting.GetTestVolumeSpec(string(volume1Name), volume1Name)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	generatedVolume1Name, podAddErr := dsw.AddPod(types.UniquePodName(podName), controllervolumetesting.NewPod(podName, podName), volume1Spec, nodeName)
 	if podAddErr != nil {
@@ -646,7 +647,7 @@ func Test_DeletePod_Positive_VolumeDoesNotExist(t *testing.T) {
 			generatedVolume1Name,
 			nodeName)
 	}
-	volume2Name := api.UniqueVolumeName("volume2-name")
+	volume2Name := v1.UniqueVolumeName("volume2-name")
 
 	// Act
 	dsw.DeletePod(types.UniquePodName(podName), volume2Name, nodeName)
@@ -680,7 +681,7 @@ func Test_NodeExists_Positive_NodeExists(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	notAddedNodeName := "node-not-added-name"
+	notAddedNodeName := k8stypes.NodeName("node-not-added-name")
 
 	// Act
 	notAddedNodeExists := dsw.NodeExists(notAddedNodeName)
@@ -703,7 +704,7 @@ func Test_NodeExists_Positive_NodeDoesntExist(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 
 	// Act
@@ -727,10 +728,10 @@ func Test_VolumeExists_Positive_VolumeExistsNodeExists(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	podName := "pod-uid"
-	volumeName := api.UniqueVolumeName("volume-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 	volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
 	generatedVolumeName, _ := dsw.AddPod(types.UniquePodName(podName), controllervolumetesting.NewPod(podName, podName), volumeSpec, nodeName)
 
@@ -757,10 +758,10 @@ func Test_VolumeExists_Positive_VolumeDoesntExistNodeExists(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
+	nodeName := k8stypes.NodeName("node-name")
 	dsw.AddNode(nodeName)
 	podName := "pod-uid"
-	volume1Name := api.UniqueVolumeName("volume1-name")
+	volume1Name := v1.UniqueVolumeName("volume1-name")
 	volume1Spec := controllervolumetesting.GetTestVolumeSpec(string(volume1Name), volume1Name)
 	generatedVolume1Name, podAddErr := dsw.AddPod(types.UniquePodName(podName), controllervolumetesting.NewPod(podName, podName), volume1Spec, nodeName)
 	if podAddErr != nil {
@@ -769,7 +770,7 @@ func Test_VolumeExists_Positive_VolumeDoesntExistNodeExists(t *testing.T) {
 			podName,
 			podAddErr)
 	}
-	volume2Name := api.UniqueVolumeName("volume2-name")
+	volume2Name := v1.UniqueVolumeName("volume2-name")
 
 	// Act
 	volumeExists := dsw.VolumeExists(volume2Name, nodeName)
@@ -793,8 +794,8 @@ func Test_VolumeExists_Positive_VolumeDoesntExistNodeDoesntExists(t *testing.T) 
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	nodeName := "node-name"
-	volumeName := api.UniqueVolumeName("volume-name")
+	nodeName := k8stypes.NodeName("node-name")
+	volumeName := v1.UniqueVolumeName("volume-name")
 
 	// Act
 	volumeExists := dsw.VolumeExists(volumeName, nodeName)
@@ -833,8 +834,8 @@ func Test_GetVolumesToAttach_Positive_TwoNodes(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	node1Name := "node1-name"
-	node2Name := "node2-name"
+	node1Name := k8stypes.NodeName("node1-name")
+	node2Name := k8stypes.NodeName("node2-name")
 	dsw.AddNode(node1Name)
 	dsw.AddNode(node2Name)
 
@@ -854,9 +855,9 @@ func Test_GetVolumesToAttach_Positive_TwoNodesOneVolumeEach(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	node1Name := "node1-name"
+	node1Name := k8stypes.NodeName("node1-name")
 	pod1Name := "pod1-uid"
-	volume1Name := api.UniqueVolumeName("volume1-name")
+	volume1Name := v1.UniqueVolumeName("volume1-name")
 	volume1Spec := controllervolumetesting.GetTestVolumeSpec(string(volume1Name), volume1Name)
 	dsw.AddNode(node1Name)
 	generatedVolume1Name, podAddErr := dsw.AddPod(types.UniquePodName(pod1Name), controllervolumetesting.NewPod(pod1Name, pod1Name), volume1Spec, node1Name)
@@ -866,9 +867,9 @@ func Test_GetVolumesToAttach_Positive_TwoNodesOneVolumeEach(t *testing.T) {
 			pod1Name,
 			podAddErr)
 	}
-	node2Name := "node2-name"
+	node2Name := k8stypes.NodeName("node2-name")
 	pod2Name := "pod2-uid"
-	volume2Name := api.UniqueVolumeName("volume2-name")
+	volume2Name := v1.UniqueVolumeName("volume2-name")
 	volume2Spec := controllervolumetesting.GetTestVolumeSpec(string(volume2Name), volume2Name)
 	dsw.AddNode(node2Name)
 	generatedVolume2Name, podAddErr := dsw.AddPod(types.UniquePodName(pod2Name), controllervolumetesting.NewPod(pod2Name, pod2Name), volume2Spec, node2Name)
@@ -899,9 +900,9 @@ func Test_GetVolumesToAttach_Positive_TwoNodesOneVolumeEachExtraPod(t *testing.T
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	node1Name := "node1-name"
+	node1Name := k8stypes.NodeName("node1-name")
 	pod1Name := "pod1-uid"
-	volume1Name := api.UniqueVolumeName("volume1-name")
+	volume1Name := v1.UniqueVolumeName("volume1-name")
 	volume1Spec := controllervolumetesting.GetTestVolumeSpec(string(volume1Name), volume1Name)
 	dsw.AddNode(node1Name)
 	generatedVolume1Name, podAddErr := dsw.AddPod(types.UniquePodName(pod1Name), controllervolumetesting.NewPod(pod1Name, pod1Name), volume1Spec, node1Name)
@@ -911,9 +912,9 @@ func Test_GetVolumesToAttach_Positive_TwoNodesOneVolumeEachExtraPod(t *testing.T
 			pod1Name,
 			podAddErr)
 	}
-	node2Name := "node2-name"
+	node2Name := k8stypes.NodeName("node2-name")
 	pod2Name := "pod2-uid"
-	volume2Name := api.UniqueVolumeName("volume2-name")
+	volume2Name := v1.UniqueVolumeName("volume2-name")
 	volume2Spec := controllervolumetesting.GetTestVolumeSpec(string(volume2Name), volume2Name)
 	dsw.AddNode(node2Name)
 	generatedVolume2Name, podAddErr := dsw.AddPod(types.UniquePodName(pod2Name), controllervolumetesting.NewPod(pod2Name, pod2Name), volume2Spec, node2Name)
@@ -953,9 +954,9 @@ func Test_GetVolumesToAttach_Positive_TwoNodesThreeVolumes(t *testing.T) {
 	// Arrange
 	volumePluginMgr, _ := volumetesting.GetTestVolumePluginMgr(t)
 	dsw := NewDesiredStateOfWorld(volumePluginMgr)
-	node1Name := "node1-name"
+	node1Name := k8stypes.NodeName("node1-name")
 	pod1Name := "pod1-uid"
-	volume1Name := api.UniqueVolumeName("volume1-name")
+	volume1Name := v1.UniqueVolumeName("volume1-name")
 	volume1Spec := controllervolumetesting.GetTestVolumeSpec(string(volume1Name), volume1Name)
 	dsw.AddNode(node1Name)
 	generatedVolume1Name, podAddErr := dsw.AddPod(types.UniquePodName(pod1Name), controllervolumetesting.NewPod(pod1Name, pod1Name), volume1Spec, node1Name)
@@ -965,9 +966,9 @@ func Test_GetVolumesToAttach_Positive_TwoNodesThreeVolumes(t *testing.T) {
 			pod1Name,
 			podAddErr)
 	}
-	node2Name := "node2-name"
+	node2Name := k8stypes.NodeName("node2-name")
 	pod2aName := "pod2a-name"
-	volume2Name := api.UniqueVolumeName("volume2-name")
+	volume2Name := v1.UniqueVolumeName("volume2-name")
 	volume2Spec := controllervolumetesting.GetTestVolumeSpec(string(volume2Name), volume2Name)
 	dsw.AddNode(node2Name)
 	generatedVolume2Name1, podAddErr := dsw.AddPod(types.UniquePodName(pod2aName), controllervolumetesting.NewPod(pod2aName, pod2aName), volume2Spec, node2Name)
@@ -992,7 +993,7 @@ func Test_GetVolumesToAttach_Positive_TwoNodesThreeVolumes(t *testing.T) {
 			generatedVolume2Name2)
 	}
 	pod3Name := "pod3-uid"
-	volume3Name := api.UniqueVolumeName("volume3-name")
+	volume3Name := v1.UniqueVolumeName("volume3-name")
 	volume3Spec := controllervolumetesting.GetTestVolumeSpec(string(volume3Name), volume3Name)
 	generatedVolume3Name, podAddErr := dsw.AddPod(types.UniquePodName(pod3Name), controllervolumetesting.NewPod(pod3Name, pod3Name), volume3Spec, node1Name)
 	if podAddErr != nil {
@@ -1018,8 +1019,8 @@ func Test_GetVolumesToAttach_Positive_TwoNodesThreeVolumes(t *testing.T) {
 func verifyVolumeToAttach(
 	t *testing.T,
 	volumesToAttach []VolumeToAttach,
-	expectedNodeName string,
-	expectedVolumeName api.UniqueVolumeName,
+	expectedNodeName k8stypes.NodeName,
+	expectedVolumeName v1.UniqueVolumeName,
 	expectedVolumeSpecName string) {
 	for _, volumeToAttach := range volumesToAttach {
 		if volumeToAttach.NodeName == expectedNodeName &&

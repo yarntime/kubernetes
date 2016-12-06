@@ -26,7 +26,7 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	apierrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/util/httpstream"
 	"k8s.io/kubernetes/pkg/util/httpstream/spdy"
 	"k8s.io/kubernetes/pkg/util/runtime"
@@ -36,18 +36,18 @@ import (
 	"github.com/golang/glog"
 )
 
-// options contains details about which streams are required for
+// Options contains details about which streams are required for
 // remote command execution.
-type options struct {
-	stdin           bool
-	stdout          bool
-	stderr          bool
-	tty             bool
+type Options struct {
+	Stdin           bool
+	Stdout          bool
+	Stderr          bool
+	TTY             bool
 	expectedStreams int
 }
 
-// newOptions creates a new options from the Request.
-func newOptions(req *http.Request) (*options, error) {
+// NewOptions creates a new Options from the Request.
+func NewOptions(req *http.Request) (*Options, error) {
 	tty := req.FormValue(api.ExecTTYParam) == "1"
 	stdin := req.FormValue(api.ExecStdinParam) == "1"
 	stdout := req.FormValue(api.ExecStdoutParam) == "1"
@@ -74,11 +74,11 @@ func newOptions(req *http.Request) (*options, error) {
 		return nil, fmt.Errorf("you must specify at least 1 of stdin, stdout, stderr")
 	}
 
-	return &options{
-		stdin:           stdin,
-		stdout:          stdout,
-		stderr:          stderr,
-		tty:             tty,
+	return &Options{
+		Stdin:           stdin,
+		Stdout:          stdout,
+		Stderr:          stderr,
+		TTY:             tty,
 		expectedStreams: expectedStreams,
 	}, nil
 }
@@ -116,7 +116,7 @@ func waitStreamReply(replySent <-chan struct{}, notify chan<- struct{}, stop <-c
 }
 
 func createStreams(req *http.Request, w http.ResponseWriter, supportedStreamProtocols []string, idleTimeout, streamCreationTimeout time.Duration) (*context, bool) {
-	opts, err := newOptions(req)
+	opts, err := NewOptions(req)
 	if err != nil {
 		runtime.HandleError(err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -143,7 +143,7 @@ func createStreams(req *http.Request, w http.ResponseWriter, supportedStreamProt
 	return ctx, true
 }
 
-func createHttpStreamStreams(req *http.Request, w http.ResponseWriter, opts *options, supportedStreamProtocols []string, idleTimeout, streamCreationTimeout time.Duration) (*context, bool) {
+func createHttpStreamStreams(req *http.Request, w http.ResponseWriter, opts *Options, supportedStreamProtocols []string, idleTimeout, streamCreationTimeout time.Duration) (*context, bool) {
 	protocol, err := httpstream.Handshake(req, w, supportedStreamProtocols)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -183,7 +183,7 @@ func createHttpStreamStreams(req *http.Request, w http.ResponseWriter, opts *opt
 		handler = &v1ProtocolHandler{}
 	}
 
-	if opts.tty && handler.supportsTerminalResizing() {
+	if opts.TTY && handler.supportsTerminalResizing() {
 		opts.expectedStreams++
 	}
 
@@ -197,7 +197,7 @@ func createHttpStreamStreams(req *http.Request, w http.ResponseWriter, opts *opt
 	}
 
 	ctx.conn = conn
-	ctx.tty = opts.tty
+	ctx.tty = opts.TTY
 
 	return ctx, true
 }
@@ -211,7 +211,7 @@ type protocolHandler interface {
 }
 
 // v4ProtocolHandler implements the V4 protocol version for streaming command execution. It only differs
-// in from v3 in the error stream format using an json-marshaled unversioned.Status which carries
+// in from v3 in the error stream format using an json-marshaled metav1.Status which carries
 // the process' exit code.
 type v4ProtocolHandler struct{}
 
@@ -435,7 +435,7 @@ func handleResizeEvents(stream io.Reader, channel chan<- term.Size) {
 
 func v1WriteStatusFunc(stream io.WriteCloser) func(status *apierrors.StatusError) error {
 	return func(status *apierrors.StatusError) error {
-		if status.Status().Status == unversioned.StatusSuccess {
+		if status.Status().Status == metav1.StatusSuccess {
 			return nil // send error messages
 		}
 		_, err := stream.Write([]byte(status.Error()))

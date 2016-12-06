@@ -26,16 +26,14 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/api/rest"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/validation/path"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/conversion"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/wait"
-
-	"golang.org/x/net/context"
 )
 
 type Tester struct {
@@ -417,7 +415,7 @@ func (t *Tester) testCreateRejectsMismatchedNamespace(valid runtime.Object) {
 
 func (t *Tester) testCreateResetsUserData(valid runtime.Object) {
 	objectMeta := t.getObjectMetaOrFail(valid)
-	now := unversioned.Now()
+	now := metav1.Now()
 	objectMeta.UID = "bad-uid"
 	objectMeta.CreationTimestamp = now
 
@@ -763,9 +761,9 @@ func (t *Tester) testDeleteNoGraceful(obj runtime.Object, createFn CreateFunc, g
 		t.Errorf("unexpected error: %v", err)
 	}
 	if !t.returnDeletedObject {
-		if status, ok := obj.(*unversioned.Status); !ok {
+		if status, ok := obj.(*metav1.Status); !ok {
 			t.Errorf("expected status of delete, got %v", status)
-		} else if status.Status != unversioned.StatusSuccess {
+		} else if status.Status != metav1.StatusSuccess {
 			t.Errorf("expected success, got: %v", status.Status)
 		}
 	}
@@ -809,9 +807,9 @@ func (t *Tester) testDeleteWithUID(obj runtime.Object, createFn CreateFunc, getF
 	}
 
 	if !t.returnDeletedObject {
-		if status, ok := obj.(*unversioned.Status); !ok {
+		if status, ok := obj.(*metav1.Status); !ok {
 			t.Errorf("expected status of delete, got %v", status)
-		} else if status.Status != unversioned.StatusSuccess {
+		} else if status.Status != metav1.StatusSuccess {
 			t.Errorf("expected success, got: %v", status.Status)
 		}
 	}
@@ -1235,7 +1233,6 @@ func (t *Tester) testWatchFields(obj runtime.Object, emitFn EmitFunc, fieldsPass
 	for _, field := range fieldsPass {
 		for _, action := range actions {
 			options := &api.ListOptions{FieldSelector: field.AsSelector(), ResourceVersion: "1"}
-			ctx = context.WithValue(context.WithValue(ctx, "field", field), "action", action)
 			watcher, err := t.storage.(rest.Watcher).Watch(ctx, options)
 			if err != nil {
 				t.Errorf("unexpected error: %v, %v", err, action)
@@ -1260,7 +1257,6 @@ func (t *Tester) testWatchFields(obj runtime.Object, emitFn EmitFunc, fieldsPass
 	for _, field := range fieldsFail {
 		for _, action := range actions {
 			options := &api.ListOptions{FieldSelector: field.AsSelector(), ResourceVersion: "1"}
-			ctx = context.WithValue(context.WithValue(ctx, "field", field), "action", action)
 			watcher, err := t.storage.(rest.Watcher).Watch(ctx, options)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
@@ -1281,12 +1277,11 @@ func (t *Tester) testWatchFields(obj runtime.Object, emitFn EmitFunc, fieldsPass
 }
 
 func (t *Tester) testWatchLabels(obj runtime.Object, emitFn EmitFunc, labelsPass, labelsFail []labels.Set, actions []string) {
-	ctx := t.TestContext().(context.Context)
+	ctx := t.TestContext()
 
 	for _, label := range labelsPass {
 		for _, action := range actions {
 			options := &api.ListOptions{LabelSelector: label.AsSelector(), ResourceVersion: "1"}
-			ctx = context.WithValue(context.WithValue(ctx, "label", label), "action", action)
 			watcher, err := t.storage.(rest.Watcher).Watch(ctx, options)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
@@ -1310,7 +1305,6 @@ func (t *Tester) testWatchLabels(obj runtime.Object, emitFn EmitFunc, labelsPass
 	for _, label := range labelsFail {
 		for _, action := range actions {
 			options := &api.ListOptions{LabelSelector: label.AsSelector(), ResourceVersion: "1"}
-			ctx = context.WithValue(context.WithValue(ctx, "label", label), "action", action)
 			watcher, err := t.storage.(rest.Watcher).Watch(ctx, options)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)

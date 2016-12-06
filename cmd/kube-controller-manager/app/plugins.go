@@ -31,8 +31,10 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/aws"
+	"k8s.io/kubernetes/pkg/cloudprovider/providers/azure"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/openstack"
+	"k8s.io/kubernetes/pkg/cloudprovider/providers/photon"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/vsphere"
 	utilconfig "k8s.io/kubernetes/pkg/util/config"
 	"k8s.io/kubernetes/pkg/util/io"
@@ -41,10 +43,12 @@ import (
 	"k8s.io/kubernetes/pkg/volume/azure_dd"
 	"k8s.io/kubernetes/pkg/volume/cinder"
 	"k8s.io/kubernetes/pkg/volume/flexvolume"
+	"k8s.io/kubernetes/pkg/volume/flocker"
 	"k8s.io/kubernetes/pkg/volume/gce_pd"
 	"k8s.io/kubernetes/pkg/volume/glusterfs"
 	"k8s.io/kubernetes/pkg/volume/host_path"
 	"k8s.io/kubernetes/pkg/volume/nfs"
+	"k8s.io/kubernetes/pkg/volume/photon_pd"
 	"k8s.io/kubernetes/pkg/volume/quobyte"
 	"k8s.io/kubernetes/pkg/volume/rbd"
 	"k8s.io/kubernetes/pkg/volume/vsphere_volume"
@@ -65,6 +69,7 @@ func ProbeAttachableVolumePlugins(config componentconfig.VolumeConfiguration) []
 	allPlugins = append(allPlugins, flexvolume.ProbeVolumePlugins(config.FlexVolumePluginDir)...)
 	allPlugins = append(allPlugins, vsphere_volume.ProbeVolumePlugins()...)
 	allPlugins = append(allPlugins, azure_dd.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, photon_pd.ProbeVolumePlugins()...)
 	return allPlugins
 }
 
@@ -108,6 +113,8 @@ func ProbeControllerVolumePlugins(cloud cloudprovider.Interface, config componen
 	allPlugins = append(allPlugins, rbd.ProbeVolumePlugins()...)
 	allPlugins = append(allPlugins, quobyte.ProbeVolumePlugins()...)
 
+	allPlugins = append(allPlugins, flocker.ProbeVolumePlugins()...)
+
 	if cloud != nil {
 		switch {
 		case aws.ProviderName == cloud.ProviderName():
@@ -118,6 +125,10 @@ func ProbeControllerVolumePlugins(cloud cloudprovider.Interface, config componen
 			allPlugins = append(allPlugins, cinder.ProbeVolumePlugins()...)
 		case vsphere.ProviderName == cloud.ProviderName():
 			allPlugins = append(allPlugins, vsphere_volume.ProbeVolumePlugins()...)
+		case azure.CloudProviderName == cloud.ProviderName():
+			allPlugins = append(allPlugins, azure_dd.ProbeVolumePlugins()...)
+		case photon.ProviderName == cloud.ProviderName():
+			allPlugins = append(allPlugins, photon_pd.ProbeVolumePlugins()...)
 		}
 	}
 
@@ -146,6 +157,10 @@ func NewAlphaVolumeProvisioner(cloud cloudprovider.Interface, config componentco
 		return getProvisionablePluginFromVolumePlugins(cinder.ProbeVolumePlugins())
 	case cloud != nil && vsphere.ProviderName == cloud.ProviderName():
 		return getProvisionablePluginFromVolumePlugins(vsphere_volume.ProbeVolumePlugins())
+	case cloud != nil && azure.CloudProviderName == cloud.ProviderName():
+		return getProvisionablePluginFromVolumePlugins(azure_dd.ProbeVolumePlugins())
+	case cloud != nil && photon.ProviderName == cloud.ProviderName():
+		return getProvisionablePluginFromVolumePlugins(photon_pd.ProbeVolumePlugins())
 	}
 	return nil, nil
 }

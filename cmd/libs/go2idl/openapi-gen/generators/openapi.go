@@ -30,20 +30,18 @@ import (
 	"k8s.io/gengo/namer"
 	"k8s.io/gengo/types"
 	"k8s.io/kubernetes/pkg/genericapiserver/openapi/common"
-	"k8s.io/kubernetes/pkg/util/sets"
 
 	"github.com/golang/glog"
 )
 
 // This is the comment tag that carries parameters for open API generation.
 const tagName = "k8s:openapi-gen"
+const tagOptional = "optional"
 
 // Known values for the tag.
 const (
 	tagValueTrue  = "true"
 	tagValueFalse = "false"
-	// Should only be used only for test
-	tagTargetType = "target"
 )
 
 func hasOpenAPITagValue(comments []string, value string) bool {
@@ -57,6 +55,16 @@ func hasOpenAPITagValue(comments []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// hasOptionalTag returns true if the member has +optional in its comments or
+// omitempty in its json tags.
+func hasOptionalTag(m *types.Member) bool {
+	hasOptionalCommentTag := types.ExtractCommentTags(
+		"+", m.CommentLines)[tagOptional] != nil
+	hasOptionalJsonTag := strings.Contains(
+		reflect.StructTag(m.Tags).Get("json"), "omitempty")
+	return hasOptionalCommentTag || hasOptionalJsonTag
 }
 
 // NameSystems returns the name system used by the generators in this package.
@@ -77,7 +85,6 @@ func Packages(context *generator.Context, arguments *args.GeneratorArgs) generat
 	if err != nil {
 		glog.Fatalf("Failed loading boilerplate: %v", err)
 	}
-	inputs := sets.NewString(context.Inputs...)
 	header := append([]byte(fmt.Sprintf("// +build !%s\n\n", arguments.GeneratedBuildTag)), boilerplate...)
 	header = append(header, []byte(
 		`
@@ -85,32 +92,20 @@ func Packages(context *generator.Context, arguments *args.GeneratorArgs) generat
 
 `)...)
 
-	targets := []*types.Package{}
-	for i := range inputs {
-		glog.V(5).Infof("considering pkg %q", i)
-		pkg, ok := context.Universe[i]
-		if !ok {
-			// If the input had no Go files, for example.
-			continue
-		}
-		if hasOpenAPITagValue(pkg.Comments, tagTargetType) || hasOpenAPITagValue(pkg.DocComments, tagTargetType) {
-			glog.V(5).Infof("target package : %q", pkg)
-			targets = append(targets, pkg)
-		}
+	if err := context.AddDir(arguments.OutputPackagePath); err != nil {
+		glog.Fatalf("Failed to load output package: %v", err)
 	}
-	switch len(targets) {
-	case 0:
-		// If no target package found, that means the generated file in target package is up to date
-		// and build excluded the target package.
-		return generator.Packages{}
-	case 1:
-		pkg := targets[0]
-		return generator.Packages{&generator.DefaultPackage{
+	pkg := context.Universe[arguments.OutputPackagePath]
+	if pkg == nil {
+		glog.Fatalf("Got nil output package: %v", err)
+	}
+	return generator.Packages{
+		&generator.DefaultPackage{
 			PackageName: strings.Split(filepath.Base(pkg.Path), ".")[0],
 			PackagePath: pkg.Path,
 			HeaderText:  header,
 			GeneratorFunc: func(c *generator.Context) (generators []generator.Generator) {
-				return []generator.Generator{NewOpenAPIGen(arguments.OutputFileBaseName, targets[0], context)}
+				return []generator.Generator{NewOpenAPIGen(arguments.OutputFileBaseName, pkg, context)}
 			},
 			FilterFunc: func(c *generator.Context, t *types.Type) bool {
 				// There is a conflict between this codegen and codecgen, we should avoid types generated for codecgen
@@ -127,11 +122,7 @@ func Packages(context *generator.Context, arguments *args.GeneratorArgs) generat
 				return false
 			},
 		},
-		}
-	default:
-		glog.Fatalf("Duplicate target type found: %v", targets)
 	}
-	return generator.Packages{}
 }
 
 const (
@@ -245,30 +236,6 @@ func getReferableName(m *types.Member) string {
 	}
 }
 
-func optionIndex(s, optionName string) int {
-	ret := 0
-	for s != "" {
-		var next string
-		i := strings.Index(s, ",")
-		if i >= 0 {
-			s, next = s[:i], s[i+1:]
-		}
-		if s == optionName {
-			return ret
-		}
-		s = next
-		ret++
-	}
-	return -1
-}
-
-func isPropertyRequired(m *types.Member) bool {
-	// A property is required if it does not have omitempty value in its json tag (documentation and implementation
-	// of json package requires omitempty to be at location 1 or higher.
-	// TODO: Move optional field definition from tags to comments.
-	return optionIndex(reflect.StructTag(m.Tags).Get("json"), "omitempty") < 1
-}
-
 type openAPITypeWriter struct {
 	*generator.SnippetWriter
 	refTypes               map[string]*types.Type
@@ -326,7 +293,7 @@ func (g openAPITypeWriter) generate(t *types.Type) error {
 			if name == "" {
 				continue
 			}
-			if isPropertyRequired(&m) {
+			if !hasOptionalTag(&m) {
 				required = append(required, name)
 			}
 			if err := g.generateProperty(&m); err != nil {
@@ -484,10 +451,15 @@ func (g openAPITypeWriter) generateMapProperty(t *types.Type) error {
 	}
 	g.Do("Type: []string{\"object\"},\n", nil)
 	g.Do("AdditionalProperties: &spec.SchemaOrBool{\nSchema: &spec.Schema{\nSchemaProps: spec.SchemaProps{\n", nil)
+	typeString, format := common.GetOpenAPITypeFormat(elemType.String())
+	if typeString != "" {
+		g.generateSimpleProperty(typeString, format)
+		g.Do("},\n},\n},\n", nil)
+		return nil
+	}
 	switch elemType.Kind {
 	case types.Builtin:
-		typeString, format := common.GetOpenAPITypeFormat(elemType.String())
-		g.generateSimpleProperty(typeString, format)
+		return fmt.Errorf("please add type %v to getOpenAPITypeFormat function.", elemType)
 	case types.Struct:
 		g.generateReferenceProperty(t.Elem)
 	case types.Slice, types.Array:
@@ -503,10 +475,15 @@ func (g openAPITypeWriter) generateSliceProperty(t *types.Type) error {
 	elemType := resolveAliasAndPtrType(t.Elem)
 	g.Do("Type: []string{\"array\"},\n", nil)
 	g.Do("Items: &spec.SchemaOrArray{\nSchema: &spec.Schema{\nSchemaProps: spec.SchemaProps{\n", nil)
+	typeString, format := common.GetOpenAPITypeFormat(elemType.String())
+	if typeString != "" {
+		g.generateSimpleProperty(typeString, format)
+		g.Do("},\n},\n},\n", nil)
+		return nil
+	}
 	switch elemType.Kind {
 	case types.Builtin:
-		typeString, format := common.GetOpenAPITypeFormat(elemType.String())
-		g.generateSimpleProperty(typeString, format)
+		return fmt.Errorf("please add type %v to getOpenAPITypeFormat function.", elemType)
 	case types.Struct:
 		g.generateReferenceProperty(t.Elem)
 	default:

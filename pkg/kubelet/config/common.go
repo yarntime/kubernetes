@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/api/validation"
 	"k8s.io/kubernetes/pkg/apimachinery/registered"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
@@ -35,11 +36,11 @@ import (
 )
 
 // Generate a pod name that is unique among nodes by appending the nodeName.
-func generatePodName(name, nodeName string) string {
+func generatePodName(name string, nodeName types.NodeName) string {
 	return fmt.Sprintf("%s-%s", name, nodeName)
 }
 
-func applyDefaults(pod *api.Pod, source string, isFile bool, nodeName string) error {
+func applyDefaults(pod *api.Pod, source string, isFile bool, nodeName types.NodeName) error {
 	if len(pod.UID) == 0 {
 		hasher := md5.New()
 		if isFile {
@@ -62,7 +63,7 @@ func applyDefaults(pod *api.Pod, source string, isFile bool, nodeName string) er
 	glog.V(5).Infof("Using namespace %q for pod %q from %s", pod.Namespace, pod.Name, source)
 
 	// Set the Host field to indicate this pod is scheduled on the current node.
-	pod.Spec.NodeName = nodeName
+	pod.Spec.NodeName = string(nodeName)
 
 	pod.ObjectMeta.SelfLink = getSelfLink(pod.Name, pod.Namespace)
 
@@ -88,7 +89,7 @@ func getSelfLink(name, namespace string) string {
 
 type defaultFunc func(pod *api.Pod) error
 
-func tryDecodeSinglePod(data []byte, defaultFn defaultFunc) (parsed bool, pod *api.Pod, err error) {
+func tryDecodeSinglePod(data []byte, defaultFn defaultFunc) (parsed bool, pod *v1.Pod, err error) {
 	// JSON is valid YAML, so this should work for everything.
 	json, err := utilyaml.ToJSON(data)
 	if err != nil {
@@ -112,10 +113,14 @@ func tryDecodeSinglePod(data []byte, defaultFn defaultFunc) (parsed bool, pod *a
 		err = fmt.Errorf("invalid pod: %v", errs)
 		return true, pod, err
 	}
-	return true, newPod, nil
+	v1Pod := &v1.Pod{}
+	if err := v1.Convert_api_Pod_To_v1_Pod(newPod, v1Pod, nil); err != nil {
+		return true, nil, err
+	}
+	return true, v1Pod, nil
 }
 
-func tryDecodePodList(data []byte, defaultFn defaultFunc) (parsed bool, pods api.PodList, err error) {
+func tryDecodePodList(data []byte, defaultFn defaultFunc) (parsed bool, pods v1.PodList, err error) {
 	obj, err := runtime.Decode(api.Codecs.UniversalDecoder(), data)
 	if err != nil {
 		return false, pods, err
@@ -137,5 +142,9 @@ func tryDecodePodList(data []byte, defaultFn defaultFunc) (parsed bool, pods api
 			return true, pods, err
 		}
 	}
-	return true, *newPods, err
+	v1Pods := &v1.PodList{}
+	if err := v1.Convert_api_PodList_To_v1_PodList(newPods, v1Pods, nil); err != nil {
+		return true, pods, err
+	}
+	return true, *v1Pods, err
 }

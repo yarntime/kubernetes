@@ -31,9 +31,10 @@ import (
 	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api/rest"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/util"
 	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/util/strategicpatch"
@@ -60,10 +61,11 @@ type ScopeNamer interface {
 	// SetSelfLink sets the provided URL onto the object. The method should return nil if the object
 	// does not support selfLinks.
 	SetSelfLink(obj runtime.Object, url string) error
-	// GenerateLink creates a path and query for a given runtime object that represents the canonical path.
-	GenerateLink(req *restful.Request, obj runtime.Object) (path, query string, err error)
-	// GenerateLink creates a path and query for a list that represents the canonical path.
-	GenerateListLink(req *restful.Request) (path, query string, err error)
+	// GenerateLink creates an encoded URI for a given runtime object that represents the canonical path
+	// and query.
+	GenerateLink(req *restful.Request, obj runtime.Object) (uri string, err error)
+	// GenerateLink creates an encoded URI for a list that represents the canonical path and query.
+	GenerateListLink(req *restful.Request) (uri string, err error)
 }
 
 // RequestScope encapsulates common fields across all RESTful handler methods.
@@ -78,8 +80,8 @@ type RequestScope struct {
 	Convertor runtime.ObjectConvertor
 	Copier    runtime.ObjectCopier
 
-	Resource    unversioned.GroupVersionResource
-	Kind        unversioned.GroupVersionKind
+	Resource    schema.GroupVersionResource
+	Kind        schema.GroupVersionKind
 	Subresource string
 }
 
@@ -126,13 +128,12 @@ func GetResource(r rest.Getter, e rest.Exporter, scope RequestScope) restful.Rou
 		func(ctx api.Context, name string, req *restful.Request) (runtime.Object, error) {
 			// For performance tracking purposes.
 			trace := util.NewTrace("Get " + req.Request.URL.Path)
-			defer trace.LogIfLong(250 * time.Millisecond)
+			defer trace.LogIfLong(500 * time.Millisecond)
 
 			// check for export
 			if values := req.Request.URL.Query(); len(values) > 0 {
-				// TODO: this is internal version, not unversioned
-				exports := unversioned.ExportOptions{}
-				if err := scope.ParameterCodec.DecodeParameters(values, unversioned.GroupVersion{Version: "v1"}, &exports); err != nil {
+				exports := metav1.ExportOptions{}
+				if err := scope.ParameterCodec.DecodeParameters(values, schema.GroupVersion{Version: "v1"}, &exports); err != nil {
 					return nil, err
 				}
 				if exports.Export {
@@ -334,7 +335,7 @@ func createHandler(r rest.NamedCreater, scope RequestScope, typer runtime.Object
 	return func(req *restful.Request, res *restful.Response) {
 		// For performance tracking purposes.
 		trace := util.NewTrace("Create " + req.Request.URL.Path)
-		defer trace.LogIfLong(250 * time.Millisecond)
+		defer trace.LogIfLong(500 * time.Millisecond)
 
 		w := res.ResponseWriter
 
@@ -364,7 +365,7 @@ func createHandler(r rest.NamedCreater, scope RequestScope, typer runtime.Object
 			scope.err(err, res.ResponseWriter, req.Request)
 			return
 		}
-		decoder := scope.Serializer.DecoderToVersion(s, unversioned.GroupVersion{Group: gv.Group, Version: runtime.APIVersionInternal})
+		decoder := scope.Serializer.DecoderToVersion(s.Serializer, schema.GroupVersion{Group: gv.Group, Version: runtime.APIVersionInternal})
 
 		body, err := readBody(req.Request)
 		if err != nil {
@@ -401,7 +402,7 @@ func createHandler(r rest.NamedCreater, scope RequestScope, typer runtime.Object
 		trace.Step("About to store object in database")
 		result, err := finishRequest(timeout, func() (runtime.Object, error) {
 			out, err := r.Create(ctx, name, obj)
-			if status, ok := out.(*unversioned.Status); ok && err == nil && status.Code == 0 {
+			if status, ok := out.(*metav1.Status); ok && err == nil && status.Code == 0 {
 				status.Code = http.StatusCreated
 			}
 			return out, err
@@ -480,15 +481,15 @@ func PatchResource(r rest.Patcher, scope RequestScope, typer runtime.ObjectTyper
 			return
 		}
 
-		s, ok := scope.Serializer.SerializerForMediaType("application/json", nil)
+		s, ok := runtime.SerializerInfoForMediaType(scope.Serializer.SupportedMediaTypes(), runtime.ContentTypeJSON)
 		if !ok {
 			scope.err(fmt.Errorf("no serializer defined for JSON"), res.ResponseWriter, req.Request)
 			return
 		}
 		gv := scope.Kind.GroupVersion()
 		codec := runtime.NewCodec(
-			scope.Serializer.EncoderForVersion(s, gv),
-			scope.Serializer.DecoderToVersion(s, unversioned.GroupVersion{Group: gv.Group, Version: runtime.APIVersionInternal}),
+			scope.Serializer.EncoderForVersion(s.Serializer, gv),
+			scope.Serializer.DecoderToVersion(s.Serializer, schema.GroupVersion{Group: gv.Group, Version: runtime.APIVersionInternal}),
 		)
 
 		updateAdmit := func(updatedObject runtime.Object, currentObject runtime.Object) error {
@@ -530,7 +531,7 @@ func patchResource(
 	patchJS []byte,
 	namer ScopeNamer,
 	copier runtime.ObjectCopier,
-	resource unversioned.GroupVersionResource,
+	resource schema.GroupVersionResource,
 	codec runtime.Codec,
 ) (runtime.Object, error) {
 
@@ -656,7 +657,7 @@ func UpdateResource(r rest.Updater, scope RequestScope, typer runtime.ObjectType
 	return func(req *restful.Request, res *restful.Response) {
 		// For performance tracking purposes.
 		trace := util.NewTrace("Update " + req.Request.URL.Path)
-		defer trace.LogIfLong(250 * time.Millisecond)
+		defer trace.LogIfLong(500 * time.Millisecond)
 
 		w := res.ResponseWriter
 
@@ -685,7 +686,7 @@ func UpdateResource(r rest.Updater, scope RequestScope, typer runtime.ObjectType
 		defaultGVK := scope.Kind
 		original := r.New()
 		trace.Step("About to convert to expected version")
-		obj, gvk, err := scope.Serializer.DecoderToVersion(s, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, original)
+		obj, gvk, err := scope.Serializer.DecoderToVersion(s.Serializer, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, original)
 		if err != nil {
 			err = transformDecodeError(typer, err, original, gvk, body)
 			scope.err(err, res.ResponseWriter, req.Request)
@@ -739,11 +740,11 @@ func UpdateResource(r rest.Updater, scope RequestScope, typer runtime.ObjectType
 }
 
 // DeleteResource returns a function that will handle a resource deletion
-func DeleteResource(r rest.GracefulDeleter, checkBody bool, scope RequestScope, admit admission.Interface) restful.RouteFunction {
+func DeleteResource(r rest.GracefulDeleter, allowsOptions bool, scope RequestScope, admit admission.Interface) restful.RouteFunction {
 	return func(req *restful.Request, res *restful.Response) {
 		// For performance tracking purposes.
 		trace := util.NewTrace("Delete " + req.Request.URL.Path)
-		defer trace.LogIfLong(250 * time.Millisecond)
+		defer trace.LogIfLong(500 * time.Millisecond)
 
 		w := res.ResponseWriter
 
@@ -759,7 +760,7 @@ func DeleteResource(r rest.GracefulDeleter, checkBody bool, scope RequestScope, 
 		ctx = api.WithNamespace(ctx, namespace)
 
 		options := &api.DeleteOptions{}
-		if checkBody {
+		if allowsOptions {
 			body, err := readBody(req.Request)
 			if err != nil {
 				scope.err(err, res.ResponseWriter, req.Request)
@@ -772,7 +773,7 @@ func DeleteResource(r rest.GracefulDeleter, checkBody bool, scope RequestScope, 
 					return
 				}
 				defaultGVK := scope.Kind.GroupVersion().WithKind("DeleteOptions")
-				obj, _, err := scope.Serializer.DecoderToVersion(s, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, options)
+				obj, _, err := scope.Serializer.DecoderToVersion(s.Serializer, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, options)
 				if err != nil {
 					scope.err(err, res.ResponseWriter, req.Request)
 					return
@@ -780,6 +781,13 @@ func DeleteResource(r rest.GracefulDeleter, checkBody bool, scope RequestScope, 
 				if obj != options {
 					scope.err(fmt.Errorf("decoded object cannot be converted to DeleteOptions"), res.ResponseWriter, req.Request)
 					return
+				}
+			} else {
+				if values := req.Request.URL.Query(); len(values) > 0 {
+					if err := scope.ParameterCodec.DecodeParameters(values, scope.Kind.GroupVersion(), options); err != nil {
+						scope.err(err, res.ResponseWriter, req.Request)
+						return
+					}
 				}
 			}
 		}
@@ -807,17 +815,17 @@ func DeleteResource(r rest.GracefulDeleter, checkBody bool, scope RequestScope, 
 		// if the rest.Deleter returns a nil object, fill out a status. Callers may return a valid
 		// object with the response.
 		if result == nil {
-			result = &unversioned.Status{
-				Status: unversioned.StatusSuccess,
+			result = &metav1.Status{
+				Status: metav1.StatusSuccess,
 				Code:   http.StatusOK,
-				Details: &unversioned.StatusDetails{
+				Details: &metav1.StatusDetails{
 					Name: name,
 					Kind: scope.Kind.Kind,
 				},
 			}
 		} else {
 			// when a non-status response is returned, set the self link
-			if _, ok := result.(*unversioned.Status); !ok {
+			if _, ok := result.(*metav1.Status); !ok {
 				if err := setSelfLink(result, req, scope.Namer); err != nil {
 					scope.err(err, res.ResponseWriter, req.Request)
 					return
@@ -889,7 +897,7 @@ func DeleteCollection(r rest.CollectionDeleter, checkBody bool, scope RequestSco
 					return
 				}
 				defaultGVK := scope.Kind.GroupVersion().WithKind("DeleteOptions")
-				obj, _, err := scope.Serializer.DecoderToVersion(s, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, options)
+				obj, _, err := scope.Serializer.DecoderToVersion(s.Serializer, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, options)
 				if err != nil {
 					scope.err(err, res.ResponseWriter, req.Request)
 					return
@@ -912,16 +920,16 @@ func DeleteCollection(r rest.CollectionDeleter, checkBody bool, scope RequestSco
 		// if the rest.Deleter returns a nil object, fill out a status. Callers may return a valid
 		// object with the response.
 		if result == nil {
-			result = &unversioned.Status{
-				Status: unversioned.StatusSuccess,
+			result = &metav1.Status{
+				Status: metav1.StatusSuccess,
 				Code:   http.StatusOK,
-				Details: &unversioned.StatusDetails{
+				Details: &metav1.StatusDetails{
 					Kind: scope.Kind.Kind,
 				},
 			}
 		} else {
 			// when a non-status response is returned, set the self link
-			if _, ok := result.(*unversioned.Status); !ok {
+			if _, ok := result.(*metav1.Status); !ok {
 				if _, err := setListSelfLink(result, req, scope.Namer); err != nil {
 					scope.err(err, res.ResponseWriter, req.Request)
 					return
@@ -959,7 +967,7 @@ func finishRequest(timeout time.Duration, fn resultFunc) (result runtime.Object,
 
 	select {
 	case result = <-ch:
-		if status, ok := result.(*unversioned.Status); ok {
+		if status, ok := result.(*metav1.Status); ok {
 			return nil, errors.FromObject(status)
 		}
 		return result, nil
@@ -973,7 +981,7 @@ func finishRequest(timeout time.Duration, fn resultFunc) (result runtime.Object,
 }
 
 // transformDecodeError adds additional information when a decode fails.
-func transformDecodeError(typer runtime.ObjectTyper, baseErr error, into runtime.Object, gvk *unversioned.GroupVersionKind, body []byte) error {
+func transformDecodeError(typer runtime.ObjectTyper, baseErr error, into runtime.Object, gvk *schema.GroupVersionKind, body []byte) error {
 	objGVKs, _, err := typer.ObjectKinds(into)
 	if err != nil {
 		return err
@@ -990,18 +998,12 @@ func transformDecodeError(typer runtime.ObjectTyper, baseErr error, into runtime
 // plus the path and query generated by the provided linkFunc
 func setSelfLink(obj runtime.Object, req *restful.Request, namer ScopeNamer) error {
 	// TODO: SelfLink generation should return a full URL?
-	path, query, err := namer.GenerateLink(req, obj)
+	uri, err := namer.GenerateLink(req, obj)
 	if err != nil {
 		return nil
 	}
 
-	newURL := *req.Request.URL
-	// use only canonical paths
-	newURL.Path = path
-	newURL.RawQuery = query
-	newURL.Fragment = ""
-
-	return namer.SetSelfLink(obj, newURL.String())
+	return namer.SetSelfLink(obj, uri)
 }
 
 func hasUID(obj runtime.Object) (bool, error) {
@@ -1045,31 +1047,20 @@ func setListSelfLink(obj runtime.Object, req *restful.Request, namer ScopeNamer)
 		return 0, nil
 	}
 
-	// TODO: List SelfLink generation should return a full URL?
-	path, query, err := namer.GenerateListLink(req)
+	uri, err := namer.GenerateListLink(req)
 	if err != nil {
 		return 0, err
 	}
-	newURL := *req.Request.URL
-	newURL.Path = path
-	newURL.RawQuery = query
-	// use the path that got us here
-	newURL.Fragment = ""
-	if err := namer.SetSelfLink(obj, newURL.String()); err != nil {
+	if err := namer.SetSelfLink(obj, uri); err != nil {
 		glog.V(4).Infof("Unable to set self link on object: %v", err)
 	}
 
-	// Set self-link of objects in the list.
-	items, err := meta.ExtractList(obj)
-	if err != nil {
-		return 0, err
-	}
-	for i := range items {
-		if err := setSelfLink(items[i], req, namer); err != nil {
-			return len(items), err
-		}
-	}
-	return len(items), meta.SetList(obj, items)
+	count := 0
+	err = meta.EachListItem(obj, func(obj runtime.Object) error {
+		count++
+		return setSelfLink(obj, req, namer)
+	})
+	return count, err
 }
 
 func getPatchedJS(patchType api.PatchType, originalJS, patchJS []byte, obj runtime.Object) ([]byte, error) {

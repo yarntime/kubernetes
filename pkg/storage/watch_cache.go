@@ -26,7 +26,10 @@ import (
 	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/client/cache"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/clock"
 	"k8s.io/kubernetes/pkg/watch"
 )
@@ -44,8 +47,30 @@ const (
 type watchCacheEvent struct {
 	Type            watch.EventType
 	Object          runtime.Object
+	ObjLabels       labels.Set
+	ObjFields       fields.Set
 	PrevObject      runtime.Object
+	PrevObjLabels   labels.Set
+	PrevObjFields   fields.Set
+	Key             string
 	ResourceVersion uint64
+}
+
+// Computing a key of an object is generally non-trivial (it performs
+// e.g. validation underneath). To avoid computing it multiple times
+// (to serve the event in different List/Watch requests), in the
+// underlying store we are keeping pair (key, object).
+type storeElement struct {
+	Key    string
+	Object runtime.Object
+}
+
+func storeElementKey(obj interface{}) (string, error) {
+	elem, ok := obj.(*storeElement)
+	if !ok {
+		return "", fmt.Errorf("not a storeElement: %v", obj)
+	}
+	return elem.Key, nil
 }
 
 // watchCacheElement is a single "watch event" stored in a cache.
@@ -71,6 +96,12 @@ type watchCache struct {
 	// Maximum size of history window.
 	capacity int
 
+	// keyFunc is used to get a key in the underlying storage for a given object.
+	keyFunc func(runtime.Object) (string, error)
+
+	// getAttrsFunc is used to get labels and fields of an object.
+	getAttrsFunc func(runtime.Object) (labels.Set, fields.Set, error)
+
 	// cache is used a cyclic buffer - its first element (with the smallest
 	// resourceVersion) is defined by startIndex, its last element is defined
 	// by endIndex (if cache is full it will be startIndex + capacity).
@@ -83,6 +114,7 @@ type watchCache struct {
 	// store will effectively support LIST operation from the "end of cache
 	// history" i.e. from the moment just after the newest cached watched event.
 	// It is necessary to effectively allow clients to start watching at now.
+	// NOTE: We assume that <store> is thread-safe.
 	store cache.Store
 
 	// ResourceVersion up to which the watchCache is propagated.
@@ -99,13 +131,18 @@ type watchCache struct {
 	clock clock.Clock
 }
 
-func newWatchCache(capacity int) *watchCache {
+func newWatchCache(
+	capacity int,
+	keyFunc func(runtime.Object) (string, error),
+	getAttrsFunc func(runtime.Object) (labels.Set, fields.Set, error)) *watchCache {
 	wc := &watchCache{
 		capacity:        capacity,
+		keyFunc:         keyFunc,
+		getAttrsFunc:    getAttrsFunc,
 		cache:           make([]watchCacheElement, capacity),
 		startIndex:      0,
 		endIndex:        0,
-		store:           cache.NewStore(cache.MetaNamespaceKeyFunc),
+		store:           cache.NewStore(storeElementKey),
 		resourceVersion: 0,
 		clock:           clock.RealClock{},
 	}
@@ -113,6 +150,7 @@ func newWatchCache(capacity int) *watchCache {
 	return wc
 }
 
+// Add takes runtime.Object as an argument.
 func (w *watchCache) Add(obj interface{}) error {
 	object, resourceVersion, err := objectToVersionedRuntimeObject(obj)
 	if err != nil {
@@ -120,10 +158,11 @@ func (w *watchCache) Add(obj interface{}) error {
 	}
 	event := watch.Event{Type: watch.Added, Object: object}
 
-	f := func(obj runtime.Object) error { return w.store.Add(obj) }
+	f := func(elem *storeElement) error { return w.store.Add(elem) }
 	return w.processEvent(event, resourceVersion, f)
 }
 
+// Update takes runtime.Object as an argument.
 func (w *watchCache) Update(obj interface{}) error {
 	object, resourceVersion, err := objectToVersionedRuntimeObject(obj)
 	if err != nil {
@@ -131,10 +170,11 @@ func (w *watchCache) Update(obj interface{}) error {
 	}
 	event := watch.Event{Type: watch.Modified, Object: object}
 
-	f := func(obj runtime.Object) error { return w.store.Update(obj) }
+	f := func(elem *storeElement) error { return w.store.Update(elem) }
 	return w.processEvent(event, resourceVersion, f)
 }
 
+// Delete takes runtime.Object as an argument.
 func (w *watchCache) Delete(obj interface{}) error {
 	object, resourceVersion, err := objectToVersionedRuntimeObject(obj)
 	if err != nil {
@@ -142,7 +182,7 @@ func (w *watchCache) Delete(obj interface{}) error {
 	}
 	event := watch.Event{Type: watch.Deleted, Object: object}
 
-	f := func(obj runtime.Object) error { return w.store.Delete(obj) }
+	f := func(elem *storeElement) error { return w.store.Delete(elem) }
 	return w.processEvent(event, resourceVersion, f)
 }
 
@@ -169,44 +209,76 @@ func parseResourceVersion(resourceVersion string) (uint64, error) {
 	return strconv.ParseUint(resourceVersion, 10, 64)
 }
 
-func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, updateFunc func(runtime.Object) error) error {
+func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, updateFunc func(*storeElement) error) error {
+	key, err := w.keyFunc(event.Object)
+	if err != nil {
+		return fmt.Errorf("couldn't compute key: %v", err)
+	}
+	elem := &storeElement{Key: key, Object: event.Object}
+
+	// TODO: We should consider moving this lock below after the watchCacheEvent
+	// is created. In such situation, the only problematic scenario is Replace(
+	// happening after getting object from store and before acquiring a lock.
+	// Maybe introduce another lock for this purpose.
 	w.Lock()
 	defer w.Unlock()
-	previous, exists, err := w.store.Get(event.Object)
+	previous, exists, err := w.store.Get(elem)
+	if err != nil {
+		return err
+	}
+	objLabels, objFields, err := w.getAttrsFunc(event.Object)
 	if err != nil {
 		return err
 	}
 	var prevObject runtime.Object
+	var prevObjLabels labels.Set
+	var prevObjFields fields.Set
 	if exists {
-		prevObject = previous.(runtime.Object)
+		prevObject = previous.(*storeElement).Object
+		prevObjLabels, prevObjFields, err = w.getAttrsFunc(prevObject)
+		if err != nil {
+			return err
+		}
 	}
-	watchCacheEvent := watchCacheEvent{event.Type, event.Object, prevObject, resourceVersion}
+	watchCacheEvent := watchCacheEvent{
+		Type:            event.Type,
+		Object:          event.Object,
+		ObjLabels:       objLabels,
+		ObjFields:       objFields,
+		PrevObject:      prevObject,
+		PrevObjLabels:   prevObjLabels,
+		PrevObjFields:   prevObjFields,
+		Key:             key,
+		ResourceVersion: resourceVersion,
+	}
 	if w.onEvent != nil {
 		w.onEvent(watchCacheEvent)
 	}
-	w.updateCache(resourceVersion, watchCacheEvent)
+	w.updateCache(resourceVersion, &watchCacheEvent)
 	w.resourceVersion = resourceVersion
 	w.cond.Broadcast()
-	return updateFunc(event.Object)
+	return updateFunc(elem)
 }
 
 // Assumes that lock is already held for write.
-func (w *watchCache) updateCache(resourceVersion uint64, event watchCacheEvent) {
+func (w *watchCache) updateCache(resourceVersion uint64, event *watchCacheEvent) {
 	if w.endIndex == w.startIndex+w.capacity {
 		// Cache is full - remove the oldest element.
 		w.startIndex++
 	}
-	w.cache[w.endIndex%w.capacity] = watchCacheElement{resourceVersion, event}
+	w.cache[w.endIndex%w.capacity] = watchCacheElement{resourceVersion, *event}
 	w.endIndex++
 }
 
+// List returns list of pointers to <storeElement> objects.
 func (w *watchCache) List() []interface{} {
-	w.RLock()
-	defer w.RUnlock()
 	return w.store.List()
 }
 
-func (w *watchCache) WaitUntilFreshAndList(resourceVersion uint64) ([]interface{}, uint64, error) {
+// waitUntilFreshAndBlock waits until cache is at least as fresh as given <resourceVersion>.
+// NOTE: This function acquired lock and doesn't release it.
+// You HAVE TO explicitly call w.RUnlock() after this function.
+func (w *watchCache) waitUntilFreshAndBlock(resourceVersion uint64, trace *util.Trace) error {
 	startTime := w.clock.Now()
 	go func() {
 		// Wake us up when the time limit has expired.  The docs
@@ -221,38 +293,84 @@ func (w *watchCache) WaitUntilFreshAndList(resourceVersion uint64) ([]interface{
 	}()
 
 	w.RLock()
-	defer w.RUnlock()
+	if trace != nil {
+		trace.Step("watchCache locked acquired")
+	}
 	for w.resourceVersion < resourceVersion {
 		if w.clock.Since(startTime) >= MaximumListWait {
-			return nil, 0, fmt.Errorf("time limit exceeded while waiting for resource version %v (current value: %v)", resourceVersion, w.resourceVersion)
+			return fmt.Errorf("time limit exceeded while waiting for resource version %v (current value: %v)", resourceVersion, w.resourceVersion)
 		}
 		w.cond.Wait()
+	}
+	if trace != nil {
+		trace.Step("watchCache fresh enough")
+	}
+	return nil
+}
+
+// WaitUntilFreshAndList returns list of pointers to <storeElement> objects.
+func (w *watchCache) WaitUntilFreshAndList(resourceVersion uint64, trace *util.Trace) ([]interface{}, uint64, error) {
+	err := w.waitUntilFreshAndBlock(resourceVersion, trace)
+	defer w.RUnlock()
+	if err != nil {
+		return nil, 0, err
 	}
 	return w.store.List(), w.resourceVersion, nil
 }
 
-func (w *watchCache) ListKeys() []string {
-	w.RLock()
+// WaitUntilFreshAndGet returns a pointers to <storeElement> object.
+func (w *watchCache) WaitUntilFreshAndGet(resourceVersion uint64, key string, trace *util.Trace) (interface{}, bool, uint64, error) {
+	err := w.waitUntilFreshAndBlock(resourceVersion, trace)
 	defer w.RUnlock()
+	if err != nil {
+		return nil, false, 0, err
+	}
+	value, exists, err := w.store.GetByKey(key)
+	return value, exists, w.resourceVersion, err
+}
+
+func (w *watchCache) ListKeys() []string {
 	return w.store.ListKeys()
 }
 
+// Get takes runtime.Object as a parameter. However, it returns
+// pointer to <storeElement>.
 func (w *watchCache) Get(obj interface{}) (interface{}, bool, error) {
-	w.RLock()
-	defer w.RUnlock()
-	return w.store.Get(obj)
+	object, ok := obj.(runtime.Object)
+	if !ok {
+		return nil, false, fmt.Errorf("obj does not implement runtime.Object interface: %v", obj)
+	}
+	key, err := w.keyFunc(object)
+	if err != nil {
+		return nil, false, fmt.Errorf("couldn't compute key: %v", err)
+	}
+
+	return w.store.Get(&storeElement{Key: key, Object: object})
 }
 
+// GetByKey returns pointer to <storeElement>.
 func (w *watchCache) GetByKey(key string) (interface{}, bool, error) {
-	w.RLock()
-	defer w.RUnlock()
 	return w.store.GetByKey(key)
 }
 
+// Replace takes slice of runtime.Object as a paramater.
 func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 	version, err := parseResourceVersion(resourceVersion)
 	if err != nil {
 		return err
+	}
+
+	toReplace := make([]interface{}, 0, len(objs))
+	for _, obj := range objs {
+		object, ok := obj.(runtime.Object)
+		if !ok {
+			return fmt.Errorf("didn't get runtime.Object for replace: %#v", obj)
+		}
+		key, err := w.keyFunc(object)
+		if err != nil {
+			return fmt.Errorf("couldn't compute key: %v", err)
+		}
+		toReplace = append(toReplace, &storeElement{Key: key, Object: object})
 	}
 
 	w.Lock()
@@ -260,7 +378,7 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 
 	w.startIndex = 0
 	w.endIndex = 0
-	if err := w.store.Replace(objs, resourceVersion); err != nil {
+	if err := w.store.Replace(toReplace, resourceVersion); err != nil {
 		return err
 	}
 	w.resourceVersion = version
@@ -299,7 +417,22 @@ func (w *watchCache) GetAllEventsSinceThreadUnsafe(resourceVersion uint64) ([]wa
 		allItems := w.store.List()
 		result := make([]watchCacheEvent, len(allItems))
 		for i, item := range allItems {
-			result[i] = watchCacheEvent{Type: watch.Added, Object: item.(runtime.Object)}
+			elem, ok := item.(*storeElement)
+			if !ok {
+				return nil, fmt.Errorf("not a storeElement: %v", elem)
+			}
+			objLabels, objFields, err := w.getAttrsFunc(elem.Object)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = watchCacheEvent{
+				Type:            watch.Added,
+				Object:          elem.Object,
+				ObjLabels:       objLabels,
+				ObjFields:       objFields,
+				Key:             elem.Key,
+				ResourceVersion: w.resourceVersion,
+			}
 		}
 		return result, nil
 	}

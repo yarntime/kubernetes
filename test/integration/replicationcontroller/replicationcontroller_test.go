@@ -26,11 +26,10 @@ import (
 	"time"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/client/cache"
-	internalclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_3"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
 	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/controller/informers"
 	"k8s.io/kubernetes/pkg/controller/replication"
@@ -45,7 +44,7 @@ func testLabels() map[string]string {
 func newRC(name, namespace string, replicas int) *v1.ReplicationController {
 	replicasCopy := int32(replicas)
 	return &v1.ReplicationController{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "ReplicationController",
 			APIVersion: "v1",
 		},
@@ -75,7 +74,7 @@ func newRC(name, namespace string, replicas int) *v1.ReplicationController {
 
 func newMatchingPod(podName, namespace string) *v1.Pod {
 	return &v1.Pod{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
@@ -104,7 +103,7 @@ func newMatchingPod(podName, namespace string) *v1.Pod {
 func verifyRemainingObjects(t *testing.T, clientSet clientset.Interface, namespace string, rcNum, podNum int) (bool, error) {
 	rcClient := clientSet.Core().ReplicationControllers(namespace)
 	podClient := clientSet.Core().Pods(namespace)
-	pods, err := podClient.List(api.ListOptions{})
+	pods, err := podClient.List(v1.ListOptions{})
 	if err != nil {
 		return false, fmt.Errorf("Failed to list pods: %v", err)
 	}
@@ -113,7 +112,7 @@ func verifyRemainingObjects(t *testing.T, clientSet clientset.Interface, namespa
 		ret = false
 		t.Logf("expect %d pods, got %d pods", podNum, len(pods.Items))
 	}
-	rcs, err := rcClient.List(api.ListOptions{})
+	rcs, err := rcClient.List(v1.ListOptions{})
 	if err != nil {
 		return false, fmt.Errorf("Failed to list replication controllers: %v", err)
 	}
@@ -126,7 +125,6 @@ func verifyRemainingObjects(t *testing.T, clientSet clientset.Interface, namespa
 
 func rmSetup(t *testing.T, enableGarbageCollector bool) (*httptest.Server, *replication.ReplicationManager, cache.SharedIndexInformer, clientset.Interface) {
 	masterConfig := framework.NewIntegrationTestMasterConfig()
-	masterConfig.EnableCoreControllers = false
 	_, s := framework.RunAMaster(masterConfig)
 
 	config := restclient.Config{Host: s.URL}
@@ -138,10 +136,10 @@ func rmSetup(t *testing.T, enableGarbageCollector bool) (*httptest.Server, *repl
 	resyncPeriodFunc := func() time.Duration {
 		return resyncPeriod
 	}
-	podInformer := informers.NewPodInformer(internalclientset.NewForConfigOrDie(restclient.AddUserAgent(&config, "pod-informer")), resyncPeriod)
+	podInformer := informers.NewPodInformer(clientset.NewForConfigOrDie(restclient.AddUserAgent(&config, "pod-informer")), resyncPeriod)
 	rm := replication.NewReplicationManager(
 		podInformer,
-		internalclientset.NewForConfigOrDie(restclient.AddUserAgent(&config, "replication-controller")),
+		clientset.NewForConfigOrDie(restclient.AddUserAgent(&config, "replication-controller")),
 		resyncPeriodFunc,
 		replication.BurstReplicas,
 		4096,

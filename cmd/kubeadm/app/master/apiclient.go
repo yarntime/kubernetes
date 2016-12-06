@@ -19,13 +19,16 @@ package master
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"time"
 
+	"k8s.io/kubernetes/cmd/kubeadm/app/images"
 	"k8s.io/kubernetes/pkg/api"
 	apierrs "k8s.io/kubernetes/pkg/api/errors"
-	unversionedapi "k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/apis/extensions"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/kubernetes/pkg/api/v1"
+	extensions "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
 	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
 	clientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
 	"k8s.io/kubernetes/pkg/util/wait"
@@ -53,7 +56,7 @@ func CreateClientAndWaitForAPI(adminConfig *clientcmdapi.Config) (*clientset.Cli
 
 	start := time.Now()
 	wait.PollInfinite(apiCallRetryInterval, func() (bool, error) {
-		cs, err := client.ComponentStatuses().List(api.ListOptions{})
+		cs, err := client.ComponentStatuses().List(v1.ListOptions{})
 		if err != nil {
 			return false, nil
 		}
@@ -64,7 +67,7 @@ func CreateClientAndWaitForAPI(adminConfig *clientcmdapi.Config) (*clientset.Cli
 		}
 		for _, item := range cs.Items {
 			for _, condition := range item.Conditions {
-				if condition.Type != api.ComponentHealthy {
+				if condition.Type != v1.ComponentHealthy {
 					fmt.Printf("<master/apiclient> control plane component %q is still unhealthy: %#v\n", item.ObjectMeta.Name, item.Conditions)
 					return false, nil
 				}
@@ -78,7 +81,7 @@ func CreateClientAndWaitForAPI(adminConfig *clientcmdapi.Config) (*clientset.Cli
 	fmt.Println("<master/apiclient> waiting for at least one node to register and become ready")
 	start = time.Now()
 	wait.PollInfinite(apiCallRetryInterval, func() (bool, error) {
-		nodeList, err := client.Nodes().List(api.ListOptions{})
+		nodeList, err := client.Nodes().List(v1.ListOptions{})
 		if err != nil {
 			fmt.Println("<master/apiclient> temporarily unable to list nodes (will retry)")
 			return false, nil
@@ -87,7 +90,7 @@ func CreateClientAndWaitForAPI(adminConfig *clientcmdapi.Config) (*clientset.Cli
 			return false, nil
 		}
 		n := &nodeList.Items[0]
-		if !api.IsNodeReady(n) {
+		if !v1.IsNodeReady(n) {
 			fmt.Println("<master/apiclient> first node has registered, but is not ready yet")
 			return false, nil
 		}
@@ -95,6 +98,8 @@ func CreateClientAndWaitForAPI(adminConfig *clientcmdapi.Config) (*clientset.Cli
 		fmt.Printf("<master/apiclient> first node is ready after %f seconds\n", time.Since(start).Seconds())
 		return true, nil
 	})
+
+	createDummyDeployment(client)
 
 	return client, nil
 }
@@ -106,24 +111,24 @@ func standardLabels(n string) map[string]string {
 	}
 }
 
-func NewDaemonSet(daemonName string, podSpec api.PodSpec) *extensions.DaemonSet {
+func NewDaemonSet(daemonName string, podSpec v1.PodSpec) *extensions.DaemonSet {
 	l := standardLabels(daemonName)
 	return &extensions.DaemonSet{
-		ObjectMeta: api.ObjectMeta{Name: daemonName},
+		ObjectMeta: v1.ObjectMeta{Name: daemonName},
 		Spec: extensions.DaemonSetSpec{
-			Selector: &unversionedapi.LabelSelector{MatchLabels: l},
-			Template: api.PodTemplateSpec{
-				ObjectMeta: api.ObjectMeta{Labels: l},
+			Selector: &metav1.LabelSelector{MatchLabels: l},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: v1.ObjectMeta{Labels: l},
 				Spec:       podSpec,
 			},
 		},
 	}
 }
 
-func NewService(serviceName string, spec api.ServiceSpec) *api.Service {
+func NewService(serviceName string, spec v1.ServiceSpec) *v1.Service {
 	l := standardLabels(serviceName)
-	return &api.Service{
-		ObjectMeta: api.ObjectMeta{
+	return &v1.Service{
+		ObjectMeta: v1.ObjectMeta{
 			Name:   serviceName,
 			Labels: l,
 		},
@@ -131,15 +136,15 @@ func NewService(serviceName string, spec api.ServiceSpec) *api.Service {
 	}
 }
 
-func NewDeployment(deploymentName string, replicas int32, podSpec api.PodSpec) *extensions.Deployment {
+func NewDeployment(deploymentName string, replicas int32, podSpec v1.PodSpec) *extensions.Deployment {
 	l := standardLabels(deploymentName)
 	return &extensions.Deployment{
-		ObjectMeta: api.ObjectMeta{Name: deploymentName},
+		ObjectMeta: v1.ObjectMeta{Name: deploymentName},
 		Spec: extensions.DeploymentSpec{
-			Replicas: replicas,
-			Selector: &unversionedapi.LabelSelector{MatchLabels: l},
-			Template: api.PodTemplateSpec{
-				ObjectMeta: api.ObjectMeta{Labels: l},
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: l},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: v1.ObjectMeta{Labels: l},
 				Spec:       podSpec,
 			},
 		},
@@ -148,8 +153,8 @@ func NewDeployment(deploymentName string, replicas int32, podSpec api.PodSpec) *
 
 // It's safe to do this for alpha, as we don't have HA and there is no way we can get
 // more then one node here (TODO(phase1+) use os.Hostname)
-func findMyself(client *clientset.Clientset) (*api.Node, error) {
-	nodeList, err := client.Nodes().List(api.ListOptions{})
+func findMyself(client *clientset.Clientset) (*v1.Node, error) {
+	nodeList, err := client.Nodes().List(v1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("unable to list nodes [%v]", err)
 	}
@@ -166,11 +171,11 @@ func attemptToUpdateMasterRoleLabelsAndTaints(client *clientset.Clientset, sched
 		return err
 	}
 
-	n.ObjectMeta.Labels["kubeadm.alpha.kubernetes.io/role"] = "master"
+	n.ObjectMeta.Labels[metav1.NodeLabelKubeadmAlphaRole] = metav1.NodeLabelRoleMaster
 
 	if !schedulable {
-		taintsAnnotation, _ := json.Marshal([]api.Taint{{Key: "dedicated", Value: "master", Effect: "NoSchedule"}})
-		n.ObjectMeta.Annotations[api.TaintsAnnotationKey] = string(taintsAnnotation)
+		taintsAnnotation, _ := json.Marshal([]v1.Taint{{Key: "dedicated", Value: "master", Effect: "NoSchedule"}})
+		n.ObjectMeta.Annotations[v1.TaintsAnnotationKey] = string(taintsAnnotation)
 	}
 
 	if _, err := client.Nodes().Update(n); err != nil {
@@ -195,27 +200,80 @@ func UpdateMasterRoleLabelsAndTaints(client *clientset.Clientset, schedulable bo
 	return nil
 }
 
-func SetMasterTaintTolerations(meta *api.ObjectMeta) {
-	tolerationsAnnotation, _ := json.Marshal([]api.Toleration{{Key: "dedicated", Value: "master", Effect: "NoSchedule"}})
+func SetMasterTaintTolerations(meta *v1.ObjectMeta) {
+	tolerationsAnnotation, _ := json.Marshal([]v1.Toleration{{Key: "dedicated", Value: "master", Effect: "NoSchedule"}})
 	if meta.Annotations == nil {
 		meta.Annotations = map[string]string{}
 	}
-	meta.Annotations[api.TolerationsAnnotationKey] = string(tolerationsAnnotation)
+	meta.Annotations[v1.TolerationsAnnotationKey] = string(tolerationsAnnotation)
 }
 
-func SetMasterNodeAffinity(meta *api.ObjectMeta) {
-	nodeAffinity := &api.NodeAffinity{
-		RequiredDuringSchedulingIgnoredDuringExecution: &api.NodeSelector{
-			NodeSelectorTerms: []api.NodeSelectorTerm{{
-				MatchExpressions: []api.NodeSelectorRequirement{{
-					Key: "kubeadm.alpha.kubernetes.io/role", Operator: api.NodeSelectorOpIn, Values: []string{"master"},
-				}},
-			}},
+// SetNodeAffinity is a basic helper to set meta.Annotations[v1.AffinityAnnotationKey] for one or more v1.NodeSelectorRequirement(s)
+func SetNodeAffinity(meta *v1.ObjectMeta, expr ...v1.NodeSelectorRequirement) {
+	nodeAffinity := &v1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
+			NodeSelectorTerms: []v1.NodeSelectorTerm{{MatchExpressions: expr}},
 		},
 	}
-	affinityAnnotation, _ := json.Marshal(api.Affinity{NodeAffinity: nodeAffinity})
+	affinityAnnotation, _ := json.Marshal(v1.Affinity{NodeAffinity: nodeAffinity})
 	if meta.Annotations == nil {
 		meta.Annotations = map[string]string{}
 	}
-	meta.Annotations[api.AffinityAnnotationKey] = string(affinityAnnotation)
+	meta.Annotations[v1.AffinityAnnotationKey] = string(affinityAnnotation)
+}
+
+// MasterNodeAffinity returns v1.NodeSelectorRequirement to be used with SetNodeAffinity to set affinity to master node
+func MasterNodeAffinity() v1.NodeSelectorRequirement {
+	return v1.NodeSelectorRequirement{
+		Key:      metav1.NodeLabelKubeadmAlphaRole,
+		Operator: v1.NodeSelectorOpIn,
+		Values:   []string{metav1.NodeLabelRoleMaster},
+	}
+}
+
+// NativeArchitectureNodeAffinity returns v1.NodeSelectorRequirement to be used with SetNodeAffinity to nodes with CPU architecture
+// the same as master node
+func NativeArchitectureNodeAffinity() v1.NodeSelectorRequirement {
+	return v1.NodeSelectorRequirement{
+		Key: "beta.kubernetes.io/arch", Operator: v1.NodeSelectorOpIn, Values: []string{runtime.GOARCH},
+	}
+}
+
+func createDummyDeployment(client *clientset.Clientset) {
+	fmt.Println("<master/apiclient> attempting a test deployment")
+	dummyDeployment := NewDeployment("dummy", 1, v1.PodSpec{
+		HostNetwork:     true,
+		SecurityContext: &v1.PodSecurityContext{},
+		Containers: []v1.Container{{
+			Name:  "dummy",
+			Image: images.GetAddonImage("pause"),
+		}},
+	})
+
+	wait.PollInfinite(apiCallRetryInterval, func() (bool, error) {
+		// TODO: we should check the error, as some cases may be fatal
+		if _, err := client.Extensions().Deployments(api.NamespaceSystem).Create(dummyDeployment); err != nil {
+			fmt.Printf("<master/apiclient> failed to create test deployment [%v] (will retry)", err)
+			return false, nil
+		}
+		return true, nil
+	})
+
+	wait.PollInfinite(apiCallRetryInterval, func() (bool, error) {
+		d, err := client.Extensions().Deployments(api.NamespaceSystem).Get("dummy")
+		if err != nil {
+			fmt.Printf("<master/apiclient> failed to get test deployment [%v] (will retry)", err)
+			return false, nil
+		}
+		if d.Status.AvailableReplicas < 1 {
+			return false, nil
+		}
+		return true, nil
+	})
+
+	fmt.Println("<master/apiclient> test deployment succeeded")
+
+	if err := client.Extensions().Deployments(api.NamespaceSystem).Delete("dummy", &v1.DeleteOptions{}); err != nil {
+		fmt.Printf("<master/apiclient> failed to delete test deployment [%v] (will ignore)", err)
+	}
 }

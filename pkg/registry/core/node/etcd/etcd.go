@@ -23,12 +23,13 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/rest"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/kubelet/client"
 	"k8s.io/kubernetes/pkg/registry/cachesize"
 	"k8s.io/kubernetes/pkg/registry/core/node"
 	noderest "k8s.io/kubernetes/pkg/registry/core/node/rest"
 	"k8s.io/kubernetes/pkg/registry/generic"
-	"k8s.io/kubernetes/pkg/registry/generic/registry"
+	genericregistry "k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 )
 
@@ -37,17 +38,19 @@ type NodeStorage struct {
 	Node   *REST
 	Status *StatusREST
 	Proxy  *noderest.ProxyREST
+
+	KubeletConnectionInfo client.ConnectionInfoGetter
 }
 
 type REST struct {
-	*registry.Store
+	*genericregistry.Store
 	connection     client.ConnectionInfoGetter
 	proxyTransport http.RoundTripper
 }
 
 // StatusREST implements the REST endpoint for changing the status of a pod.
 type StatusREST struct {
-	store *registry.Store
+	store *genericregistry.Store
 }
 
 func (r *StatusREST) New() runtime.Object {
@@ -65,7 +68,7 @@ func (r *StatusREST) Update(ctx api.Context, name string, objInfo rest.UpdatedOb
 }
 
 // NewStorage returns a NodeStorage object that will work against nodes.
-func NewStorage(opts generic.RESTOptions, connection client.ConnectionInfoGetter, proxyTransport http.RoundTripper) NodeStorage {
+func NewStorage(opts generic.RESTOptions, kubeletClientConfig client.KubeletClientConfig, proxyTransport http.RoundTripper) (*NodeStorage, error) {
 	prefix := "/" + opts.ResourcePrefix
 
 	newListFunc := func() runtime.Object { return &api.NodeList{} }
@@ -76,16 +79,17 @@ func NewStorage(opts generic.RESTOptions, connection client.ConnectionInfoGetter
 		prefix,
 		node.Strategy,
 		newListFunc,
+		node.GetAttrs,
 		node.NodeNameTriggerFunc)
 
-	store := &registry.Store{
+	store := &genericregistry.Store{
 		NewFunc:     func() runtime.Object { return &api.Node{} },
 		NewListFunc: newListFunc,
 		KeyRootFunc: func(ctx api.Context) string {
 			return prefix
 		},
 		KeyFunc: func(ctx api.Context, name string) (string, error) {
-			return registry.NoNamespaceKeyFunc(ctx, prefix, name)
+			return genericregistry.NoNamespaceKeyFunc(ctx, prefix, name)
 		},
 		ObjectNameFunc: func(obj runtime.Object) (string, error) {
 			return obj.(*api.Node).Name, nil
@@ -107,13 +111,42 @@ func NewStorage(opts generic.RESTOptions, connection client.ConnectionInfoGetter
 	statusStore := *store
 	statusStore.UpdateStrategy = node.StatusStrategy
 
-	nodeREST := &REST{store, connection, proxyTransport}
+	// Set up REST handlers
+	nodeREST := &REST{Store: store, proxyTransport: proxyTransport}
+	statusREST := &StatusREST{store: &statusStore}
+	proxyREST := &noderest.ProxyREST{Store: store, ProxyTransport: proxyTransport}
 
-	return NodeStorage{
-		Node:   nodeREST,
-		Status: &StatusREST{store: &statusStore},
-		Proxy:  &noderest.ProxyREST{Store: store, Connection: client.ConnectionInfoGetter(nodeREST), ProxyTransport: proxyTransport},
+	// Build a NodeGetter that looks up nodes using the REST handler
+	nodeGetter := client.NodeGetterFunc(func(nodeName string) (*v1.Node, error) {
+		obj, err := nodeREST.Get(api.NewContext(), nodeName)
+		if err != nil {
+			return nil, err
+		}
+		node, ok := obj.(*api.Node)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type %T", obj)
+		}
+		// TODO: Remove the conversion. Consider only return the NodeAddresses
+		externalNode := &v1.Node{}
+		err = v1.Convert_api_Node_To_v1_Node(node, externalNode, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert to v1.Node: %v", err)
+		}
+		return externalNode, nil
+	})
+	connectionInfoGetter, err := client.NewNodeConnectionInfoGetter(nodeGetter, kubeletClientConfig)
+	if err != nil {
+		return nil, err
 	}
+	nodeREST.connection = connectionInfoGetter
+	proxyREST.Connection = connectionInfoGetter
+
+	return &NodeStorage{
+		Node:   nodeREST,
+		Status: statusREST,
+		Proxy:  proxyREST,
+		KubeletConnectionInfo: connectionInfoGetter,
+	}, nil
 }
 
 // Implement Redirector.
@@ -121,35 +154,5 @@ var _ = rest.Redirector(&REST{})
 
 // ResourceLocation returns a URL to which one can send traffic for the specified node.
 func (r *REST) ResourceLocation(ctx api.Context, id string) (*url.URL, http.RoundTripper, error) {
-	return node.ResourceLocation(r, r, r.proxyTransport, ctx, id)
-}
-
-var _ = client.ConnectionInfoGetter(&REST{})
-
-func (r *REST) getKubeletPort(ctx api.Context, nodeName string) (int, error) {
-	// We probably shouldn't care about context when looking for Node object.
-	obj, err := r.Get(ctx, nodeName)
-	if err != nil {
-		return 0, err
-	}
-	node, ok := obj.(*api.Node)
-	if !ok {
-		return 0, fmt.Errorf("Unexpected object type: %#v", node)
-	}
-	return int(node.Status.DaemonEndpoints.KubeletEndpoint.Port), nil
-}
-
-func (c *REST) GetConnectionInfo(ctx api.Context, nodeName string) (string, uint, http.RoundTripper, error) {
-	scheme, port, transport, err := c.connection.GetConnectionInfo(ctx, nodeName)
-	if err != nil {
-		return "", 0, nil, err
-	}
-	daemonPort, err := c.getKubeletPort(ctx, nodeName)
-	if err != nil {
-		return "", 0, nil, err
-	}
-	if daemonPort > 0 {
-		return scheme, uint(daemonPort), transport, nil
-	}
-	return scheme, port, transport, nil
+	return node.ResourceLocation(r, r.connection, r.proxyTransport, ctx, id)
 }

@@ -18,7 +18,7 @@ package storage
 
 import (
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 )
 
 // +genclient=true
@@ -31,8 +31,9 @@ import (
 // called "profiles" in other storage systems.
 // The name of a StorageClass object is significant, and is how users can request a particular class.
 type StorageClass struct {
-	unversioned.TypeMeta `json:",inline"`
-	api.ObjectMeta       `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	// +optional
+	api.ObjectMeta `json:"metadata,omitempty"`
 
 	// provisioner is the driver expected to handle this StorageClass.
 	// This is an optionally-prefixed name, like a label key.
@@ -45,15 +46,17 @@ type StorageClass struct {
 	// to the provisioner.  The only validation done on keys is that they are
 	// not empty.  The maximum number of parameters is
 	// 512, with a cumulative max size of 256K
+	// +optional
 	Parameters map[string]string `json:"parameters,omitempty"`
 }
 
 // StorageClassList is a collection of storage classes.
 type StorageClassList struct {
-	unversioned.TypeMeta `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
 	// Standard list metadata
 	// More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata
-	unversioned.ListMeta `json:"metadata,omitempty"`
+	// +optional
+	metav1.ListMeta `json:"metadata,omitempty"`
 
 	// Items is the list of StorageClasses
 	Items []StorageClass `json:"items"`

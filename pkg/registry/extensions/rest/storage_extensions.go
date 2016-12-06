@@ -17,6 +17,7 @@ limitations under the License.
 package rest
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/golang/glog"
@@ -25,7 +26,9 @@ import (
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	extensionsapiv1beta1 "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
+	extensionsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/extensions/internalversion"
 	"k8s.io/kubernetes/pkg/genericapiserver"
+	"k8s.io/kubernetes/pkg/registry"
 	horizontalpodautoscaleretcd "k8s.io/kubernetes/pkg/registry/autoscaling/horizontalpodautoscaler/etcd"
 	jobetcd "k8s.io/kubernetes/pkg/registry/batch/job/etcd"
 	expcontrolleretcd "k8s.io/kubernetes/pkg/registry/extensions/controller/etcd"
@@ -36,17 +39,15 @@ import (
 	pspetcd "k8s.io/kubernetes/pkg/registry/extensions/podsecuritypolicy/etcd"
 	replicasetetcd "k8s.io/kubernetes/pkg/registry/extensions/replicaset/etcd"
 	thirdpartyresourceetcd "k8s.io/kubernetes/pkg/registry/extensions/thirdpartyresource/etcd"
+	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 type RESTStorageProvider struct {
-	ResourceInterface                     ResourceInterface
-	DisableThirdPartyControllerForTesting bool
+	ResourceInterface ResourceInterface
 }
 
-var _ genericapiserver.RESTStorageProvider = &RESTStorageProvider{}
-
-func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter genericapiserver.RESTOptionsGetter) (genericapiserver.APIGroupInfo, bool) {
+func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter registry.RESTOptionsGetter) (genericapiserver.APIGroupInfo, bool) {
 	apiGroupInfo := genericapiserver.NewDefaultAPIGroupInfo(extensions.GroupName)
 
 	if apiResourceConfigSource.AnyResourcesForVersionEnabled(extensionsapiv1beta1.SchemeGroupVersion) {
@@ -57,7 +58,7 @@ func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource genericapise
 	return apiGroupInfo, true
 }
 
-func (p RESTStorageProvider) v1beta1Storage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter genericapiserver.RESTOptionsGetter) map[string]rest.Storage {
+func (p RESTStorageProvider) v1beta1Storage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter registry.RESTOptionsGetter) map[string]rest.Storage {
 	version := extensionsapiv1beta1.SchemeGroupVersion
 
 	storage := map[string]rest.Storage{}
@@ -73,17 +74,6 @@ func (p RESTStorageProvider) v1beta1Storage(apiResourceConfigSource genericapise
 	}
 	if apiResourceConfigSource.ResourceEnabled(version.WithResource("thirdpartyresources")) {
 		thirdPartyResourceStorage := thirdpartyresourceetcd.NewREST(restOptionsGetter(extensions.Resource("thirdpartyresources")))
-		thirdPartyControl := ThirdPartyController{
-			master: p.ResourceInterface,
-			thirdPartyResourceRegistry: thirdPartyResourceStorage,
-		}
-		if !p.DisableThirdPartyControllerForTesting {
-			go wait.Forever(func() {
-				if err := thirdPartyControl.SyncResources(); err != nil {
-					glog.Warningf("third party resource sync failed: %v", err)
-				}
-			}, 10*time.Second)
-		}
 		storage["thirdpartyresources"] = thirdPartyResourceStorage
 	}
 
@@ -125,4 +115,31 @@ func (p RESTStorageProvider) v1beta1Storage(apiResourceConfigSource genericapise
 	}
 
 	return storage
+}
+
+func (p RESTStorageProvider) PostStartHook() (string, genericapiserver.PostStartHookFunc, error) {
+	return "extensions/third-party-resources", p.postStartHookFunc, nil
+}
+func (p RESTStorageProvider) postStartHookFunc(hookContext genericapiserver.PostStartHookContext) error {
+	clientset, err := extensionsclient.NewForConfig(hookContext.LoopbackClientConfig)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("unable to initialize clusterroles: %v", err))
+		return nil
+	}
+
+	thirdPartyControl := ThirdPartyController{
+		master: p.ResourceInterface,
+		client: clientset,
+	}
+	go wait.Forever(func() {
+		if err := thirdPartyControl.SyncResources(); err != nil {
+			glog.Warningf("third party resource sync failed: %v", err)
+		}
+	}, 10*time.Second)
+
+	return nil
+}
+
+func (p RESTStorageProvider) GroupName() string {
+	return extensions.GroupName
 }

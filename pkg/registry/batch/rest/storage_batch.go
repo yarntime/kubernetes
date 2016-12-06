@@ -22,20 +22,24 @@ import (
 	batchapiv1 "k8s.io/kubernetes/pkg/apis/batch/v1"
 	batchapiv2alpha1 "k8s.io/kubernetes/pkg/apis/batch/v2alpha1"
 	"k8s.io/kubernetes/pkg/genericapiserver"
+	"k8s.io/kubernetes/pkg/registry"
+	cronjobetcd "k8s.io/kubernetes/pkg/registry/batch/cronjob/etcd"
 	jobetcd "k8s.io/kubernetes/pkg/registry/batch/job/etcd"
-	scheduledjobetcd "k8s.io/kubernetes/pkg/registry/batch/scheduledjob/etcd"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 )
 
 type RESTStorageProvider struct{}
 
-var _ genericapiserver.RESTStorageProvider = &RESTStorageProvider{}
-
-func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter genericapiserver.RESTOptionsGetter) (genericapiserver.APIGroupInfo, bool) {
+func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter registry.RESTOptionsGetter) (genericapiserver.APIGroupInfo, bool) {
 	apiGroupInfo := genericapiserver.NewDefaultAPIGroupInfo(batch.GroupName)
 
 	if apiResourceConfigSource.AnyResourcesForVersionEnabled(batchapiv2alpha1.SchemeGroupVersion) {
 		apiGroupInfo.VersionedResourcesStorageMap[batchapiv2alpha1.SchemeGroupVersion.Version] = p.v2alpha1Storage(apiResourceConfigSource, restOptionsGetter)
 		apiGroupInfo.GroupMeta.GroupVersion = batchapiv2alpha1.SchemeGroupVersion
+		apiGroupInfo.SubresourceGroupVersionKind = map[string]schema.GroupVersionKind{
+			"scheduledjobs":        batchapiv2alpha1.SchemeGroupVersion.WithKind("ScheduledJob"),
+			"scheduledjobs/status": batchapiv2alpha1.SchemeGroupVersion.WithKind("ScheduledJob"),
+		}
 	}
 	if apiResourceConfigSource.AnyResourcesForVersionEnabled(batchapiv1.SchemeGroupVersion) {
 		apiGroupInfo.VersionedResourcesStorageMap[batchapiv1.SchemeGroupVersion.Version] = p.v1Storage(apiResourceConfigSource, restOptionsGetter)
@@ -45,7 +49,7 @@ func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource genericapise
 	return apiGroupInfo, true
 }
 
-func (p RESTStorageProvider) v1Storage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter genericapiserver.RESTOptionsGetter) map[string]rest.Storage {
+func (p RESTStorageProvider) v1Storage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter registry.RESTOptionsGetter) map[string]rest.Storage {
 	version := batchapiv1.SchemeGroupVersion
 
 	storage := map[string]rest.Storage{}
@@ -57,7 +61,7 @@ func (p RESTStorageProvider) v1Storage(apiResourceConfigSource genericapiserver.
 	return storage
 }
 
-func (p RESTStorageProvider) v2alpha1Storage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter genericapiserver.RESTOptionsGetter) map[string]rest.Storage {
+func (p RESTStorageProvider) v2alpha1Storage(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter registry.RESTOptionsGetter) map[string]rest.Storage {
 	version := batchapiv2alpha1.SchemeGroupVersion
 
 	storage := map[string]rest.Storage{}
@@ -66,10 +70,16 @@ func (p RESTStorageProvider) v2alpha1Storage(apiResourceConfigSource genericapis
 		storage["jobs"] = jobsStorage
 		storage["jobs/status"] = jobsStatusStorage
 	}
-	if apiResourceConfigSource.ResourceEnabled(version.WithResource("scheduledjobs")) {
-		scheduledJobsStorage, scheduledJobsStatusStorage := scheduledjobetcd.NewREST(restOptionsGetter(batch.Resource("scheduledjobs")))
-		storage["scheduledjobs"] = scheduledJobsStorage
-		storage["scheduledjobs/status"] = scheduledJobsStatusStorage
+	if apiResourceConfigSource.ResourceEnabled(version.WithResource("cronjobs")) {
+		cronJobsStorage, cronJobsStatusStorage := cronjobetcd.NewREST(restOptionsGetter(batch.Resource("cronjobs")))
+		storage["cronjobs"] = cronJobsStorage
+		storage["cronjobs/status"] = cronJobsStatusStorage
+		storage["scheduledjobs"] = cronJobsStorage
+		storage["scheduledjobs/status"] = cronJobsStatusStorage
 	}
 	return storage
+}
+
+func (p RESTStorageProvider) GroupName() string {
+	return batch.GroupName
 }

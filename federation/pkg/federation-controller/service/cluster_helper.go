@@ -20,12 +20,11 @@ import (
 	"sync"
 
 	v1beta1 "k8s.io/kubernetes/federation/apis/federation/v1beta1"
-	"k8s.io/kubernetes/pkg/api"
 	v1 "k8s.io/kubernetes/pkg/api/v1"
 	cache "k8s.io/kubernetes/pkg/client/cache"
-	release_1_4 "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_4"
+	kubeclientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
 	"k8s.io/kubernetes/pkg/client/restclient"
-	pkg_runtime "k8s.io/kubernetes/pkg/runtime"
+	pkgruntime "k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/util/workqueue"
 	"k8s.io/kubernetes/pkg/watch"
@@ -37,7 +36,7 @@ import (
 )
 
 type clusterCache struct {
-	clientset *release_1_4.Clientset
+	clientset *kubeclientset.Clientset
 	cluster   *v1beta1.Cluster
 	// A store of services, populated by the serviceController
 	serviceStore cache.StoreToServiceLister
@@ -92,10 +91,10 @@ func (cc *clusterClientCache) startClusterLW(cluster *v1beta1.Cluster, clusterNa
 		}
 		cachedClusterClient.endpointStore.Store, cachedClusterClient.endpointController = cache.NewInformer(
 			&cache.ListWatch{
-				ListFunc: func(options api.ListOptions) (pkg_runtime.Object, error) {
+				ListFunc: func(options v1.ListOptions) (pkgruntime.Object, error) {
 					return clientset.Core().Endpoints(v1.NamespaceAll).List(options)
 				},
-				WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 					return clientset.Core().Endpoints(v1.NamespaceAll).Watch(options)
 				},
 			},
@@ -116,10 +115,10 @@ func (cc *clusterClientCache) startClusterLW(cluster *v1beta1.Cluster, clusterNa
 
 		cachedClusterClient.serviceStore.Indexer, cachedClusterClient.serviceController = cache.NewIndexerInformer(
 			&cache.ListWatch{
-				ListFunc: func(options api.ListOptions) (pkg_runtime.Object, error) {
+				ListFunc: func(options v1.ListOptions) (pkgruntime.Object, error) {
 					return clientset.Core().Services(v1.NamespaceAll).List(options)
 				},
-				WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 					return clientset.Core().Services(v1.NamespaceAll).Watch(options)
 				},
 			},
@@ -196,10 +195,10 @@ func (cc *clusterClientCache) addToClientMap(obj interface{}) {
 	}
 }
 
-func newClusterClientset(c *v1beta1.Cluster) (*release_1_4.Clientset, error) {
+func newClusterClientset(c *v1beta1.Cluster) (*kubeclientset.Clientset, error) {
 	clusterConfig, err := util.BuildClusterConfig(c)
 	if clusterConfig != nil {
-		clientset := release_1_4.NewForConfigOrDie(restclient.AddUserAgent(clusterConfig, UserAgentName))
+		clientset := kubeclientset.NewForConfigOrDie(restclient.AddUserAgent(clusterConfig, UserAgentName))
 		return clientset, nil
 	}
 	return nil, err

@@ -31,9 +31,9 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/kubelet/server/remotecommand"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/httpstream"
 	"k8s.io/kubernetes/pkg/util/term"
@@ -53,7 +53,7 @@ type fakeExecutor struct {
 	exec          bool
 }
 
-func (ex *fakeExecutor) ExecInContainer(name string, uid types.UID, container string, cmd []string, in io.Reader, out, err io.WriteCloser, tty bool, resize <-chan term.Size) error {
+func (ex *fakeExecutor) ExecInContainer(name string, uid types.UID, container string, cmd []string, in io.Reader, out, err io.WriteCloser, tty bool, resize <-chan term.Size, timeout time.Duration) error {
 	return ex.run(name, uid, container, cmd, in, out, err, tty)
 }
 
@@ -215,7 +215,7 @@ func TestStream(t *testing.T) {
 
 			url, _ := url.ParseRequestURI(server.URL)
 			config := restclient.ContentConfig{
-				GroupVersion:         &unversioned.GroupVersion{Group: "x"},
+				GroupVersion:         &schema.GroupVersion{Group: "x"},
 				NegotiatedSerializer: testapi.Default.NegotiatedSerializer(),
 			}
 			c, err := restclient.NewRESTClient(url, "", config, -1, -1, nil, nil)

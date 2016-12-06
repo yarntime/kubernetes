@@ -26,9 +26,10 @@ import (
 	"time"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/client/unversioned/fake"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/client/restclient/fake"
 	"k8s.io/kubernetes/pkg/conversion"
+	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/runtime"
 )
@@ -41,7 +42,7 @@ func generateNodeAndTaintedNode(oldTaints []api.Taint, newTaints []api.Taint) (*
 	node := &api.Node{
 		ObjectMeta: api.ObjectMeta{
 			Name:              "node-name",
-			CreationTimestamp: unversioned.Time{Time: time.Now()},
+			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Annotations: map[string]string{
 				api.TaintsAnnotationKey: string(oldTaintsData),
 			},
@@ -254,7 +255,7 @@ func TestTaint(t *testing.T) {
 
 		new_node := &api.Node{}
 		tainted := false
-		f, tf, codec, ns := NewAPIFactory()
+		f, tf, codec, ns := cmdtesting.NewAPIFactory()
 
 		tf.Client = &fake.RESTClient{
 			NegotiatedSerializer: ns,

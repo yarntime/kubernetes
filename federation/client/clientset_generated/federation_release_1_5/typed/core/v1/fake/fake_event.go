@@ -18,20 +18,20 @@ package fake
 
 import (
 	api "k8s.io/kubernetes/pkg/api"
-	unversioned "k8s.io/kubernetes/pkg/api/unversioned"
 	v1 "k8s.io/kubernetes/pkg/api/v1"
 	core "k8s.io/kubernetes/pkg/client/testing/core"
 	labels "k8s.io/kubernetes/pkg/labels"
+	schema "k8s.io/kubernetes/pkg/runtime/schema"
 	watch "k8s.io/kubernetes/pkg/watch"
 )
 
 // FakeEvents implements EventInterface
 type FakeEvents struct {
-	Fake *FakeCore
+	Fake *FakeCoreV1
 	ns   string
 }
 
-var eventsResource = unversioned.GroupVersionResource{Group: "", Version: "v1", Resource: "events"}
+var eventsResource = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "events"}
 
 func (c *FakeEvents) Create(event *v1.Event) (result *v1.Event, err error) {
 	obj, err := c.Fake.
@@ -53,14 +53,14 @@ func (c *FakeEvents) Update(event *v1.Event) (result *v1.Event, err error) {
 	return obj.(*v1.Event), err
 }
 
-func (c *FakeEvents) Delete(name string, options *api.DeleteOptions) error {
+func (c *FakeEvents) Delete(name string, options *v1.DeleteOptions) error {
 	_, err := c.Fake.
 		Invokes(core.NewDeleteAction(eventsResource, c.ns, name), &v1.Event{})
 
 	return err
 }
 
-func (c *FakeEvents) DeleteCollection(options *api.DeleteOptions, listOptions api.ListOptions) error {
+func (c *FakeEvents) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
 	action := core.NewDeleteCollectionAction(eventsResource, c.ns, listOptions)
 
 	_, err := c.Fake.Invokes(action, &v1.EventList{})
@@ -77,7 +77,7 @@ func (c *FakeEvents) Get(name string) (result *v1.Event, err error) {
 	return obj.(*v1.Event), err
 }
 
-func (c *FakeEvents) List(opts api.ListOptions) (result *v1.EventList, err error) {
+func (c *FakeEvents) List(opts v1.ListOptions) (result *v1.EventList, err error) {
 	obj, err := c.Fake.
 		Invokes(core.NewListAction(eventsResource, c.ns, opts), &v1.EventList{})
 
@@ -85,7 +85,7 @@ func (c *FakeEvents) List(opts api.ListOptions) (result *v1.EventList, err error
 		return nil, err
 	}
 
-	label := opts.LabelSelector
+	label, _, _ := core.ExtractFromListOptions(opts)
 	if label == nil {
 		label = labels.Everything()
 	}
@@ -99,7 +99,7 @@ func (c *FakeEvents) List(opts api.ListOptions) (result *v1.EventList, err error
 }
 
 // Watch returns a watch.Interface that watches the requested events.
-func (c *FakeEvents) Watch(opts api.ListOptions) (watch.Interface, error) {
+func (c *FakeEvents) Watch(opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
 		InvokesWatch(core.NewWatchAction(eventsResource, c.ns, opts))
 

@@ -19,6 +19,7 @@ package main
 import (
 	"k8s.io/kubernetes/examples/apiserver"
 	"k8s.io/kubernetes/pkg/util/flag"
+	"k8s.io/kubernetes/pkg/util/wait"
 
 	"github.com/golang/glog"
 	"github.com/spf13/pflag"
@@ -29,10 +30,14 @@ func main() {
 
 	// Parse command line flags.
 	serverRunOptions.AddUniversalFlags(pflag.CommandLine)
-	serverRunOptions.AddEtcdStorageFlags(pflag.CommandLine)
+	serverRunOptions.Etcd.AddFlags(pflag.CommandLine)
+	serverRunOptions.SecureServing.AddFlags(pflag.CommandLine)
+	serverRunOptions.SecureServing.AddDeprecatedFlags(pflag.CommandLine)
+	serverRunOptions.InsecureServing.AddFlags(pflag.CommandLine)
+	serverRunOptions.InsecureServing.AddDeprecatedFlags(pflag.CommandLine)
 	flag.InitFlags()
 
-	if err := apiserver.Run(serverRunOptions); err != nil {
+	if err := serverRunOptions.Run(wait.NeverStop); err != nil {
 		glog.Fatalf("Error in bringing up the server: %v", err)
 	}
 }

@@ -25,9 +25,10 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api/meta/metatypes"
-	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/apimachinery/registered"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/util/uuid"
 )
 
@@ -111,8 +112,9 @@ func TestAccessOwnerReferences(t *testing.T) {
 }
 
 func TestAccessorImplementations(t *testing.T) {
-	for _, group := range testapi.Groups {
-		for _, gv := range []unversioned.GroupVersion{*group.GroupVersion(), group.InternalGroupVersion()} {
+	for _, gv := range registered.EnabledVersions() {
+		internalGV := schema.GroupVersion{Group: gv.Group, Version: runtime.APIVersionInternal}
+		for _, gv := range []schema.GroupVersion{gv, internalGV} {
 			for kind, knownType := range api.Scheme.KnownTypes(gv) {
 				value := reflect.New(knownType)
 				obj := value.Interface()
@@ -164,7 +166,7 @@ func TestAccessorImplementations(t *testing.T) {
 						continue
 					}
 				default:
-					if _, ok := obj.(unversioned.ListMetaAccessor); ok {
+					if _, ok := obj.(metav1.ListMetaAccessor); ok {
 						continue
 					}
 					if _, ok := value.Elem().Type().FieldByName("ObjectMeta"); ok {

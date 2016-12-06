@@ -18,20 +18,20 @@ package fake
 
 import (
 	api "k8s.io/kubernetes/pkg/api"
-	unversioned "k8s.io/kubernetes/pkg/api/unversioned"
 	v1 "k8s.io/kubernetes/pkg/api/v1"
 	core "k8s.io/kubernetes/pkg/client/testing/core"
 	labels "k8s.io/kubernetes/pkg/labels"
+	schema "k8s.io/kubernetes/pkg/runtime/schema"
 	watch "k8s.io/kubernetes/pkg/watch"
 )
 
 // FakeServiceAccounts implements ServiceAccountInterface
 type FakeServiceAccounts struct {
-	Fake *FakeCore
+	Fake *FakeCoreV1
 	ns   string
 }
 
-var serviceaccountsResource = unversioned.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}
+var serviceaccountsResource = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}
 
 func (c *FakeServiceAccounts) Create(serviceAccount *v1.ServiceAccount) (result *v1.ServiceAccount, err error) {
 	obj, err := c.Fake.
@@ -53,14 +53,14 @@ func (c *FakeServiceAccounts) Update(serviceAccount *v1.ServiceAccount) (result 
 	return obj.(*v1.ServiceAccount), err
 }
 
-func (c *FakeServiceAccounts) Delete(name string, options *api.DeleteOptions) error {
+func (c *FakeServiceAccounts) Delete(name string, options *v1.DeleteOptions) error {
 	_, err := c.Fake.
 		Invokes(core.NewDeleteAction(serviceaccountsResource, c.ns, name), &v1.ServiceAccount{})
 
 	return err
 }
 
-func (c *FakeServiceAccounts) DeleteCollection(options *api.DeleteOptions, listOptions api.ListOptions) error {
+func (c *FakeServiceAccounts) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
 	action := core.NewDeleteCollectionAction(serviceaccountsResource, c.ns, listOptions)
 
 	_, err := c.Fake.Invokes(action, &v1.ServiceAccountList{})
@@ -77,7 +77,7 @@ func (c *FakeServiceAccounts) Get(name string) (result *v1.ServiceAccount, err e
 	return obj.(*v1.ServiceAccount), err
 }
 
-func (c *FakeServiceAccounts) List(opts api.ListOptions) (result *v1.ServiceAccountList, err error) {
+func (c *FakeServiceAccounts) List(opts v1.ListOptions) (result *v1.ServiceAccountList, err error) {
 	obj, err := c.Fake.
 		Invokes(core.NewListAction(serviceaccountsResource, c.ns, opts), &v1.ServiceAccountList{})
 
@@ -85,7 +85,7 @@ func (c *FakeServiceAccounts) List(opts api.ListOptions) (result *v1.ServiceAcco
 		return nil, err
 	}
 
-	label := opts.LabelSelector
+	label, _, _ := core.ExtractFromListOptions(opts)
 	if label == nil {
 		label = labels.Everything()
 	}
@@ -99,7 +99,7 @@ func (c *FakeServiceAccounts) List(opts api.ListOptions) (result *v1.ServiceAcco
 }
 
 // Watch returns a watch.Interface that watches the requested serviceAccounts.
-func (c *FakeServiceAccounts) Watch(opts api.ListOptions) (watch.Interface, error) {
+func (c *FakeServiceAccounts) Watch(opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
 		InvokesWatch(core.NewWatchAction(serviceaccountsResource, c.ns, opts))
 

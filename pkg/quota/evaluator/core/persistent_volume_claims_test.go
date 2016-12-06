@@ -21,8 +21,8 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/fake"
 	"k8s.io/kubernetes/pkg/quota"
 )
 
@@ -35,8 +35,8 @@ func testVolumeClaim(name string, namespace string, spec api.PersistentVolumeCla
 
 func TestPersistentVolumeClaimsConstraintsFunc(t *testing.T) {
 	validClaim := testVolumeClaim("foo", "ns", api.PersistentVolumeClaimSpec{
-		Selector: &unversioned.LabelSelector{
-			MatchExpressions: []unversioned.LabelSelectorRequirement{
+		Selector: &metav1.LabelSelector{
+			MatchExpressions: []metav1.LabelSelectorRequirement{
 				{
 					Key:      "key2",
 					Operator: "Exists",
@@ -54,8 +54,8 @@ func TestPersistentVolumeClaimsConstraintsFunc(t *testing.T) {
 		},
 	})
 	missingStorage := testVolumeClaim("foo", "ns", api.PersistentVolumeClaimSpec{
-		Selector: &unversioned.LabelSelector{
-			MatchExpressions: []unversioned.LabelSelectorRequirement{
+		Selector: &metav1.LabelSelector{
+			MatchExpressions: []metav1.LabelSelectorRequirement{
 				{
 					Key:      "key2",
 					Operator: "Exists",
@@ -107,8 +107,8 @@ func TestPersistentVolumeClaimsConstraintsFunc(t *testing.T) {
 
 func TestPersistentVolumeClaimEvaluatorUsage(t *testing.T) {
 	validClaim := testVolumeClaim("foo", "ns", api.PersistentVolumeClaimSpec{
-		Selector: &unversioned.LabelSelector{
-			MatchExpressions: []unversioned.LabelSelectorRequirement{
+		Selector: &metav1.LabelSelector{
+			MatchExpressions: []metav1.LabelSelectorRequirement{
 				{
 					Key:      "key2",
 					Operator: "Exists",
@@ -127,7 +127,7 @@ func TestPersistentVolumeClaimEvaluatorUsage(t *testing.T) {
 	})
 
 	kubeClient := fake.NewSimpleClientset()
-	evaluator := NewPersistentVolumeClaimEvaluator(kubeClient)
+	evaluator := NewPersistentVolumeClaimEvaluator(kubeClient, nil)
 	testCases := map[string]struct {
 		pvc   *api.PersistentVolumeClaim
 		usage api.ResourceList

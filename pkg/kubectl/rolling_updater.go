@@ -26,8 +26,10 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/unversioned"
+	"k8s.io/kubernetes/pkg/api/v1"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	"k8s.io/kubernetes/pkg/client/retry"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	deploymentutil "k8s.io/kubernetes/pkg/controller/deployment/util"
 	"k8s.io/kubernetes/pkg/labels"
@@ -124,7 +126,7 @@ type RollingUpdater struct {
 	// getReadyPods returns the amount of old and new ready pods.
 	getReadyPods func(oldRc, newRc *api.ReplicationController, minReadySeconds int32) (int32, int32, error)
 	// nowFn returns the current time used to calculate the minReadySeconds
-	nowFn func() unversioned.Time
+	nowFn func() metav1.Time
 }
 
 // NewRollingUpdater creates a RollingUpdater from a client.
@@ -139,7 +141,7 @@ func NewRollingUpdater(namespace string, rcClient coreclient.ReplicationControll
 	updater.getOrCreateTargetController = updater.getOrCreateTargetControllerWithClient
 	updater.getReadyPods = updater.readyPods
 	updater.cleanup = updater.cleanupWithClients
-	updater.nowFn = func() unversioned.Time { return unversioned.Now() }
+	updater.nowFn = func() metav1.Time { return metav1.Now() }
 	return updater
 }
 
@@ -407,7 +409,7 @@ func (r *RollingUpdater) readyPods(oldRc, newRc *api.ReplicationController, minR
 	oldReady := int32(0)
 	newReady := int32(0)
 	if r.nowFn == nil {
-		r.nowFn = func() unversioned.Time { return unversioned.Now() }
+		r.nowFn = func() metav1.Time { return metav1.Now() }
 	}
 
 	for i := range controllers {
@@ -419,7 +421,11 @@ func (r *RollingUpdater) readyPods(oldRc, newRc *api.ReplicationController, minR
 			return 0, 0, err
 		}
 		for _, pod := range pods.Items {
-			if !deploymentutil.IsPodAvailable(&pod, minReadySeconds, r.nowFn().Time) {
+			v1Pod := &v1.Pod{}
+			if err := v1.Convert_api_Pod_To_v1_Pod(&pod, v1Pod, nil); err != nil {
+				return 0, 0, err
+			}
+			if !deploymentutil.IsPodAvailable(v1Pod, minReadySeconds, r.nowFn().Time) {
 				continue
 			}
 			switch controller.Name {
@@ -766,7 +772,7 @@ func updateRcWithRetries(rcClient coreclient.ReplicationControllersGetter, names
 		return nil, fmt.Errorf("failed to deep copy rc before updating it: %v", err)
 	}
 	oldRc := obj.(*api.ReplicationController)
-	err = client.RetryOnConflict(client.DefaultBackoff, func() (e error) {
+	err = retry.RetryOnConflict(retry.DefaultBackoff, func() (e error) {
 		// Apply the update, then attempt to push it to the apiserver.
 		applyUpdate(rc)
 		if rc, e = rcClient.ReplicationControllers(namespace).Update(rc); e == nil {
@@ -801,7 +807,7 @@ func updatePodWithRetries(podClient coreclient.PodsGetter, namespace string, pod
 		return nil, fmt.Errorf("failed to deep copy pod before updating it: %v", err)
 	}
 	oldPod := obj.(*api.Pod)
-	err = client.RetryOnConflict(client.DefaultBackoff, func() (e error) {
+	err = retry.RetryOnConflict(retry.DefaultBackoff, func() (e error) {
 		// Apply the update, then attempt to push it to the apiserver.
 		applyUpdate(pod)
 		if pod, e = podClient.Pods(namespace).Update(pod); e == nil {

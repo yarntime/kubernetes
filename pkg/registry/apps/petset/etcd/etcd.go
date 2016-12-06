@@ -23,53 +23,54 @@ import (
 	"k8s.io/kubernetes/pkg/registry/apps/petset"
 	"k8s.io/kubernetes/pkg/registry/cachesize"
 	"k8s.io/kubernetes/pkg/registry/generic"
-	"k8s.io/kubernetes/pkg/registry/generic/registry"
+	genericregistry "k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
 )
 
 // rest implements a RESTStorage for replication controllers against etcd
 type REST struct {
-	*registry.Store
+	*genericregistry.Store
 }
 
 // NewREST returns a RESTStorage object that will work against replication controllers.
 func NewREST(opts generic.RESTOptions) (*REST, *StatusREST) {
 	prefix := "/" + opts.ResourcePrefix
 
-	newListFunc := func() runtime.Object { return &appsapi.PetSetList{} }
+	newListFunc := func() runtime.Object { return &appsapi.StatefulSetList{} }
 	storageInterface, dFunc := opts.Decorator(
 		opts.StorageConfig,
-		cachesize.GetWatchCacheSizeByResource(cachesize.PetSet),
-		&appsapi.PetSet{},
+		cachesize.GetWatchCacheSizeByResource(cachesize.StatefulSet),
+		&appsapi.StatefulSet{},
 		prefix,
 		petset.Strategy,
 		newListFunc,
+		petset.GetAttrs,
 		storage.NoTriggerPublisher,
 	)
 
-	store := &registry.Store{
-		NewFunc: func() runtime.Object { return &appsapi.PetSet{} },
+	store := &genericregistry.Store{
+		NewFunc: func() runtime.Object { return &appsapi.StatefulSet{} },
 
 		// NewListFunc returns an object capable of storing results of an etcd list.
 		NewListFunc: newListFunc,
-		// Produces a petSet that etcd understands, to the root of the resource
+		// Produces a statefulSet that etcd understands, to the root of the resource
 		// by combining the namespace in the context with the given prefix
 		KeyRootFunc: func(ctx api.Context) string {
-			return registry.NamespaceKeyRootFunc(ctx, prefix)
+			return genericregistry.NamespaceKeyRootFunc(ctx, prefix)
 		},
-		// Produces a petSet that etcd understands, to the resource by combining
+		// Produces a statefulSet that etcd understands, to the resource by combining
 		// the namespace in the context with the given prefix
 		KeyFunc: func(ctx api.Context, name string) (string, error) {
-			return registry.NamespaceKeyFunc(ctx, prefix, name)
+			return genericregistry.NamespaceKeyFunc(ctx, prefix, name)
 		},
 		// Retrieve the name field of a replication controller
 		ObjectNameFunc: func(obj runtime.Object) (string, error) {
-			return obj.(*appsapi.PetSet).Name, nil
+			return obj.(*appsapi.StatefulSet).Name, nil
 		},
 		// Used to match objects based on labels/fields for list and watch
-		PredicateFunc:           petset.MatchPetSet,
-		QualifiedResource:       appsapi.Resource("petsets"),
+		PredicateFunc:           petset.MatchStatefulSet,
+		QualifiedResource:       appsapi.Resource("statefulsets"),
 		EnableGarbageCollection: opts.EnableGarbageCollection,
 		DeleteCollectionWorkers: opts.DeleteCollectionWorkers,
 
@@ -88,13 +89,13 @@ func NewREST(opts generic.RESTOptions) (*REST, *StatusREST) {
 	return &REST{store}, &StatusREST{store: &statusStore}
 }
 
-// StatusREST implements the REST endpoint for changing the status of an petSet
+// StatusREST implements the REST endpoint for changing the status of an statefulSet
 type StatusREST struct {
-	store *registry.Store
+	store *genericregistry.Store
 }
 
 func (r *StatusREST) New() runtime.Object {
-	return &appsapi.PetSet{}
+	return &appsapi.StatefulSet{}
 }
 
 // Get retrieves the object from the storage. It is required to support Patch.

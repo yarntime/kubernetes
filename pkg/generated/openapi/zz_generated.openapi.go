@@ -23,16 +23,16 @@ package openapi
 import (
 	spec "github.com/go-openapi/spec"
 	resource "k8s.io/kubernetes/pkg/api/resource"
-	unversioned "k8s.io/kubernetes/pkg/api/unversioned"
+	v1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	common "k8s.io/kubernetes/pkg/genericapiserver/openapi/common"
 	intstr "k8s.io/kubernetes/pkg/util/intstr"
 )
 
 var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
-	"apps.PetSet": {
+	"apps.StatefulSet": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "PetSet represents a set of pods with consistent identities. Identities are defined as:\n - Network: A single stable DNS and hostname.\n - Storage: As many VolumeClaims as requested.\nThe PetSet guarantees that a given network identity will always map to the same storage identity. PetSet is currently in alpha and and subject to change without notice.",
+				Description: "StatefulSet represents a set of pods with consistent identities. Identities are defined as:\n - Network: A single stable DNS and hostname.\n - Storage: As many VolumeClaims as requested.\nThe StatefulSet guarantees that a given network identity will always map to the same storage identity.",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
@@ -41,30 +41,30 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"spec": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Spec defines the desired identities of pets in this set.",
-							Ref:         spec.MustCreateRef("#/definitions/apps.PetSetSpec"),
+							Description: "Spec defines the desired identities of pods in this set.",
+							Ref:         spec.MustCreateRef("#/definitions/apps.StatefulSetSpec"),
 						},
 					},
 					"status": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Status is the current status of Pets in this PetSet. This data may be out of date by some window of time.",
-							Ref:         spec.MustCreateRef("#/definitions/apps.PetSetStatus"),
+							Description: "Status is the current status of Pods in this StatefulSet. This data may be out of date by some window of time.",
+							Ref:         spec.MustCreateRef("#/definitions/apps.StatefulSetStatus"),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "apps.PetSetSpec", "apps.PetSetStatus"},
+			"api.ObjectMeta", "apps.StatefulSetSpec", "apps.StatefulSetStatus"},
 	},
-	"apps.PetSetList": {
+	"apps.StatefulSetList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "PetSetList is a collection of PetSets.",
+				Description: "StatefulSetList is a collection of StatefulSets.",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -73,7 +73,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/apps.PetSet"),
+										Ref: spec.MustCreateRef("#/definitions/apps.StatefulSet"),
 									},
 								},
 							},
@@ -84,12 +84,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"apps.PetSet", "unversioned.ListMeta"},
+			"apps.StatefulSet", "v1.ListMeta"},
 	},
-	"apps.PetSetSpec": {
+	"apps.StatefulSetSpec": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "A PetSetSpec is the specification of a PetSet.",
+				Description: "A StatefulSetSpec is the specification of a StatefulSet.",
 				Properties: map[string]spec.Schema{
 					"replicas": {
 						SchemaProps: spec.SchemaProps{
@@ -100,19 +100,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the replica count. If empty, defaulted to labels on the pod template. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Description: "Selector is a label query over pods that should match the replica count. If empty, defaulted to labels on the pod template. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. Each pod stamped out by the PetSet will fulfill this Template, but have a unique identity from the rest of the PetSet.",
+							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. Each pod stamped out by the StatefulSet will fulfill this Template, but have a unique identity from the rest of the StatefulSet.",
 							Ref:         spec.MustCreateRef("#/definitions/api.PodTemplateSpec"),
 						},
 					},
 					"volumeClaimTemplates": {
 						SchemaProps: spec.SchemaProps{
-							Description: "VolumeClaimTemplates is a list of claims that pets are allowed to reference. The PetSet controller is responsible for mapping network identities to claims in a way that maintains the identity of a pet. Every claim in this list must have at least one matching (by name) volumeMount in one container in the template. A claim in this list takes precedence over any volumes in the template, with the same name.",
+							Description: "VolumeClaimTemplates is a list of claims that pods are allowed to reference. The StatefulSet controller is responsible for mapping network identities to claims in a way that maintains the identity of a pod. Every claim in this list must have at least one matching (by name) volumeMount in one container in the template. A claim in this list takes precedence over any volumes in the template, with the same name.",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -125,7 +125,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"serviceName": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ServiceName is the name of the service that governs this PetSet. This service must exist before the PetSet, and is responsible for the network identity of the set. Pets get DNS/hostnames that follow the pattern: pet-specific-string.serviceName.default.svc.cluster.local where \"pet-specific-string\" is managed by the PetSet controller.",
+							Description: "ServiceName is the name of the service that governs this StatefulSet. This service must exist before the StatefulSet, and is responsible for the network identity of the set. Pods get DNS/hostnames that follow the pattern: pod-specific-string.serviceName.default.svc.cluster.local where \"pod-specific-string\" is managed by the StatefulSet controller.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -135,12 +135,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.PersistentVolumeClaim", "api.PodTemplateSpec", "unversioned.LabelSelector"},
+			"api.PersistentVolumeClaim", "api.PodTemplateSpec", "v1.LabelSelector"},
 	},
-	"apps.PetSetStatus": {
+	"apps.StatefulSetStatus": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "PetSetStatus represents the current state of a PetSet.",
+				Description: "StatefulSetStatus represents the current state of a StatefulSet.",
 				Properties: map[string]spec.Schema{
 					"observedGeneration": {
 						SchemaProps: spec.SchemaProps{
@@ -169,7 +169,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -195,7 +195,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "authentication.TokenReviewSpec", "authentication.TokenReviewStatus", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "authentication.TokenReviewSpec", "authentication.TokenReviewStatus", "v1.TypeMeta"},
 	},
 	"authentication.TokenReviewSpec": {
 		Schema: spec.Schema{
@@ -314,7 +314,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -339,7 +339,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "authorization.SubjectAccessReviewSpec", "authorization.SubjectAccessReviewStatus", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "authorization.SubjectAccessReviewSpec", "authorization.SubjectAccessReviewStatus", "v1.TypeMeta"},
 	},
 	"authorization.NonResourceAttributes": {
 		Schema: spec.Schema{
@@ -433,7 +433,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -458,7 +458,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "authorization.SelfSubjectAccessReviewSpec", "authorization.SubjectAccessReviewStatus", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "authorization.SelfSubjectAccessReviewSpec", "authorization.SubjectAccessReviewStatus", "v1.TypeMeta"},
 	},
 	"authorization.SelfSubjectAccessReviewSpec": {
 		Schema: spec.Schema{
@@ -491,7 +491,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -516,7 +516,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "authorization.SubjectAccessReviewSpec", "authorization.SubjectAccessReviewStatus", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "authorization.SubjectAccessReviewSpec", "authorization.SubjectAccessReviewStatus", "v1.TypeMeta"},
 	},
 	"authorization.SubjectAccessReviewSpec": {
 		Schema: spec.Schema{
@@ -630,7 +630,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the referent; More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name of the referent; More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -683,7 +683,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -704,7 +704,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"autoscaling.HorizontalPodAutoscaler", "unversioned.ListMeta"},
+			"autoscaling.HorizontalPodAutoscaler", "v1.ListMeta"},
 	},
 	"autoscaling.HorizontalPodAutoscalerSpec": {
 		Schema: spec.Schema{
@@ -760,7 +760,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastScaleTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "last time the HorizontalPodAutoscaler scaled the number of pods; used by the autoscaler to control how often the number of pods is changed.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"currentReplicas": {
@@ -789,7 +789,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"autoscaling.Scale": {
 		Schema: spec.Schema{
@@ -851,7 +851,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "label query over pods that should match the replicas count. This is same as the label selector but in the string format to avoid introspection by clients. The string will be in the same format as the query-param syntax. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
+							Description: "label query over pods that should match the replicas count. This is same as the label selector but in the string format to avoid introspection by clients. The string will be in the same format as the query-param syntax. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -861,6 +861,142 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{},
+	},
+	"batch.CronJob": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJob represents the configuration of a single cron job.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Standard object's metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
+							Ref:         spec.MustCreateRef("#/definitions/api.ObjectMeta"),
+						},
+					},
+					"spec": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Spec is a structure defining the expected behavior of a job, including the schedule. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
+							Ref:         spec.MustCreateRef("#/definitions/batch.CronJobSpec"),
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status is a structure describing current status of a job. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
+							Ref:         spec.MustCreateRef("#/definitions/batch.CronJobStatus"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"api.ObjectMeta", "batch.CronJobSpec", "batch.CronJobStatus"},
+	},
+	"batch.CronJobList": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJobList is a collection of cron jobs.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Items is the list of CronJob.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/batch.CronJob"),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			"batch.CronJob", "v1.ListMeta"},
+	},
+	"batch.CronJobSpec": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJobSpec describes how the job execution will look like and when it will actually run.",
+				Properties: map[string]spec.Schema{
+					"schedule": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Schedule contains the schedule in Cron format, see https://en.wikipedia.org/wiki/Cron.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"startingDeadlineSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Optional deadline in seconds for starting the job if it misses scheduled time for any reason.  Missed jobs executions will be counted as failed ones.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"concurrencyPolicy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ConcurrencyPolicy specifies how to treat concurrent executions of a Job.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"suspend": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Suspend flag tells the controller to suspend subsequent executions, it does not apply to already started executions.  Defaults to false.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"jobTemplate": {
+						SchemaProps: spec.SchemaProps{
+							Description: "JobTemplate is the object that describes the job that will be created when executing a CronJob.",
+							Ref:         spec.MustCreateRef("#/definitions/batch.JobTemplateSpec"),
+						},
+					},
+				},
+				Required: []string{"schedule", "jobTemplate"},
+			},
+		},
+		Dependencies: []string{
+			"batch.JobTemplateSpec"},
+	},
+	"batch.CronJobStatus": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJobStatus represents the current state of a cron job.",
+				Properties: map[string]spec.Schema{
+					"active": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Active holds pointers to currently running jobs.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/api.ObjectReference"),
+									},
+								},
+							},
+						},
+					},
+					"lastScheduleTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "LastScheduleTime keeps information of when was the last time the job was successfully scheduled.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"api.ObjectReference", "v1.Time"},
 	},
 	"batch.Job": {
 		Schema: spec.Schema{
@@ -913,13 +1049,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastProbeTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition was checked.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transit from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -941,7 +1077,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"batch.JobList": {
 		Schema: spec.Schema{
@@ -951,7 +1087,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -972,7 +1108,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"batch.Job", "unversioned.ListMeta"},
+			"batch.Job", "v1.ListMeta"},
 	},
 	"batch.JobSpec": {
 		Schema: spec.Schema{
@@ -1003,7 +1139,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"selector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"manualSelector": {
@@ -1024,7 +1160,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.PodTemplateSpec", "unversioned.LabelSelector"},
+			"api.PodTemplateSpec", "v1.LabelSelector"},
 	},
 	"batch.JobStatus": {
 		Schema: spec.Schema{
@@ -1047,13 +1183,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "StartTime represents time when the job was acknowledged by the Job Manager. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"completionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "CompletionTime represents time when the job was completed. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"active": {
@@ -1081,7 +1217,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"batch.JobCondition", "unversioned.Time"},
+			"batch.JobCondition", "v1.Time"},
 	},
 	"batch.JobTemplate": {
 		Schema: spec.Schema{
@@ -1128,142 +1264,6 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{
 			"api.ObjectMeta", "batch.JobSpec"},
-	},
-	"batch.ScheduledJob": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJob represents the configuration of a single scheduled job.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Standard object's metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/api.ObjectMeta"),
-						},
-					},
-					"spec": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Spec is a structure defining the expected behavior of a job, including the schedule. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
-							Ref:         spec.MustCreateRef("#/definitions/batch.ScheduledJobSpec"),
-						},
-					},
-					"status": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Status is a structure describing current status of a job. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
-							Ref:         spec.MustCreateRef("#/definitions/batch.ScheduledJobStatus"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"api.ObjectMeta", "batch.ScheduledJobSpec", "batch.ScheduledJobStatus"},
-	},
-	"batch.ScheduledJobList": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJobList is a collection of scheduled jobs.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
-						},
-					},
-					"items": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Items is the list of ScheduledJob.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/batch.ScheduledJob"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"items"},
-			},
-		},
-		Dependencies: []string{
-			"batch.ScheduledJob", "unversioned.ListMeta"},
-	},
-	"batch.ScheduledJobSpec": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJobSpec describes how the job execution will look like and when it will actually run.",
-				Properties: map[string]spec.Schema{
-					"schedule": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Schedule contains the schedule in Cron format, see https://en.wikipedia.org/wiki/Cron.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"startingDeadlineSeconds": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Optional deadline in seconds for starting the job if it misses scheduled time for any reason.  Missed jobs executions will be counted as failed ones.",
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-					"concurrencyPolicy": {
-						SchemaProps: spec.SchemaProps{
-							Description: "ConcurrencyPolicy specifies how to treat concurrent executions of a Job.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"suspend": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Suspend flag tells the controller to suspend subsequent executions, it does not apply to already started executions.  Defaults to false.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
-					"jobTemplate": {
-						SchemaProps: spec.SchemaProps{
-							Description: "JobTemplate is the object that describes the job that will be created when executing a ScheduledJob.",
-							Ref:         spec.MustCreateRef("#/definitions/batch.JobTemplateSpec"),
-						},
-					},
-				},
-				Required: []string{"schedule", "jobTemplate"},
-			},
-		},
-		Dependencies: []string{
-			"batch.JobTemplateSpec"},
-	},
-	"batch.ScheduledJobStatus": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJobStatus represents the current state of a Job.",
-				Properties: map[string]spec.Schema{
-					"active": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Active holds pointers to currently running jobs.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/api.ObjectReference"),
-									},
-								},
-							},
-						},
-					},
-					"lastScheduleTime": {
-						SchemaProps: spec.SchemaProps{
-							Description: "LastScheduleTime keeps information of when was the last time the job was successfully scheduled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"api.ObjectReference", "unversioned.Time"},
 	},
 	"certificates.CertificateSigningRequest": {
 		Schema: spec.Schema{
@@ -1321,7 +1321,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastUpdateTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "timestamp for the last update to this condition",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 				},
@@ -1329,7 +1329,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"certificates.CertificateSigningRequestList": {
 		Schema: spec.Schema{
@@ -1337,7 +1337,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -1356,7 +1356,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"certificates.CertificateSigningRequest", "unversioned.ListMeta"},
+			"certificates.CertificateSigningRequest", "v1.ListMeta"},
 	},
 	"certificates.CertificateSigningRequestSpec": {
 		Schema: spec.Schema{
@@ -1454,7 +1454,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"port": {
@@ -1468,6 +1468,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 						SchemaProps: spec.SchemaProps{
 							Description: "address is the IP address to serve on (set to 0.0.0.0 for all interfaces).",
 							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"useServiceAccountCredentials": {
+						SchemaProps: spec.SchemaProps{
+							Description: "useServiceAccountCredentials indicates whether controllers should be run with individual service account credentials.",
+							Type:        []string{"boolean"},
 							Format:      "",
 						},
 					},
@@ -1579,43 +1586,43 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"serviceSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "serviceSyncPeriod is the period for syncing services with their external load balancers.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"nodeSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "nodeSyncPeriod is the period for syncing nodes from cloudprovider. Longer periods will result in fewer calls to cloud provider, but may delay addition of new nodes to cluster.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"routeReconciliationPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "routeReconciliationPeriod is the period for reconciling routes created for Nodes by cloud provider..",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"resourceQuotaSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "resourceQuotaSyncPeriod is the period for syncing quota usage status in the system.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"namespaceSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "namespaceSyncPeriod is the period for syncing namespace life-cycle updates.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"pvClaimBinderSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "pvClaimBinderSyncPeriod is the period for syncing persistent volumes and persistent volume claims.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"minResyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "minResyncPeriod is the resync period in reflectors; will be random between minResyncPeriod and 2*minResyncPeriod.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"terminatedPodGCThreshold": {
@@ -1628,19 +1635,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"horizontalPodAutoscalerSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "horizontalPodAutoscalerSyncPeriod is the period for syncing the number of pods in horizontal pod autoscaler.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"deploymentControllerSyncPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "deploymentControllerSyncPeriod is the period for syncing the deployments.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"podEvictionTimeout": {
 						SchemaProps: spec.SchemaProps{
 							Description: "podEvictionTimeout is the grace period for deleting pods on failed nodes.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"deletingPodsQps": {
@@ -1660,7 +1667,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"nodeMonitorGracePeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "nodeMontiorGracePeriod is the amount of time which we allow a running node to be unresponsive before marking it unhealthy. Must be N times more than kubelet's nodeStatusUpdateFrequency, where N means number of retries allowed for kubelet to post node status.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"registerRetryCount": {
@@ -1673,13 +1680,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"nodeStartupGracePeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "nodeStartupGracePeriod is the amount of time which we allow starting a node to be unresponsive before marking it unhealthy.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"nodeMonitorPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "nodeMonitorPeriod is the period for syncing NodeStatus in NodeController.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"serviceAccountKeyFile": {
@@ -1802,7 +1809,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"controllerStartInterval": {
 						SchemaProps: spec.SchemaProps{
 							Description: "How long to wait between starting controller managers",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"enableGarbageCollector": {
@@ -1848,11 +1855,11 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "port", "address", "cloudProvider", "cloudConfigFile", "concurrentEndpointSyncs", "concurrentRSSyncs", "concurrentRCSyncs", "concurrentServiceSyncs", "concurrentResourceQuotaSyncs", "concurrentDeploymentSyncs", "concurrentDaemonSetSyncs", "concurrentJobSyncs", "concurrentNamespaceSyncs", "concurrentSATokenSyncs", "lookupCacheSizeForRC", "lookupCacheSizeForRS", "lookupCacheSizeForDaemonSet", "serviceSyncPeriod", "nodeSyncPeriod", "routeReconciliationPeriod", "resourceQuotaSyncPeriod", "namespaceSyncPeriod", "pvClaimBinderSyncPeriod", "minResyncPeriod", "terminatedPodGCThreshold", "horizontalPodAutoscalerSyncPeriod", "deploymentControllerSyncPeriod", "podEvictionTimeout", "deletingPodsQps", "deletingPodsBurst", "nodeMonitorGracePeriod", "registerRetryCount", "nodeStartupGracePeriod", "nodeMonitorPeriod", "serviceAccountKeyFile", "clusterSigningCertFile", "clusterSigningKeyFile", "approveAllKubeletCSRsForGroup", "enableProfiling", "clusterName", "clusterCIDR", "serviceCIDR", "nodeCIDRMaskSize", "allocateNodeCIDRs", "configureCloudRoutes", "rootCAFile", "contentType", "kubeAPIQPS", "kubeAPIBurst", "leaderElection", "volumeConfiguration", "controllerStartInterval", "enableGarbageCollector", "concurrentGCSyncs", "nodeEvictionRate", "secondaryNodeEvictionRate", "largeClusterSizeThreshold", "unhealthyZoneThreshold"},
+				Required: []string{"TypeMeta", "port", "address", "useServiceAccountCredentials", "cloudProvider", "cloudConfigFile", "concurrentEndpointSyncs", "concurrentRSSyncs", "concurrentRCSyncs", "concurrentServiceSyncs", "concurrentResourceQuotaSyncs", "concurrentDeploymentSyncs", "concurrentDaemonSetSyncs", "concurrentJobSyncs", "concurrentNamespaceSyncs", "concurrentSATokenSyncs", "lookupCacheSizeForRC", "lookupCacheSizeForRS", "lookupCacheSizeForDaemonSet", "serviceSyncPeriod", "nodeSyncPeriod", "routeReconciliationPeriod", "resourceQuotaSyncPeriod", "namespaceSyncPeriod", "pvClaimBinderSyncPeriod", "minResyncPeriod", "terminatedPodGCThreshold", "horizontalPodAutoscalerSyncPeriod", "deploymentControllerSyncPeriod", "podEvictionTimeout", "deletingPodsQps", "deletingPodsBurst", "nodeMonitorGracePeriod", "registerRetryCount", "nodeStartupGracePeriod", "nodeMonitorPeriod", "serviceAccountKeyFile", "clusterSigningCertFile", "clusterSigningKeyFile", "approveAllKubeletCSRsForGroup", "enableProfiling", "clusterName", "clusterCIDR", "serviceCIDR", "nodeCIDRMaskSize", "allocateNodeCIDRs", "configureCloudRoutes", "rootCAFile", "contentType", "kubeAPIQPS", "kubeAPIBurst", "leaderElection", "volumeConfiguration", "controllerStartInterval", "enableGarbageCollector", "concurrentGCSyncs", "nodeEvictionRate", "secondaryNodeEvictionRate", "largeClusterSizeThreshold", "unhealthyZoneThreshold"},
 			},
 		},
 		Dependencies: []string{
-			"componentconfig.LeaderElectionConfiguration", "componentconfig.VolumeConfiguration", "unversioned.Duration", "unversioned.TypeMeta"},
+			"componentconfig.LeaderElectionConfiguration", "componentconfig.VolumeConfiguration", "v1.Duration", "v1.TypeMeta"},
 	},
 	"componentconfig.KubeProxyConfiguration": {
 		Schema: spec.Schema{
@@ -1860,7 +1867,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"bindAddress": {
@@ -1908,7 +1915,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"iptablesSyncPeriodSeconds": {
 						SchemaProps: spec.SchemaProps{
 							Description: "iptablesSyncPeriod is the period that iptables rules are refreshed (e.g. '5s', '1m', '2h22m').  Must be greater than 0.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+					"iptablesMinSyncPeriodSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "iptablesMinSyncPeriod is the minimum period that iptables rules are refreshed (e.g. '5s', '1m', '2h22m').",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"kubeconfigPath": {
@@ -1963,35 +1976,48 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"udpTimeoutMilliseconds": {
 						SchemaProps: spec.SchemaProps{
 							Description: "udpIdleTimeout is how long an idle UDP connection will be kept open (e.g. '250ms', '2s'). Must be greater than 0. Only applicable for proxyMode=userspace.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"conntrackMax": {
 						SchemaProps: spec.SchemaProps{
-							Description: "conntrackMax is the maximum number of NAT connections to track (0 to leave as-is).  This takes precedence over conntrackMaxPerCore.",
+							Description: "conntrackMax is the maximum number of NAT connections to track (0 to leave as-is).  This takes precedence over conntrackMaxPerCore and conntrackMin.",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"conntrackMaxPerCore": {
 						SchemaProps: spec.SchemaProps{
-							Description: "conntrackMaxPerCore is the maximum number of NAT connections to track per CPU core (0 to leave as-is).  This value is only considered if conntrackMax == 0.",
+							Description: "conntrackMaxPerCore is the maximum number of NAT connections to track per CPU core (0 to leave the limit as-is and ignore conntrackMin).",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"conntrackMin": {
+						SchemaProps: spec.SchemaProps{
+							Description: "conntrackMin is the minimum value of connect-tracking records to allocate, regardless of conntrackMaxPerCore (set conntrackMaxPerCore=0 to leave the limit as-is).",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"conntrackTCPEstablishedTimeout": {
 						SchemaProps: spec.SchemaProps{
-							Description: "conntrackTCPEstablishedTimeout is how long an idle TCP connection will be kept open (e.g. '250ms', '2s').  Must be greater than 0.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Description: "conntrackTCPEstablishedTimeout is how long an idle TCP connection will be kept open (e.g. '2s').  Must be greater than 0.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+					"conntrackTCPCloseWaitTimeout": {
+						SchemaProps: spec.SchemaProps{
+							Description: "conntrackTCPCloseWaitTimeout is how long an idle conntrack entry in CLOSE_WAIT state will remain in the conntrack table. (e.g. '60s'). Must be greater than 0 to set.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "bindAddress", "clusterCIDR", "healthzBindAddress", "healthzPort", "hostnameOverride", "iptablesMasqueradeBit", "iptablesSyncPeriodSeconds", "kubeconfigPath", "masqueradeAll", "master", "oomScoreAdj", "mode", "portRange", "resourceContainer", "udpTimeoutMilliseconds", "conntrackMax", "conntrackMaxPerCore", "conntrackTCPEstablishedTimeout"},
+				Required: []string{"TypeMeta", "bindAddress", "clusterCIDR", "healthzBindAddress", "healthzPort", "hostnameOverride", "iptablesMasqueradeBit", "iptablesSyncPeriodSeconds", "iptablesMinSyncPeriodSeconds", "kubeconfigPath", "masqueradeAll", "master", "oomScoreAdj", "mode", "portRange", "resourceContainer", "udpTimeoutMilliseconds", "conntrackMax", "conntrackMaxPerCore", "conntrackMin", "conntrackTCPEstablishedTimeout", "conntrackTCPCloseWaitTimeout"},
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Duration", "unversioned.TypeMeta"},
+			"v1.Duration", "v1.TypeMeta"},
 	},
 	"componentconfig.KubeSchedulerConfiguration": {
 		Schema: spec.Schema{
@@ -1999,7 +2025,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"port": {
@@ -2033,6 +2059,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"enableProfiling": {
 						SchemaProps: spec.SchemaProps{
 							Description: "enableProfiling enables profiling via web interface.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"enableContentionProfiling": {
+						SchemaProps: spec.SchemaProps{
+							Description: "enableContentionProfiling enables lock contention profiling, if enableProfiling is true.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -2086,11 +2119,81 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "port", "address", "algorithmProvider", "policyConfigFile", "enableProfiling", "contentType", "kubeAPIQPS", "kubeAPIBurst", "schedulerName", "hardPodAffinitySymmetricWeight", "failureDomains", "leaderElection"},
+				Required: []string{"TypeMeta", "port", "address", "algorithmProvider", "policyConfigFile", "enableProfiling", "enableContentionProfiling", "contentType", "kubeAPIQPS", "kubeAPIBurst", "schedulerName", "hardPodAffinitySymmetricWeight", "failureDomains", "leaderElection"},
 			},
 		},
 		Dependencies: []string{
-			"componentconfig.LeaderElectionConfiguration", "unversioned.TypeMeta"},
+			"componentconfig.LeaderElectionConfiguration", "v1.TypeMeta"},
+	},
+	"componentconfig.KubeletAnonymousAuthentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"enabled": {
+						SchemaProps: spec.SchemaProps{
+							Description: "enabled allows anonymous requests to the kubelet server. Requests that are not rejected by another authentication method are treated as anonymous requests. Anonymous requests have a username of system:anonymous, and a group name of system:unauthenticated.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"enabled"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"componentconfig.KubeletAuthentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"x509": {
+						SchemaProps: spec.SchemaProps{
+							Description: "x509 contains settings related to x509 client certificate authentication",
+							Ref:         spec.MustCreateRef("#/definitions/componentconfig.KubeletX509Authentication"),
+						},
+					},
+					"webhook": {
+						SchemaProps: spec.SchemaProps{
+							Description: "webhook contains settings related to webhook bearer token authentication",
+							Ref:         spec.MustCreateRef("#/definitions/componentconfig.KubeletWebhookAuthentication"),
+						},
+					},
+					"anonymous": {
+						SchemaProps: spec.SchemaProps{
+							Description: "anonymous contains settings related to anonymous authentication",
+							Ref:         spec.MustCreateRef("#/definitions/componentconfig.KubeletAnonymousAuthentication"),
+						},
+					},
+				},
+				Required: []string{"x509", "webhook", "anonymous"},
+			},
+		},
+		Dependencies: []string{
+			"componentconfig.KubeletAnonymousAuthentication", "componentconfig.KubeletWebhookAuthentication", "componentconfig.KubeletX509Authentication"},
+	},
+	"componentconfig.KubeletAuthorization": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"mode": {
+						SchemaProps: spec.SchemaProps{
+							Description: "mode is the authorization mode to apply to requests to the kubelet server. Valid values are AlwaysAllow and Webhook. Webhook mode uses the SubjectAccessReview API to determine authorization.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"webhook": {
+						SchemaProps: spec.SchemaProps{
+							Description: "webhook contains settings related to Webhook authorization.",
+							Ref:         spec.MustCreateRef("#/definitions/componentconfig.KubeletWebhookAuthorization"),
+						},
+					},
+				},
+				Required: []string{"mode", "webhook"},
+			},
+		},
+		Dependencies: []string{
+			"componentconfig.KubeletWebhookAuthorization"},
 	},
 	"componentconfig.KubeletConfiguration": {
 		Schema: spec.Schema{
@@ -2098,7 +2201,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"podManifestPath": {
@@ -2111,19 +2214,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"syncFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "syncFrequency is the max period between synchronizing running containers and config",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"fileCheckFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "fileCheckFrequency is the duration between checking config files for new data",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"httpCheckFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "httpCheckFrequency is the duration between checking http for new data",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"manifestURL": {
@@ -2187,6 +2290,18 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Description: "certDirectory is the directory where the TLS certs are located (by default /var/run/kubernetes). If tlsCertFile and tlsPrivateKeyFile are provided, this flag will be ignored.",
 							Type:        []string{"string"},
 							Format:      "",
+						},
+					},
+					"authentication": {
+						SchemaProps: spec.SchemaProps{
+							Description: "authentication specifies how requests to the Kubelet's server are authenticated",
+							Ref:         spec.MustCreateRef("#/definitions/componentconfig.KubeletAuthentication"),
+						},
+					},
+					"authorization": {
+						SchemaProps: spec.SchemaProps{
+							Description: "authorization specifies how requests to the Kubelet's server are authorized",
+							Ref:         spec.MustCreateRef("#/definitions/componentconfig.KubeletAuthorization"),
 						},
 					},
 					"hostnameOverride": {
@@ -2311,7 +2426,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"minimumGCAge": {
 						SchemaProps: spec.SchemaProps{
 							Description: "minimumGCAge is the minimum age for a finished container before it is garbage collected.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"maxPerPodContainerCount": {
@@ -2387,19 +2502,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"streamingConnectionIdleTimeout": {
 						SchemaProps: spec.SchemaProps{
 							Description: "streamingConnectionIdleTimeout is the maximum time a streaming connection can be idle before the connection is automatically closed.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"nodeStatusUpdateFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "nodeStatusUpdateFrequency is the frequency that kubelet posts node status to master. Note: be cautious when changing the constant, it must work with nodeMonitorGracePeriod in nodecontroller.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"imageMinimumGCAge": {
 						SchemaProps: spec.SchemaProps{
 							Description: "imageMinimumGCAge is the minimum age for an unused image before it is garbage collected.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"imageGCHighThresholdPercent": {
@@ -2426,7 +2541,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"volumeStatsAggPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "How frequently to calculate and cache volume disk usage for all pods",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"networkPluginName": {
@@ -2492,10 +2607,17 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
-					"CgroupsPerQOS": {
+					"experimentalCgroupsPerQOS": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Enable QoS based Cgroup hierarchy: top level cgroups for QoS Classes And all Burstable and BestEffort pods are brought up under their specific top level QoS cgroup.",
 							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"cgroupDriver": {
+						SchemaProps: spec.SchemaProps{
+							Description: "driver that the kubelet uses to manipulate cgroups on the host (cgroupfs or systemd)",
+							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
@@ -2515,7 +2637,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"cgroupRoot": {
 						SchemaProps: spec.SchemaProps{
-							Description: "CgroupRoot is the root cgroup to use for pods. If CgroupsPerQOS is enabled, this is the root of the QoS cgroup hierarchy.",
+							Description: "CgroupRoot is the root cgroup to use for pods. If ExperimentalCgroupsPerQOS is enabled, this is the root of the QoS cgroup hierarchy.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -2544,12 +2666,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"runtimeRequestTimeout": {
 						SchemaProps: spec.SchemaProps{
 							Description: "runtimeRequestTimeout is the timeout for all runtime requests except long running requests - pull, logs, exec and attach.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"rktPath": {
 						SchemaProps: spec.SchemaProps{
 							Description: "rktPath is the path of rkt binary. Leave empty to use the first rkt in $PATH.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"experimentalMounterPath": {
+						SchemaProps: spec.SchemaProps{
+							Description: "experimentalMounterPath is the path of mounter binary. Leave empty to use the default mount path",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -2582,16 +2711,9 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
-					"configureCbr0": {
-						SchemaProps: spec.SchemaProps{
-							Description: "configureCBR0 enables the kublet to configure cbr0 based on Node.Spec.PodCIDR.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
 					"hairpinMode": {
 						SchemaProps: spec.SchemaProps{
-							Description: "How should the kubelet configure the container bridge for hairpin packets. Setting this flag allows endpoints in a Service to loadbalance back to themselves if they should try to access their own Service. Values:\n  \"promiscuous-bridge\": make the container bridge promiscuous.\n  \"hairpin-veth\":       set the hairpin flag on container veth interfaces.\n  \"none\":               do nothing.\nSetting --configure-cbr0 to false implies that to achieve hairpin NAT one must set --hairpin-mode=veth-flag, because bridge assumes the existence of a container bridge named cbr0.",
+							Description: "How should the kubelet configure the container bridge for hairpin packets. Setting this flag allows endpoints in a Service to loadbalance back to themselves if they should try to access their own Service. Values:\n  \"promiscuous-bridge\": make the container bridge promiscuous.\n  \"hairpin-veth\":       set the hairpin flag on container veth interfaces.\n  \"none\":               do nothing.\nGenerally, one must set --hairpin-mode=veth-flag to achieve hairpin NAT, because promiscous-bridge assumes the existence of a container bridge named cbr0.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -2661,14 +2783,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"reconcileCIDR": {
 						SchemaProps: spec.SchemaProps{
-							Description: "reconcileCIDR is Reconcile node CIDR with the CIDR specified by the API server. No-op if register-node or configure-cbr0 is false.",
+							Description: "reconcileCIDR is Reconcile node CIDR with the CIDR specified by the API server. Won't have any effect if register-node is false.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
 					},
 					"registerSchedulable": {
 						SchemaProps: spec.SchemaProps{
-							Description: "registerSchedulable tells the kubelet to register the node as schedulable. No-op if register-node is false.",
+							Description: "registerSchedulable tells the kubelet to register the node as schedulable. Won't have any effect if register-node is false.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -2701,17 +2823,10 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
-					"experimentalFlannelOverlay": {
-						SchemaProps: spec.SchemaProps{
-							Description: "experimentalFlannelOverlay enables experimental support for starting the kubelet with the default overlay network (flannel). Assumes flanneld is already running in client mode.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
 					"outOfDiskTransitionFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "outOfDiskTransitionFrequency is duration for which the kubelet has to wait before transitioning out of out-of-disk node condition status.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"nodeIP": {
@@ -2773,7 +2888,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"evictionPressureTransitionPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Duration for which the kubelet has to wait before transitioning out of an eviction pressure condition.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"evictionMaxPodGracePeriod": {
@@ -2806,7 +2921,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"systemReserved": {
 						SchemaProps: spec.SchemaProps{
-							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for non-kubernetes components. Currently only cpu and memory are supported. [default=none] See http://releases.k8s.io/HEAD/docs/user-guide/compute-resources.md for more detail.",
+							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for non-kubernetes components. Currently only cpu and memory are supported. [default=none] See http://kubernetes.io/docs/user-guide/compute-resources for more detail.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -2820,7 +2935,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"kubeReserved": {
 						SchemaProps: spec.SchemaProps{
-							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for kubernetes system components. Currently only cpu and memory are supported. [default=none] See http://releases.k8s.io/HEAD/docs/user-guide/compute-resources.md for more detail.",
+							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for kubernetes system components. Currently only cpu and memory are supported. [default=none] See http://kubernetes.io/docs/user-guide/compute-resources for more detail.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -2874,19 +2989,104 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							},
 						},
 					},
-					"experimentalRuntimeIntegrationType": {
+					"featureGates": {
 						SchemaProps: spec.SchemaProps{
-							Description: "How to integrate with runtime. If set to cri, kubelet will switch to using the new Container Runtine Interface.",
+							Description: "featureGates is a string of comma-separated key=value pairs that describe feature gates for alpha/experimental features.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"enableCRI": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Enable Container Runtime Interface (CRI) integration.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"experimentalFailSwapOn": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Tells the Kubelet to fail to start if swap is enabled on the node.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"ExperimentalCheckNodeCapabilitiesBeforeMount": {
+						SchemaProps: spec.SchemaProps{
+							Description: "This flag, if set, enables a check prior to mount operations to verify that the required components (binaries, etc.) to mount the volume are available on the underlying node. If the check is enabled and fails the mount operation fails.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"TypeMeta", "podManifestPath", "syncFrequency", "fileCheckFrequency", "httpCheckFrequency", "manifestURL", "manifestURLHeader", "enableServer", "address", "port", "readOnlyPort", "tlsCertFile", "tlsPrivateKeyFile", "certDirectory", "authentication", "authorization", "hostnameOverride", "podInfraContainerImage", "dockerEndpoint", "rootDirectory", "seccompProfileRoot", "allowPrivileged", "hostNetworkSources", "hostPIDSources", "hostIPCSources", "registryPullQPS", "registryBurst", "eventRecordQPS", "eventBurst", "enableDebuggingHandlers", "minimumGCAge", "maxPerPodContainerCount", "maxContainerCount", "cAdvisorPort", "healthzPort", "healthzBindAddress", "oomScoreAdj", "registerNode", "clusterDomain", "masterServiceNamespace", "clusterDNS", "streamingConnectionIdleTimeout", "nodeStatusUpdateFrequency", "imageMinimumGCAge", "imageGCHighThresholdPercent", "imageGCLowThresholdPercent", "lowDiskSpaceThresholdMB", "volumeStatsAggPeriod", "networkPluginName", "networkPluginMTU", "networkPluginDir", "cniConfDir", "cniBinDir", "volumePluginDir", "containerRuntime", "remoteRuntimeEndpoint", "remoteImageEndpoint", "lockFilePath", "exitOnLockContention", "hairpinMode", "babysitDaemons", "maxPods", "nvidiaGPUs", "dockerExecHandlerName", "podCIDR", "resolvConf", "cpuCFSQuota", "containerized", "maxOpenFiles", "reconcileCIDR", "registerSchedulable", "contentType", "kubeAPIQPS", "kubeAPIBurst", "serializeImagePulls", "nodeLabels", "nonMasqueradeCIDR", "enableCustomMetrics", "podsPerCore", "enableControllerAttachDetach", "systemReserved", "kubeReserved", "protectKernelDefaults", "makeIPTablesUtilChains", "iptablesMasqueradeBit", "iptablesDropBit", "featureGates"},
+			},
+		},
+		Dependencies: []string{
+			"componentconfig.KubeletAuthentication", "componentconfig.KubeletAuthorization", "v1.Duration", "v1.TypeMeta"},
+	},
+	"componentconfig.KubeletWebhookAuthentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"enabled": {
+						SchemaProps: spec.SchemaProps{
+							Description: "enabled allows bearer token authentication backed by the tokenreviews.authentication.k8s.io API",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"cacheTTL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cacheTTL enables caching of authentication results",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+				},
+				Required: []string{"enabled", "cacheTTL"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Duration"},
+	},
+	"componentconfig.KubeletWebhookAuthorization": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"cacheAuthorizedTTL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cacheAuthorizedTTL is the duration to cache 'authorized' responses from the webhook authorizer.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+					"cacheUnauthorizedTTL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cacheUnauthorizedTTL is the duration to cache 'unauthorized' responses from the webhook authorizer.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+				},
+				Required: []string{"cacheAuthorizedTTL", "cacheUnauthorizedTTL"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Duration"},
+	},
+	"componentconfig.KubeletX509Authentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"clientCAFile": {
+						SchemaProps: spec.SchemaProps{
+							Description: "clientCAFile is the path to a PEM-encoded certificate bundle. If set, any request presenting a client certificate signed by one of the authorities in the bundle is authenticated with a username corresponding to the CommonName, and groups corresponding to the Organization in the client certificate.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "podManifestPath", "syncFrequency", "fileCheckFrequency", "httpCheckFrequency", "manifestURL", "manifestURLHeader", "enableServer", "address", "port", "readOnlyPort", "tlsCertFile", "tlsPrivateKeyFile", "certDirectory", "hostnameOverride", "podInfraContainerImage", "dockerEndpoint", "rootDirectory", "seccompProfileRoot", "allowPrivileged", "hostNetworkSources", "hostPIDSources", "hostIPCSources", "registryPullQPS", "registryBurst", "eventRecordQPS", "eventBurst", "enableDebuggingHandlers", "minimumGCAge", "maxPerPodContainerCount", "maxContainerCount", "cAdvisorPort", "healthzPort", "healthzBindAddress", "oomScoreAdj", "registerNode", "clusterDomain", "masterServiceNamespace", "clusterDNS", "streamingConnectionIdleTimeout", "nodeStatusUpdateFrequency", "imageMinimumGCAge", "imageGCHighThresholdPercent", "imageGCLowThresholdPercent", "lowDiskSpaceThresholdMB", "volumeStatsAggPeriod", "networkPluginName", "networkPluginMTU", "networkPluginDir", "cniConfDir", "cniBinDir", "volumePluginDir", "containerRuntime", "remoteRuntimeEndpoint", "remoteImageEndpoint", "lockFilePath", "exitOnLockContention", "configureCbr0", "hairpinMode", "babysitDaemons", "maxPods", "nvidiaGPUs", "dockerExecHandlerName", "podCIDR", "resolvConf", "cpuCFSQuota", "containerized", "maxOpenFiles", "reconcileCIDR", "registerSchedulable", "contentType", "kubeAPIQPS", "kubeAPIBurst", "serializeImagePulls", "experimentalFlannelOverlay", "nodeLabels", "nonMasqueradeCIDR", "enableCustomMetrics", "podsPerCore", "enableControllerAttachDetach", "systemReserved", "kubeReserved", "protectKernelDefaults", "makeIPTablesUtilChains", "iptablesMasqueradeBit", "iptablesDropBit"},
+				Required: []string{"clientCAFile"},
 			},
 		},
-		Dependencies: []string{
-			"unversioned.Duration", "unversioned.TypeMeta"},
+		Dependencies: []string{},
 	},
 	"componentconfig.LeaderElectionConfiguration": {
 		Schema: spec.Schema{
@@ -2903,19 +3103,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"leaseDuration": {
 						SchemaProps: spec.SchemaProps{
 							Description: "leaseDuration is the duration that non-leader candidates will wait after observing a leadership renewal until attempting to acquire leadership of a led but unrenewed leader slot. This is effectively the maximum duration that a leader can be stopped before it is replaced by another candidate. This is only applicable if leader election is enabled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"renewDeadline": {
 						SchemaProps: spec.SchemaProps{
 							Description: "renewDeadline is the interval between attempts by the acting master to renew a leadership slot before it stops leading. This must be less than or equal to the lease duration. This is only applicable if leader election is enabled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"retryPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "retryPeriod is the duration the clients should wait between attempting acquisition and renewal of a leadership. This is only applicable if leader election is enabled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 				},
@@ -2923,7 +3123,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Duration"},
+			"v1.Duration"},
 	},
 	"componentconfig.PersistentVolumeRecyclerConfiguration": {
 		Schema: spec.Schema{
@@ -3188,7 +3388,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -3209,7 +3409,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.DaemonSet", "unversioned.ListMeta"},
+			"extensions.DaemonSet", "v1.ListMeta"},
 	},
 	"extensions.DaemonSetSpec": {
 		Schema: spec.Schema{
@@ -3218,13 +3418,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that are managed by the daemon set. Must match in order to be controlled. If empty, defaulted to labels on Pod template. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Description: "Selector is a label query over pods that are managed by the daemon set. Must match in order to be controlled. If empty, defaulted to labels on Pod template. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created. The DaemonSet will create exactly one copy of this pod on every node that matches the template's node selector (or on every node if no node selector is specified). More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#pod-template",
+							Description: "Template is the object that describes the pod that will be created. The DaemonSet will create exactly one copy of this pod on every node that matches the template's node selector (or on every node if no node selector is specified). More info: http://kubernetes.io/docs/user-guide/replication-controller#pod-template",
 							Ref:         spec.MustCreateRef("#/definitions/api.PodTemplateSpec"),
 						},
 					},
@@ -3233,7 +3433,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.PodTemplateSpec", "unversioned.LabelSelector"},
+			"api.PodTemplateSpec", "v1.LabelSelector"},
 	},
 	"extensions.DaemonSetStatus": {
 		Schema: spec.Schema{
@@ -3261,8 +3461,15 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"numberReady": {
+						SchemaProps: spec.SchemaProps{
+							Description: "NumberReady is the number of nodes that should be running the daemon pod and have one or more of the daemon pod running and ready.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 				},
-				Required: []string{"currentNumberScheduled", "numberMisscheduled", "desiredNumberScheduled"},
+				Required: []string{"currentNumberScheduled", "numberMisscheduled", "desiredNumberScheduled", "numberReady"},
 			},
 		},
 		Dependencies: []string{},
@@ -3294,13 +3501,65 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"api.ObjectMeta", "extensions.DeploymentSpec", "extensions.DeploymentStatus"},
 	},
+	"extensions.DeploymentCondition": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "DeploymentCondition describes the state of a deployment at a certain point.",
+				Properties: map[string]spec.Schema{
+					"type": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Type of deployment condition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status of the condition, one of True, False, Unknown.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"lastUpdateTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The last time this condition was updated.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"lastTransitionTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Last time the condition transitioned from one status to another.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The reason for the condition's last transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human readable message indicating details about the transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"type", "status"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Time"},
+	},
 	"extensions.DeploymentList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -3321,7 +3580,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.Deployment", "unversioned.ListMeta"},
+			"extensions.Deployment", "v1.ListMeta"},
 	},
 	"extensions.DeploymentRollback": {
 		Schema: spec.Schema{
@@ -3376,7 +3635,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"selector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Label selector for pods. Existing ReplicaSets whose pods are selected by this will be the ones affected by this deployment.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
@@ -3418,12 +3677,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Ref:         spec.MustCreateRef("#/definitions/extensions.RollbackConfig"),
 						},
 					},
+					"progressDeadlineSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The maximum time in seconds for a deployment to make progress before it is considered to be failed. The deployment controller will continue to process failed deployments and a condition with a ProgressDeadlineExceeded reason will be surfaced in the deployment status. Once autoRollback is implemented, the deployment controller will automatically rollback failed deployments. Note that progress will not be estimated during the time a deployment is paused. This is not set by default.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 				},
 				Required: []string{"template"},
 			},
 		},
 		Dependencies: []string{
-			"api.PodTemplateSpec", "extensions.DeploymentStrategy", "extensions.RollbackConfig", "unversioned.LabelSelector"},
+			"api.PodTemplateSpec", "extensions.DeploymentStrategy", "extensions.RollbackConfig", "v1.LabelSelector"},
 	},
 	"extensions.DeploymentStatus": {
 		Schema: spec.Schema{
@@ -3464,10 +3730,24 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"conditions": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Represents the latest available observations of a deployment's current state.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/extensions.DeploymentCondition"),
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"extensions.DeploymentCondition"},
 	},
 	"extensions.DeploymentStrategy": {
 		Schema: spec.Schema{
@@ -3685,7 +3965,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -3706,7 +3986,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.Ingress", "unversioned.ListMeta"},
+			"extensions.Ingress", "v1.ListMeta"},
 	},
 	"extensions.IngressRule": {
 		Schema: spec.Schema{
@@ -3897,7 +4177,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -3917,7 +4197,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.NetworkPolicy", "unversioned.ListMeta"},
+			"extensions.NetworkPolicy", "v1.ListMeta"},
 	},
 	"extensions.NetworkPolicyPeer": {
 		Schema: spec.Schema{
@@ -3926,20 +4206,20 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"podSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "This is a label selector which selects Pods in this namespace. This field follows standard label selector semantics. If not provided, this selector selects no pods. If present but empty, this selector selects all pods in this namespace.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"namespaceSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Selects Namespaces using cluster scoped-labels.  This matches all pods in all namespaces selected by this label selector. This field follows standard label selector semantics. If omitted, this selector selects no namespaces. If present but empty, this selector selects all namespaces.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"unversioned.LabelSelector"},
+			"v1.LabelSelector"},
 	},
 	"extensions.NetworkPolicyPort": {
 		Schema: spec.Schema{
@@ -3971,7 +4251,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"podSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Selects the pods to which this NetworkPolicy object applies.  The array of ingress rules is applied to any pods selected by this field. Multiple network policies can select the same set of pods.  In this case, the ingress rules for each are combined additively. This field is NOT optional and follows standard label selector semantics. An empty podSelector matches all pods in this namespace.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"ingress": {
@@ -3992,7 +4272,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.NetworkPolicyIngressRule", "unversioned.LabelSelector"},
+			"extensions.NetworkPolicyIngressRule", "v1.LabelSelector"},
 	},
 	"extensions.PodSecurityPolicy": {
 		Schema: spec.Schema{
@@ -4023,7 +4303,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -4043,7 +4323,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.PodSecurityPolicy", "unversioned.ListMeta"},
+			"extensions.PodSecurityPolicy", "v1.ListMeta"},
 	},
 	"extensions.PodSecurityPolicySpec": {
 		Schema: spec.Schema{
@@ -4213,6 +4493,52 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"api.ObjectMeta", "extensions.ReplicaSetSpec", "extensions.ReplicaSetStatus"},
 	},
+	"extensions.ReplicaSetCondition": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ReplicaSetCondition describes the state of a replica set at a certain point.",
+				Properties: map[string]spec.Schema{
+					"type": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Type of replica set condition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status of the condition, one of True, False, Unknown.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"lastTransitionTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The last time the condition transitioned from one status to another.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The reason for the condition's last transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human readable message indicating details about the transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"type", "status"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Time"},
+	},
 	"extensions.ReplicaSetList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -4220,7 +4546,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -4240,7 +4566,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.ReplicaSet", "unversioned.ListMeta"},
+			"extensions.ReplicaSet", "v1.ListMeta"},
 	},
 	"extensions.ReplicaSetSpec": {
 		Schema: spec.Schema{
@@ -4254,10 +4580,17 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"minReadySeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Minimum number of seconds for which a newly created pod should be ready without any of its container crashing, for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready)",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the replica count. Must match in order to be controlled. If empty, defaulted to labels on pod template. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Description: "Selector is a label query over pods that should match the replica count. Must match in order to be controlled. If empty, defaulted to labels on pod template. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
@@ -4271,7 +4604,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.PodTemplateSpec", "unversioned.LabelSelector"},
+			"api.PodTemplateSpec", "v1.LabelSelector"},
 	},
 	"extensions.ReplicaSetStatus": {
 		Schema: spec.Schema{
@@ -4299,6 +4632,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"availableReplicas": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The number of available replicas (ready for at least minReadySeconds) for this replica set.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 					"observedGeneration": {
 						SchemaProps: spec.SchemaProps{
 							Description: "ObservedGeneration is the most recent generation observed by the controller.",
@@ -4306,11 +4646,25 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int64",
 						},
 					},
+					"conditions": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Represents the latest available observations of a replica set's current state.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/extensions.ReplicaSetCondition"),
+									},
+								},
+							},
+						},
+					},
 				},
 				Required: []string{"replicas"},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"extensions.ReplicaSetCondition"},
 	},
 	"extensions.ReplicationControllerDummy": {
 		Schema: spec.Schema{
@@ -4344,7 +4698,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"maxUnavailable": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The maximum number of pods that can be unavailable during the update. Value can be an absolute number (ex: 5) or a percentage of total pods at the start of update (ex: 10%). Absolute number is calculated from percentage by rounding up. This can not be 0 if MaxSurge is 0. By default, a fixed value of 1 is used. Example: when this is set to 30%, the old RC can be scaled down by 30% immediately when the rolling update starts. Once new pods are ready, old RC can be scaled down further, followed by scaling up the new RC, ensuring that at least 70% of original number of pods are available at all times during the update.",
+							Description: "The maximum number of pods that can be unavailable during the update. Value can be an absolute number (ex: 5) or a percentage of total pods at the start of update (ex: 10%). Absolute number is calculated from percentage by rounding down. This can not be 0 if MaxSurge is 0. By default, a fixed value of 1 is used. Example: when this is set to 30%, the old RC can be scaled down by 30% immediately when the rolling update starts. Once new pods are ready, old RC can be scaled down further, followed by scaling up the new RC, ensuring that at least 70% of original number of pods are available at all times during the update.",
 							Ref:         spec.MustCreateRef("#/definitions/intstr.IntOrString"),
 						},
 					},
@@ -4477,8 +4831,8 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "label query over pods that should match the replicas count. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Description: "label query over pods that should match the replicas count. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 				},
@@ -4486,7 +4840,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.LabelSelector"},
+			"v1.LabelSelector"},
 	},
 	"extensions.SupplementalGroupsStrategyOptions": {
 		Schema: spec.Schema{
@@ -4587,7 +4941,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -4608,7 +4962,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.ThirdPartyResourceData", "unversioned.ListMeta"},
+			"extensions.ThirdPartyResourceData", "v1.ListMeta"},
 	},
 	"extensions.ThirdPartyResourceList": {
 		Schema: spec.Schema{
@@ -4617,7 +4971,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -4638,7 +4992,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"extensions.ThirdPartyResource", "unversioned.ListMeta"},
+			"extensions.ThirdPartyResource", "v1.ListMeta"},
 	},
 	"imagepolicy.ImageReview": {
 		Schema: spec.Schema{
@@ -4647,7 +5001,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -4672,7 +5026,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "imagepolicy.ImageReviewSpec", "imagepolicy.ImageReviewStatus", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "imagepolicy.ImageReviewSpec", "imagepolicy.ImageReviewStatus", "v1.TypeMeta"},
 	},
 	"imagepolicy.ImageReviewContainerSpec": {
 		Schema: spec.Schema{
@@ -4766,7 +5120,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 	"intstr.IntOrString": intstr.IntOrString{}.OpenAPIDefinition(), "policy.Eviction": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "Eviction evicts a pod from its node subject to certain policies and safety constraints. This is a subresource of Pod.  A request to cause such an eviction is created by POSTing to .../pods/<pod name>/evictions.",
+				Description: "Eviction evicts a pod from its node subject to certain policies and safety constraints. This is a subresource of Pod.  A request to cause such an eviction is created by POSTing to .../pods/<pod name>/eviction.",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
@@ -4821,7 +5175,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -4841,7 +5195,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"policy.PodDisruptionBudget", "unversioned.ListMeta"},
+			"policy.PodDisruptionBudget", "v1.ListMeta"},
 	},
 	"policy.PodDisruptionBudgetSpec": {
 		Schema: spec.Schema{
@@ -4850,32 +5204,52 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"minAvailable": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The minimum number of pods that must be available simultaneously.  This can be either an integer or a string specifying a percentage, e.g. \"28%\".",
+							Description: "An eviction is allowed if at least \"minAvailable\" pods selected by \"selector\" will still be available after the eviction, i.e. even in the absence of the evicted pod.  So for example you can prevent all voluntary evictions by specifying \"100%\".",
 							Ref:         spec.MustCreateRef("#/definitions/intstr.IntOrString"),
 						},
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Label query over pods whose evictions are managed by the disruption budget.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"intstr.IntOrString", "unversioned.LabelSelector"},
+			"intstr.IntOrString", "v1.LabelSelector"},
 	},
 	"policy.PodDisruptionBudgetStatus": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Description: "PodDisruptionBudgetStatus represents information about the status of a PodDisruptionBudget. Status may trail the actual state of a system.",
 				Properties: map[string]spec.Schema{
-					"disruptionAllowed": {
+					"observedGeneration": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Whether or not a disruption is currently allowed.",
-							Type:        []string{"boolean"},
-							Format:      "",
+							Description: "Most recent generation observed when updating this PDB status. PodDisruptionsAllowed and other status informatio is valid only if observedGeneration equals to PDB's object generation.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"disruptedPods": {
+						SchemaProps: spec.SchemaProps{
+							Description: "DisruptedPods contains information about pods whose eviction was processed by the API server eviction subresource handler but has not yet been observed by the PodDisruptionBudget controller. A pod will be in this map from the time when the API server processed the eviction request to the time when the pod is seen by PDB controller as having been marked for deletion (or after a timeout). The key in the map is the name of the pod and the value is the time when the API server processed the eviction request. If the deletion didn't occur and a pod is still there it will be removed from the list automatically by PodDisruptionBudget controller after some time. If everything goes smooth this map should be empty for the most of the time. Large number of entries in the map may indicate problems with pod deletions.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1.Time"),
+									},
+								},
+							},
+						},
+					},
+					"disruptionsAllowed": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Number of pod disruptions that are currently allowed.",
+							Type:        []string{"integer"},
+							Format:      "int32",
 						},
 					},
 					"currentHealthy": {
@@ -4900,10 +5274,11 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 						},
 					},
 				},
-				Required: []string{"disruptionAllowed", "currentHealthy", "desiredHealthy", "expectedPods"},
+				Required: []string{"disruptedPods", "disruptionsAllowed", "currentHealthy", "desiredHealthy", "expectedPods"},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"v1.Time"},
 	},
 	"rbac.ClusterRole": {
 		Schema: spec.Schema{
@@ -4912,7 +5287,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -4939,7 +5314,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "rbac.PolicyRule", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "rbac.PolicyRule", "v1.TypeMeta"},
 	},
 	"rbac.ClusterRoleBinding": {
 		Schema: spec.Schema{
@@ -4948,7 +5323,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -4981,7 +5356,24 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "rbac.RoleRef", "rbac.Subject", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "rbac.RoleRef", "rbac.Subject", "v1.TypeMeta"},
+	},
+	"rbac.ClusterRoleBindingBuilder": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ClusterRoleBindingBuilder let's us attach methods.  A no-no for API types. We use it to construct bindings in code.  It's more compact than trying to write them out in a literal.",
+				Properties: map[string]spec.Schema{
+					"ClusterRoleBinding": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/rbac.ClusterRoleBinding"),
+						},
+					},
+				},
+				Required: []string{"ClusterRoleBinding"},
+			},
+		},
+		Dependencies: []string{
+			"rbac.ClusterRoleBinding"},
 	},
 	"rbac.ClusterRoleBindingList": {
 		Schema: spec.Schema{
@@ -4990,13 +5382,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ListMeta": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"Items": {
@@ -5017,7 +5409,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"rbac.ClusterRoleBinding", "unversioned.ListMeta", "unversioned.TypeMeta"},
+			"rbac.ClusterRoleBinding", "v1.ListMeta", "v1.TypeMeta"},
 	},
 	"rbac.ClusterRoleList": {
 		Schema: spec.Schema{
@@ -5026,13 +5418,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ListMeta": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"Items": {
@@ -5053,7 +5445,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"rbac.ClusterRole", "unversioned.ListMeta", "unversioned.TypeMeta"},
+			"rbac.ClusterRole", "v1.ListMeta", "v1.TypeMeta"},
 	},
 	"rbac.PolicyRule": {
 		Schema: spec.Schema{
@@ -5166,7 +5558,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -5193,7 +5585,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "rbac.PolicyRule", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "rbac.PolicyRule", "v1.TypeMeta"},
 	},
 	"rbac.RoleBinding": {
 		Schema: spec.Schema{
@@ -5202,7 +5594,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ObjectMeta": {
@@ -5234,7 +5626,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"api.ObjectMeta", "rbac.RoleRef", "rbac.Subject", "unversioned.TypeMeta"},
+			"api.ObjectMeta", "rbac.RoleRef", "rbac.Subject", "v1.TypeMeta"},
 	},
 	"rbac.RoleBindingList": {
 		Schema: spec.Schema{
@@ -5243,13 +5635,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ListMeta": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"Items": {
@@ -5270,7 +5662,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"rbac.RoleBinding", "unversioned.ListMeta", "unversioned.TypeMeta"},
+			"rbac.RoleBinding", "v1.ListMeta", "v1.TypeMeta"},
 	},
 	"rbac.RoleList": {
 		Schema: spec.Schema{
@@ -5279,13 +5671,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"ListMeta": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"Items": {
@@ -5306,7 +5698,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"rbac.Role", "unversioned.ListMeta", "unversioned.TypeMeta"},
+			"rbac.Role", "v1.ListMeta", "v1.TypeMeta"},
 	},
 	"rbac.RoleRef": {
 		Schema: spec.Schema{
@@ -5423,7 +5815,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 	"runtime.TypeMeta": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "TypeMeta is shared by all top level objects. The proper way to use it is to inline it in your type, like this: type MyAwesomeAPIObject struct {\n     runtime.TypeMeta    `json:\",inline\"`\n     ... // other fields\n} func (obj *MyAwesomeAPIObject) SetGroupVersionKind(gvk *unversioned.GroupVersionKind) { unversioned.UpdateTypeMeta(obj,gvk) }; GroupVersionKind() *GroupVersionKind\n\nTypeMeta is provided here for convenience. You may use it directly from this package or define your own with the same fields.",
+				Description: "TypeMeta is shared by all top level objects. The proper way to use it is to inline it in your type, like this: type MyAwesomeAPIObject struct {\n     runtime.TypeMeta    `json:\",inline\"`\n     ... // other fields\n} func (obj *MyAwesomeAPIObject) SetGroupVersionKind(gvk *metav1.GroupVersionKind) { metav1.UpdateTypeMeta(obj,gvk) }; GroupVersionKind() *GroupVersionKind\n\nTypeMeta is provided here for convenience. You may use it directly from this package or define your own with the same fields.",
 				Properties: map[string]spec.Schema{
 					"apiVersion": {
 						SchemaProps: spec.SchemaProps{
@@ -5474,7 +5866,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{},
 	},
-	"unversioned.APIGroup": {
+	"v1.APIGroup": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Description: "APIGroup contains the name, the supported versions, and the preferred version of a group.",
@@ -5493,7 +5885,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.GroupVersionForDiscovery"),
+										Ref: spec.MustCreateRef("#/definitions/v1.GroupVersionForDiscovery"),
 									},
 								},
 							},
@@ -5502,7 +5894,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"preferredVersion": {
 						SchemaProps: spec.SchemaProps{
 							Description: "preferredVersion is the version preferred by the API server, which probably is the storage version.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.GroupVersionForDiscovery"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.GroupVersionForDiscovery"),
 						},
 					},
 					"serverAddressByClientCIDRs": {
@@ -5512,7 +5904,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.ServerAddressByClientCIDR"),
+										Ref: spec.MustCreateRef("#/definitions/v1.ServerAddressByClientCIDR"),
 									},
 								},
 							},
@@ -5523,9 +5915,9 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.GroupVersionForDiscovery", "unversioned.ServerAddressByClientCIDR"},
+			"v1.GroupVersionForDiscovery", "v1.ServerAddressByClientCIDR"},
 	},
-	"unversioned.APIGroupList": {
+	"v1.APIGroupList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Description: "APIGroupList is a list of APIGroup, to allow clients to discover the API at /apis.",
@@ -5537,7 +5929,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.APIGroup"),
+										Ref: spec.MustCreateRef("#/definitions/v1.APIGroup"),
 									},
 								},
 							},
@@ -5548,9 +5940,9 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.APIGroup"},
+			"v1.APIGroup"},
 	},
-	"unversioned.APIResource": {
+	"v1.APIResource": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Description: "APIResource specifies the name of a resource and whether it is namespaced.",
@@ -5576,13 +5968,27 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
+					"verbs": {
+						SchemaProps: spec.SchemaProps{
+							Description: "verbs is a list of supported kube verbs (this includes get, list, watch, create, update, patch, delete, deletecollection, and proxy)",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Type:   []string{"string"},
+										Format: "",
+									},
+								},
+							},
+						},
+					},
 				},
-				Required: []string{"name", "namespaced", "kind"},
+				Required: []string{"name", "namespaced", "kind", "verbs"},
 			},
 		},
 		Dependencies: []string{},
 	},
-	"unversioned.APIResourceList": {
+	"v1.APIResourceList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Description: "APIResourceList is a list of APIResource, it is used to expose the name of the resources supported in a specific group and version, and if the resource is namespaced.",
@@ -5601,7 +6007,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.APIResource"),
+										Ref: spec.MustCreateRef("#/definitions/v1.APIResource"),
 									},
 								},
 							},
@@ -5612,9 +6018,9 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.APIResource"},
+			"v1.APIResource"},
 	},
-	"unversioned.APIVersions": {
+	"v1.APIVersions": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Description: "APIVersions lists the versions that are available, to allow clients to discover the API at /api, which is the root path of the legacy v1 API.",
@@ -5640,7 +6046,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.ServerAddressByClientCIDR"),
+										Ref: spec.MustCreateRef("#/definitions/v1.ServerAddressByClientCIDR"),
 									},
 								},
 							},
@@ -5651,552 +6057,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ServerAddressByClientCIDR"},
-	},
-	"unversioned.Duration": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "Duration is a wrapper around time.Duration which supports correct marshaling to YAML and JSON. In particular, it marshals into strings, which can be used as map keys in json.",
-				Properties: map[string]spec.Schema{
-					"Duration": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"integer"},
-							Format: "int64",
-						},
-					},
-				},
-				Required: []string{"Duration"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.ExportOptions": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ExportOptions is the query options to the standard REST get call.",
-				Properties: map[string]spec.Schema{
-					"export": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Should this value be exported.  Export strips fields that a user can not specify.`",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
-					"exact": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Should the export be exact.  Exact export maintains cluster-specific fields like 'Namespace'",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
-				},
-				Required: []string{"export", "exact"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.GroupKind": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "GroupKind specifies a Group and a Kind, but does not force a version.  This is useful for identifying concepts during lookup stages without having partially valid types",
-				Properties: map[string]spec.Schema{
-					"Group": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Kind": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-				},
-				Required: []string{"Group", "Kind"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.GroupResource": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "GroupResource specifies a Group and a Resource, but does not force a version.  This is useful for identifying concepts during lookup stages without having partially valid types",
-				Properties: map[string]spec.Schema{
-					"Group": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Resource": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-				},
-				Required: []string{"Group", "Resource"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.GroupVersion": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "GroupVersion contains the \"group\" and the \"version\", which uniquely identifies the API.",
-				Properties: map[string]spec.Schema{
-					"Group": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Version": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-				},
-				Required: []string{"Group", "Version"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.GroupVersionForDiscovery": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "GroupVersion contains the \"group/version\" and \"version\" string of a version. It is made a struct to keep extensibility.",
-				Properties: map[string]spec.Schema{
-					"groupVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "groupVersion specifies the API group and version in the form \"group/version\"",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"version": {
-						SchemaProps: spec.SchemaProps{
-							Description: "version specifies the version in the form of \"version\". This is to save the clients the trouble of splitting the GroupVersion.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-				Required: []string{"groupVersion", "version"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.GroupVersionKind": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "GroupVersionKind unambiguously identifies a kind.  It doesn't anonymously include GroupVersion to avoid automatic coersion.  It doesn't use a GroupVersion to avoid custom marshalling",
-				Properties: map[string]spec.Schema{
-					"Group": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Version": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Kind": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-				},
-				Required: []string{"Group", "Version", "Kind"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.GroupVersionResource": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "GroupVersionResource unambiguously identifies a resource.  It doesn't anonymously include GroupVersion to avoid automatic coersion.  It doesn't use a GroupVersion to avoid custom marshalling",
-				Properties: map[string]spec.Schema{
-					"Group": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Version": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-					"Resource": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "",
-						},
-					},
-				},
-				Required: []string{"Group", "Version", "Resource"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.LabelSelector": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A label selector is a label query over a set of resources. The result of matchLabels and matchExpressions are ANDed. An empty label selector matches all objects. A null label selector matches no objects.",
-				Properties: map[string]spec.Schema{
-					"matchLabels": {
-						SchemaProps: spec.SchemaProps{
-							Description: "matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is \"key\", the operator is \"In\", and the values array contains only \"value\". The requirements are ANDed.",
-							Type:        []string{"object"},
-							AdditionalProperties: &spec.SchemaOrBool{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-					"matchExpressions": {
-						SchemaProps: spec.SchemaProps{
-							Description: "matchExpressions is a list of label selector requirements. The requirements are ANDed.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.LabelSelectorRequirement"),
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.LabelSelectorRequirement"},
-	},
-	"unversioned.LabelSelectorRequirement": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A label selector requirement is a selector that contains values, a key, and an operator that relates the key and values.",
-				Properties: map[string]spec.Schema{
-					"key": {
-						SchemaProps: spec.SchemaProps{
-							Description: "key is the label key that the selector applies to.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"operator": {
-						SchemaProps: spec.SchemaProps{
-							Description: "operator represents a key's relationship to a set of values. Valid operators ard In, NotIn, Exists and DoesNotExist.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"values": {
-						SchemaProps: spec.SchemaProps{
-							Description: "values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"key", "operator"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.ListMeta": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ListMeta describes metadata that synthetic resources must have, including lists and various status objects. A resource may have only one of {ObjectMeta, ListMeta}.",
-				Properties: map[string]spec.Schema{
-					"selfLink": {
-						SchemaProps: spec.SchemaProps{
-							Description: "SelfLink is a URL representing this object. Populated by the system. Read-only.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"resourceVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "String that identifies the server's internal version of this object that can be used by clients to determine when objects have changed. Value must be treated as opaque by clients and passed unmodified back to the server. Populated by the system. Read-only. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#concurrency-control-and-consistency",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.Patch": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "Patch is provided to give a concrete name and type to the Kubernetes PATCH request body.",
-				Properties:  map[string]spec.Schema{},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.RootPaths": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "RootPaths lists the paths available at root. For example: \"/healthz\", \"/apis\".",
-				Properties: map[string]spec.Schema{
-					"paths": {
-						SchemaProps: spec.SchemaProps{
-							Description: "paths are the paths available at root.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"paths"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.ServerAddressByClientCIDR": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ServerAddressByClientCIDR helps the client to determine the server address that they should use, depending on the clientCIDR that they match.",
-				Properties: map[string]spec.Schema{
-					"clientCIDR": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The CIDR with which clients can match their IP to figure out the server address that they should use.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"serverAddress": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Address of this server, suitable for a client that matches the above CIDR. This can be a hostname, hostname:port, IP or IP:port.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-				Required: []string{"clientCIDR", "serverAddress"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.Status": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "Status is a return value for calls that don't return other objects.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
-						},
-					},
-					"status": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Status of the operation. One of: \"Success\" or \"Failure\". More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"message": {
-						SchemaProps: spec.SchemaProps{
-							Description: "A human-readable description of the status of this operation.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"reason": {
-						SchemaProps: spec.SchemaProps{
-							Description: "A machine-readable description of why this operation is in the \"Failure\" status. If this value is empty there is no information available. A Reason clarifies an HTTP status code but does not override it.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"details": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Extended data associated with the reason.  Each reason may define its own extended details. This field is optional and the data returned is not guaranteed to conform to any schema except that defined by the reason type.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.StatusDetails"),
-						},
-					},
-					"code": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Suggested HTTP return code for this status, 0 if not set.",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.ListMeta", "unversioned.StatusDetails"},
-	},
-	"unversioned.StatusCause": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "StatusCause provides more information about an api.Status failure, including cases when multiple errors are encountered.",
-				Properties: map[string]spec.Schema{
-					"reason": {
-						SchemaProps: spec.SchemaProps{
-							Description: "A machine-readable description of the cause of the error. If this value is empty there is no information available.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"message": {
-						SchemaProps: spec.SchemaProps{
-							Description: "A human-readable description of the cause of the error.  This field may be presented as-is to a reader.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"field": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The field of the resource that has caused this error, as named by its JSON serialization. May include dot and postfix notation for nested attributes. Arrays are zero-indexed.  Fields may appear more than once in an array of causes due to fields having multiple errors. Optional.\n\nExamples:\n  \"name\" - the field \"name\" on the current resource\n  \"items[0].name\" - the field \"name\" on the first array entry in \"items\"",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.StatusDetails": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "StatusDetails is a set of additional properties that MAY be set by the server to provide additional information about a response. The Reason field of a Status object defines what attributes will be set. Clients must ignore fields that do not match the defined type of each attribute, and should assume that any attribute may be empty, invalid, or under defined.",
-				Properties: map[string]spec.Schema{
-					"name": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The name attribute of the resource associated with the status StatusReason (when there is a single name which can be described).",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"group": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The group attribute of the resource associated with the status StatusReason.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"kind": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The kind attribute of the resource associated with the status StatusReason. On some operations may differ from the requested resource Kind. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"causes": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The Causes array includes more details associated with the StatusReason failure. Not all StatusReasons may provide detailed causes.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/unversioned.StatusCause"),
-									},
-								},
-							},
-						},
-					},
-					"retryAfterSeconds": {
-						SchemaProps: spec.SchemaProps{
-							Description: "If specified, the time in seconds before the operation should be retried.",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.StatusCause"},
-	},
-	"unversioned.Time": unversioned.Time{}.OpenAPIDefinition(), "unversioned.Timestamp": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "Timestamp is a struct that is equivalent to Time, but intended for protobuf marshalling/unmarshalling. It is generated into a serialization that matches Time. Do not use in Go structs.",
-				Properties: map[string]spec.Schema{
-					"seconds": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Represents seconds of UTC time since Unix epoch 1970-01-01T00:00:00Z. Must be from from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z inclusive.",
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-					"nanos": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Non-negative fractions of a second at nanosecond resolution. Negative second values with fractions must still have non-negative nanos values that count forward in time. Must be from 0 to 999,999,999 inclusive. This field may be limited in precision depending on context.",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-				},
-				Required: []string{"seconds", "nanos"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.TypeMeta": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "TypeMeta describes an individual object in an API response or request with strings representing the type of the object and its API schema version. Structures that are versioned or persisted should inline TypeMeta.",
-				Properties: map[string]spec.Schema{
-					"kind": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"apiVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#resources",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"unversioned.emptyObjectKind": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Properties: map[string]spec.Schema{},
-			},
-		},
-		Dependencies: []string{},
+			"v1.ServerAddressByClientCIDR"},
 	},
 	"v1.AWSElasticBlockStoreVolumeSource": {
 		Schema: spec.Schema{
@@ -6205,14 +6066,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"volumeID": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Unique ID of the persistent disk resource in AWS (Amazon EBS volume). More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#awselasticblockstore",
+							Description: "Unique ID of the persistent disk resource in AWS (Amazon EBS volume). More info: http://kubernetes.io/docs/user-guide/volumes#awselasticblockstore",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"fsType": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#awselasticblockstore",
+							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://kubernetes.io/docs/user-guide/volumes#awselasticblockstore",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -6226,7 +6087,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"readOnly": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Specify \"true\" to force and set the ReadOnly property in VolumeMounts to \"true\". If omitted, the default is \"false\". More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#awselasticblockstore",
+							Description: "Specify \"true\" to force and set the ReadOnly property in VolumeMounts to \"true\". If omitted, the default is \"false\". More info: http://kubernetes.io/docs/user-guide/volumes#awselasticblockstore",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -6280,7 +6141,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"devicePath": {
 						SchemaProps: spec.SchemaProps{
-							Description: "DevicePath represents the device path where the volume should be avilable",
+							Description: "DevicePath represents the device path where the volume should be available",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -6624,7 +6485,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -6645,7 +6506,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.ComponentStatus"},
+			"v1.ComponentStatus", "v1.ListMeta"},
 	},
 	"v1.ConfigMap": {
 		Schema: spec.Schema{
@@ -6704,7 +6565,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -6725,7 +6586,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.ConfigMap"},
+			"v1.ConfigMap", "v1.ListMeta"},
 	},
 	"v1.ConfigMapVolumeSource": {
 		Schema: spec.Schema{
@@ -6772,14 +6633,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"image": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Docker image name. More info: http://releases.k8s.io/HEAD/docs/user-guide/images.md",
+							Description: "Docker image name. More info: http://kubernetes.io/docs/user-guide/images",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"command": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Entrypoint array. Not executed within a shell. The docker image's ENTRYPOINT is used if this is not provided. Variable references $(VAR_NAME) are expanded using the container's environment. If a variable cannot be resolved, the reference in the input string will be unchanged. The $(VAR_NAME) syntax can be escaped with a double $$, ie: $$(VAR_NAME). Escaped references will never be expanded, regardless of whether the variable exists or not. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/containers.md#containers-and-commands",
+							Description: "Entrypoint array. Not executed within a shell. The docker image's ENTRYPOINT is used if this is not provided. Variable references $(VAR_NAME) are expanded using the container's environment. If a variable cannot be resolved, the reference in the input string will be unchanged. The $(VAR_NAME) syntax can be escaped with a double $$, ie: $$(VAR_NAME). Escaped references will never be expanded, regardless of whether the variable exists or not. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/containers#containers-and-commands",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -6793,7 +6654,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"args": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Arguments to the entrypoint. The docker image's CMD is used if this is not provided. Variable references $(VAR_NAME) are expanded using the container's environment. If a variable cannot be resolved, the reference in the input string will be unchanged. The $(VAR_NAME) syntax can be escaped with a double $$, ie: $$(VAR_NAME). Escaped references will never be expanded, regardless of whether the variable exists or not. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/containers.md#containers-and-commands",
+							Description: "Arguments to the entrypoint. The docker image's CMD is used if this is not provided. Variable references $(VAR_NAME) are expanded using the container's environment. If a variable cannot be resolved, the reference in the input string will be unchanged. The $(VAR_NAME) syntax can be escaped with a double $$, ie: $$(VAR_NAME). Escaped references will never be expanded, regardless of whether the variable exists or not. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/containers#containers-and-commands",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -6840,7 +6701,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"resources": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Compute Resources required by this container. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#resources",
+							Description: "Compute Resources required by this container. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#resources",
 							Ref:         spec.MustCreateRef("#/definitions/v1.ResourceRequirements"),
 						},
 					},
@@ -6859,13 +6720,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"livenessProbe": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Periodic probe of container liveness. Container will be restarted if the probe fails. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#container-probes",
+							Description: "Periodic probe of container liveness. Container will be restarted if the probe fails. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/pod-states#container-probes",
 							Ref:         spec.MustCreateRef("#/definitions/v1.Probe"),
 						},
 					},
 					"readinessProbe": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Periodic probe of container service readiness. Container will be removed from service endpoints if the probe fails. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#container-probes",
+							Description: "Periodic probe of container service readiness. Container will be removed from service endpoints if the probe fails. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/pod-states#container-probes",
 							Ref:         spec.MustCreateRef("#/definitions/v1.Probe"),
 						},
 					},
@@ -6884,7 +6745,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"imagePullPolicy": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Image pull policy. One of Always, Never, IfNotPresent. Defaults to Always if :latest tag is specified, or IfNotPresent otherwise. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/images.md#updating-images",
+							Description: "Image pull policy. One of Always, Never, IfNotPresent. Defaults to Always if :latest tag is specified, or IfNotPresent otherwise. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/images#updating-images",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -7038,14 +6899,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startedAt": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Time at which the container was last (re-)started",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.ContainerStateTerminated": {
 		Schema: spec.Schema{
@@ -7083,13 +6944,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startedAt": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Time at which previous execution of the container started",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"finishedAt": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Time at which the container last terminated",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"containerID": {
@@ -7104,7 +6965,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.ContainerStateWaiting": {
 		Schema: spec.Schema{
@@ -7170,7 +7031,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"image": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The image the container is running. More info: http://releases.k8s.io/HEAD/docs/user-guide/images.md",
+							Description: "The image the container is running. More info: http://kubernetes.io/docs/user-guide/images",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -7184,7 +7045,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"containerID": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Container's ID in the format 'docker://<container_id>'. More info: http://releases.k8s.io/HEAD/docs/user-guide/container-environment.md#container-information",
+							Description: "Container's ID in the format 'docker://<container_id>'. More info: http://kubernetes.io/docs/user-guide/container-environment#container-information",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -7210,7 +7071,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the referent; More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name of the referent; More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -7346,6 +7207,23 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1.DownwardAPIVolumeFile"},
 	},
+	"v1.Duration": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Duration is a wrapper around time.Duration which supports correct marshaling to YAML and JSON. In particular, it marshals into strings, which can be used as map keys in json.",
+				Properties: map[string]spec.Schema{
+					"Duration": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"integer"},
+							Format: "int64",
+						},
+					},
+				},
+				Required: []string{"Duration"},
+			},
+		},
+		Dependencies: []string{},
+	},
 	"v1.EmptyDirVolumeSource": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -7353,7 +7231,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"medium": {
 						SchemaProps: spec.SchemaProps{
-							Description: "What type of storage medium should back this directory. The default is \"\" which means to use the node's default medium. Must be an empty string (default) or Memory. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#emptydir",
+							Description: "What type of storage medium should back this directory. The default is \"\" which means to use the node's default medium. Must be an empty string (default) or Memory. More info: http://kubernetes.io/docs/user-guide/volumes#emptydir",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -7523,7 +7401,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -7544,7 +7422,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Endpoints"},
+			"v1.Endpoints", "v1.ListMeta"},
 	},
 	"v1.EnvVar": {
 		Schema: spec.Schema{
@@ -7653,13 +7531,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"firstTimestamp": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The time at which the event was first recorded. (Time of server receipt is in TypeMeta.)",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTimestamp": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The time at which the most recent occurrence of this event was recorded.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"count": {
@@ -7681,7 +7559,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v1.EventSource", "v1.ObjectMeta", "v1.ObjectReference"},
+			"v1.EventSource", "v1.ObjectMeta", "v1.ObjectReference", "v1.Time"},
 	},
 	"v1.EventList": {
 		Schema: spec.Schema{
@@ -7691,7 +7569,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -7712,7 +7590,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Event"},
+			"v1.Event", "v1.ListMeta"},
 	},
 	"v1.EventSource": {
 		Schema: spec.Schema{
@@ -7728,7 +7606,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"host": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Host name on which the event is generated.",
+							Description: "Node name on which the event is generated.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -7776,7 +7654,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"exact": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Should the export be exact.  Exact export maintains cluster-specific fields like 'Namespace'",
+							Description: "Should the export be exact.  Exact export maintains cluster-specific fields like 'Namespace'.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -7889,17 +7767,23 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 	"v1.FlockerVolumeSource": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "Represents a Flocker volume mounted by the Flocker agent. Flocker volumes do not support ownership management or SELinux relabeling.",
+				Description: "Represents a Flocker volume mounted by the Flocker agent. One and only one of datasetName and datasetUUID should be set. Flocker volumes do not support ownership management or SELinux relabeling.",
 				Properties: map[string]spec.Schema{
 					"datasetName": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Required: the volume name. This is going to be store on metadata -> name on the payload for Flocker",
+							Description: "Name of the dataset stored as metadata -> name on the dataset for Flocker should be considered as deprecated",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"datasetUUID": {
+						SchemaProps: spec.SchemaProps{
+							Description: "UUID of the dataset. This is unique identifier of a Flocker dataset",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 				},
-				Required: []string{"datasetName"},
 			},
 		},
 		Dependencies: []string{},
@@ -7911,34 +7795,51 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"pdName": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Unique name of the PD resource in GCE. Used to identify the disk in GCE. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#gcepersistentdisk",
+							Description: "Unique name of the PD resource in GCE. Used to identify the disk in GCE. More info: http://kubernetes.io/docs/user-guide/volumes#gcepersistentdisk",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"fsType": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#gcepersistentdisk",
+							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://kubernetes.io/docs/user-guide/volumes#gcepersistentdisk",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"partition": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The partition in the volume that you want to mount. If omitted, the default is to mount by volume name. Examples: For volume /dev/sda1, you specify the partition as \"1\". Similarly, the volume partition for /dev/sda is \"0\" (or you can leave the property empty). More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#gcepersistentdisk",
+							Description: "The partition in the volume that you want to mount. If omitted, the default is to mount by volume name. Examples: For volume /dev/sda1, you specify the partition as \"1\". Similarly, the volume partition for /dev/sda is \"0\" (or you can leave the property empty). More info: http://kubernetes.io/docs/user-guide/volumes#gcepersistentdisk",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"readOnly": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ReadOnly here will force the ReadOnly setting in VolumeMounts. Defaults to false. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#gcepersistentdisk",
+							Description: "ReadOnly here will force the ReadOnly setting in VolumeMounts. Defaults to false. More info: http://kubernetes.io/docs/user-guide/volumes#gcepersistentdisk",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
 					},
 				},
 				Required: []string{"pdName"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GetOptions": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GetOptions is the standard query options to the standard REST get call.",
+				Properties: map[string]spec.Schema{
+					"resourceVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "When specified: - if unset, then the result is returned from remote storage based on quorum-read flag; - if it's 0, then we simply return what we currently have in cache, no guarantee; - if set to non zero, then the result is at least as fresh as given rv.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
 			},
 		},
 		Dependencies: []string{},
@@ -8003,6 +7904,158 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 				},
 				Required: []string{"endpoints", "path"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GroupKind": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GroupKind specifies a Group and a Kind, but does not force a version.  This is useful for identifying concepts during lookup stages without having partially valid types",
+				Properties: map[string]spec.Schema{
+					"Group": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Kind": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"Group", "Kind"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GroupResource": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GroupResource specifies a Group and a Resource, but does not force a version.  This is useful for identifying concepts during lookup stages without having partially valid types",
+				Properties: map[string]spec.Schema{
+					"Group": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Resource": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"Group", "Resource"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GroupVersion": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GroupVersion contains the \"group\" and the \"version\", which uniquely identifies the API.",
+				Properties: map[string]spec.Schema{
+					"Group": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Version": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"Group", "Version"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GroupVersionForDiscovery": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GroupVersion contains the \"group/version\" and \"version\" string of a version. It is made a struct to keep extensibility.",
+				Properties: map[string]spec.Schema{
+					"groupVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "groupVersion specifies the API group and version in the form \"group/version\"",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"version": {
+						SchemaProps: spec.SchemaProps{
+							Description: "version specifies the version in the form of \"version\". This is to save the clients the trouble of splitting the GroupVersion.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"groupVersion", "version"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GroupVersionKind": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GroupVersionKind unambiguously identifies a kind.  It doesn't anonymously include GroupVersion to avoid automatic coersion.  It doesn't use a GroupVersion to avoid custom marshalling",
+				Properties: map[string]spec.Schema{
+					"Group": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Version": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Kind": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"Group", "Version", "Kind"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.GroupVersionResource": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "GroupVersionResource unambiguously identifies a resource.  It doesn't anonymously include GroupVersion to avoid automatic coersion.  It doesn't use a GroupVersion to avoid custom marshalling",
+				Properties: map[string]spec.Schema{
+					"Group": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Version": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Resource": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"Group", "Version", "Resource"},
 			},
 		},
 		Dependencies: []string{},
@@ -8150,7 +8203,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -8171,7 +8224,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.HorizontalPodAutoscaler"},
+			"v1.HorizontalPodAutoscaler", "v1.ListMeta"},
 	},
 	"v1.HorizontalPodAutoscalerSpec": {
 		Schema: spec.Schema{
@@ -8227,7 +8280,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastScaleTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "last time the HorizontalPodAutoscaler scaled the number of pods; used by the autoscaler to control how often the number of pods is changed.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"currentReplicas": {
@@ -8256,7 +8309,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.HostPathVolumeSource": {
 		Schema: spec.Schema{
@@ -8265,7 +8318,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"path": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Path of the directory on the host. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#hostpath",
+							Description: "Path of the directory on the host. More info: http://kubernetes.io/docs/user-guide/volumes#hostpath",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -8311,7 +8364,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"fsType": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#iscsi",
+							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://kubernetes.io/docs/user-guide/volumes#iscsi",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -8380,13 +8433,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastProbeTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition was checked.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transit from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -8408,7 +8461,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.JobList": {
 		Schema: spec.Schema{
@@ -8418,7 +8471,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -8439,7 +8492,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Job"},
+			"v1.Job", "v1.ListMeta"},
 	},
 	"v1.JobSpec": {
 		Schema: spec.Schema{
@@ -8448,14 +8501,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"parallelism": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Parallelism specifies the maximum desired number of pods the job should run at any given time. The actual number of pods running in steady state will be less than this number when ((.spec.completions - .status.successful) < .spec.parallelism), i.e. when the work left to do is less than max parallelism. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Parallelism specifies the maximum desired number of pods the job should run at any given time. The actual number of pods running in steady state will be less than this number when ((.spec.completions - .status.successful) < .spec.parallelism), i.e. when the work left to do is less than max parallelism. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"completions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Completions specifies the desired number of successfully finished pods the job should be run with.  Setting to nil means that the success of any pod signals the success of all pods, and allows parallelism to have any positive value.  Setting to 1 means that parallelism is limited to 1 and the success of that pod signals the success of the job. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Completions specifies the desired number of successfully finished pods the job should be run with.  Setting to nil means that the success of any pod signals the success of all pods, and allows parallelism to have any positive value.  Setting to 1 means that parallelism is limited to 1 and the success of that pod signals the success of the job. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -8469,7 +8522,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
+							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
 							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
@@ -8482,7 +8535,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created when executing a job. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Template is the object that describes the pod that will be created when executing a job. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
 						},
 					},
@@ -8500,7 +8553,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"conditions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Conditions represent the latest available observations of an object's current state. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Conditions represent the latest available observations of an object's current state. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -8514,13 +8567,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "StartTime represents time when the job was acknowledged by the Job Manager. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"completionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "CompletionTime represents time when the job was completed. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"active": {
@@ -8548,7 +8601,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v1.JobCondition"},
+			"v1.JobCondition", "v1.Time"},
 	},
 	"v1.KeyToPath": {
 		Schema: spec.Schema{
@@ -8666,13 +8719,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"postStart": {
 						SchemaProps: spec.SchemaProps{
-							Description: "PostStart is called immediately after a container is created. If the handler fails, the container is terminated and restarted according to its restart policy. Other management of the container blocks until the hook completes. More info: http://releases.k8s.io/HEAD/docs/user-guide/container-environment.md#hook-details",
+							Description: "PostStart is called immediately after a container is created. If the handler fails, the container is terminated and restarted according to its restart policy. Other management of the container blocks until the hook completes. More info: http://kubernetes.io/docs/user-guide/container-environment#hook-details",
 							Ref:         spec.MustCreateRef("#/definitions/v1.Handler"),
 						},
 					},
 					"preStop": {
 						SchemaProps: spec.SchemaProps{
-							Description: "PreStop is called immediately before a container is terminated. The container is terminated after the handler completes. The reason for termination is passed to the handler. Regardless of the outcome of the handler, the container is eventually terminated. Other management of the container blocks until the hook completes. More info: http://releases.k8s.io/HEAD/docs/user-guide/container-environment.md#hook-details",
+							Description: "PreStop is called immediately before a container is terminated. The container is terminated after the handler completes. The reason for termination is passed to the handler. Regardless of the outcome of the handler, the container is eventually terminated. Other management of the container blocks until the hook completes. More info: http://kubernetes.io/docs/user-guide/container-environment#hook-details",
 							Ref:         spec.MustCreateRef("#/definitions/v1.Handler"),
 						},
 					},
@@ -8796,7 +8849,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -8817,7 +8870,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.LimitRange"},
+			"v1.LimitRange", "v1.ListMeta"},
 	},
 	"v1.LimitRangeSpec": {
 		Schema: spec.Schema{
@@ -8852,7 +8905,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -8873,7 +8926,31 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"runtime.RawExtension", "unversioned.ListMeta"},
+			"runtime.RawExtension", "v1.ListMeta"},
+	},
+	"v1.ListMeta": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ListMeta describes metadata that synthetic resources must have, including lists and various status objects. A resource may have only one of {ObjectMeta, ListMeta}.",
+				Properties: map[string]spec.Schema{
+					"selfLink": {
+						SchemaProps: spec.SchemaProps{
+							Description: "SelfLink is a URL representing this object. Populated by the system. Read-only.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"resourceVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "String that identifies the server's internal version of this object that can be used by clients to determine when objects have changed. Value must be treated as opaque by clients and passed unmodified back to the server. Populated by the system. Read-only. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#concurrency-control-and-consistency",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{},
 	},
 	"v1.ListOptions": {
 		Schema: spec.Schema{
@@ -8903,7 +8980,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"resourceVersion": {
 						SchemaProps: spec.SchemaProps{
-							Description: "When specified with a watch call, shows changes that occur after that particular version of a resource. Defaults to changes from the beginning of history.",
+							Description: "When specified with a watch call, shows changes that occur after that particular version of a resource. Defaults to changes from the beginning of history. When specified for list: - if unset, then the result is returned from remote storage based on quorum-read flag; - if it's 0, then we simply return what we currently have in cache, no guarantee; - if set to non zero, then the result is at least as fresh as given rv.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -8975,7 +9052,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the referent. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name of the referent. More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -8992,21 +9069,21 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"server": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Server is the hostname or IP address of the NFS server. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#nfs",
+							Description: "Server is the hostname or IP address of the NFS server. More info: http://kubernetes.io/docs/user-guide/volumes#nfs",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"path": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Path that is exported by the NFS server. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#nfs",
+							Description: "Path that is exported by the NFS server. More info: http://kubernetes.io/docs/user-guide/volumes#nfs",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"readOnly": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ReadOnly here will force the NFS export to be mounted with read-only permissions. Defaults to false. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#nfs",
+							Description: "ReadOnly here will force the NFS export to be mounted with read-only permissions. Defaults to false. More info: http://kubernetes.io/docs/user-guide/volumes#nfs",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -9054,12 +9131,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Items is the list of Namespace objects in the list. More info: http://releases.k8s.io/HEAD/docs/user-guide/namespaces.md",
+							Description: "Items is the list of Namespace objects in the list. More info: http://kubernetes.io/docs/user-guide/namespaces",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -9075,7 +9152,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Namespace"},
+			"v1.ListMeta", "v1.Namespace"},
 	},
 	"v1.NamespaceSpec": {
 		Schema: spec.Schema{
@@ -9121,7 +9198,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 	"v1.Node": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "Node is a worker node in Kubernetes, formerly known as minion. Each node will have a unique identifier in the cache (i.e. in etcd).",
+				Description: "Node is a worker node in Kubernetes. Each node will have a unique identifier in the cache (i.e. in etcd).",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
@@ -9224,13 +9301,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastHeartbeatTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time we got an update on a given condition.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transit from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -9252,7 +9329,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.NodeDaemonEndpoints": {
 		Schema: spec.Schema{
@@ -9279,7 +9356,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -9300,7 +9377,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Node"},
+			"v1.ListMeta", "v1.Node"},
 	},
 	"v1.NodeProxyOptions": {
 		Schema: spec.Schema{
@@ -9318,6 +9395,31 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{},
+	},
+	"v1.NodeResources": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "NodeResources is an object for conveying resource information about a node. see http://releases.k8s.io/HEAD/docs/design/resources.md for more details.",
+				Properties: map[string]spec.Schema{
+					"Capacity": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Capacity represents the available resources of a node",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/resource.Quantity"),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"Capacity"},
+			},
+		},
+		Dependencies: []string{
+			"resource.Quantity"},
 	},
 	"v1.NodeSelector": {
 		Schema: spec.Schema{
@@ -9436,7 +9538,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"unschedulable": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Unschedulable controls node schedulability of new pods. By default, node is schedulable. More info: http://releases.k8s.io/HEAD/docs/admin/node.md#manual-node-administration\"`",
+							Description: "Unschedulable controls node schedulability of new pods. By default, node is schedulable. More info: http://releases.k8s.io/HEAD/docs/admin/node.md#manual-node-administration",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -9453,7 +9555,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"capacity": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Capacity represents the total resources of a node. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#capacity for more details.",
+							Description: "Capacity represents the total resources of a node. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#capacity for more details.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -9681,7 +9783,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name must be unique within a namespace. Is required when creating resources, although some resources may allow a client to request the generation of an appropriate name automatically. Name is primarily intended for creation idempotence and configuration definition. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name must be unique within a namespace. Is required when creating resources, although some resources may allow a client to request the generation of an appropriate name automatically. Name is primarily intended for creation idempotence and configuration definition. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -9695,7 +9797,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"namespace": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Namespace defines the space within each name must be unique. An empty namespace is equivalent to the \"default\" namespace, but \"default\" is the canonical representation. Not all objects are required to be scoped to a namespace - the value of this field for those objects will be empty.\n\nMust be a DNS_LABEL. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/namespaces.md",
+							Description: "Namespace defines the space within each name must be unique. An empty namespace is equivalent to the \"default\" namespace, but \"default\" is the canonical representation. Not all objects are required to be scoped to a namespace - the value of this field for those objects will be empty.\n\nMust be a DNS_LABEL. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/namespaces",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -9709,7 +9811,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"uid": {
 						SchemaProps: spec.SchemaProps{
-							Description: "UID is the unique in time and space value for this object. It is typically generated by the server on successful creation of a resource and is not allowed to change on PUT operations.\n\nPopulated by the system. Read-only. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#uids",
+							Description: "UID is the unique in time and space value for this object. It is typically generated by the server on successful creation of a resource and is not allowed to change on PUT operations.\n\nPopulated by the system. Read-only. More info: http://kubernetes.io/docs/user-guide/identifiers#uids",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -9731,13 +9833,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"creationTimestamp": {
 						SchemaProps: spec.SchemaProps{
 							Description: "CreationTimestamp is a timestamp representing the server time when this object was created. It is not guaranteed to be set in happens-before order across separate operations. Clients may not set this value. It is represented in RFC3339 form and is in UTC.\n\nPopulated by the system. Read-only. Null for lists. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"deletionTimestamp": {
 						SchemaProps: spec.SchemaProps{
-							Description: "DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted. This field is set by the server when a graceful deletion is requested by the user, and is not directly settable by a client. The resource will be deleted (no longer visible from resource lists, and not reachable by name) after the time in this field. Once set, this value may not be unset or be set further into the future, although it may be shortened or the resource may be deleted prior to this time. For example, a user may request that a pod is deleted in 30 seconds. The Kubelet will react by sending a graceful termination signal to the containers in the pod. Once the resource is deleted in the API, the Kubelet will send a hard termination signal to the container. If not set, graceful deletion of the object has not been requested.\n\nPopulated by the system when a graceful deletion is requested. Read-only. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Description: "DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted. This field is set by the server when a graceful deletion is requested by the user, and is not directly settable by a client. The resource is expected to be deleted (no longer visible from resource lists, and not reachable by name) after the time in this field. Once set, this value may not be unset or be set further into the future, although it may be shortened or the resource may be deleted prior to this time. For example, a user may request that a pod is deleted in 30 seconds. The Kubelet will react by sending a graceful termination signal to the containers in the pod. After that 30 seconds, the Kubelet will send a hard termination signal (SIGKILL) to the container and after cleanup, remove the pod from the API. In the presence of network partitions, this object may still exist after this timestamp, until an administrator or automated process can determine the resource is fully terminated. If not set, graceful deletion of the object has not been requested.\n\nPopulated by the system when a graceful deletion is requested. Read-only. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"deletionGracePeriodSeconds": {
@@ -9749,7 +9851,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"labels": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Map of string keys and values that can be used to organize and categorize (scope and select) objects. May match selectors of replication controllers and services. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md",
+							Description: "Map of string keys and values that can be used to organize and categorize (scope and select) objects. May match selectors of replication controllers and services. More info: http://kubernetes.io/docs/user-guide/labels",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -9763,7 +9865,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"annotations": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Annotations is an unstructured key value map stored with a resource that may be set by external tools to store and retrieve arbitrary metadata. They are not queryable and should be preserved when modifying objects. More info: http://releases.k8s.io/HEAD/docs/user-guide/annotations.md",
+							Description: "Annotations is an unstructured key value map stored with a resource that may be set by external tools to store and retrieve arbitrary metadata. They are not queryable and should be preserved when modifying objects. More info: http://kubernetes.io/docs/user-guide/annotations",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -9813,7 +9915,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v1.OwnerReference"},
+			"v1.OwnerReference", "v1.Time"},
 	},
 	"v1.ObjectReference": {
 		Schema: spec.Schema{
@@ -9829,21 +9931,21 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"namespace": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Namespace of the referent. More info: http://releases.k8s.io/HEAD/docs/user-guide/namespaces.md",
+							Description: "Namespace of the referent. More info: http://kubernetes.io/docs/user-guide/namespaces",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the referent. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name of the referent. More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"uid": {
 						SchemaProps: spec.SchemaProps{
-							Description: "UID of the referent. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#uids",
+							Description: "UID of the referent. More info: http://kubernetes.io/docs/user-guide/identifiers#uids",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -9895,14 +9997,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the referent. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name of the referent. More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"uid": {
 						SchemaProps: spec.SchemaProps{
-							Description: "UID of the referent. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#uids",
+							Description: "UID of the referent. More info: http://kubernetes.io/docs/user-guide/identifiers#uids",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -9920,10 +10022,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{},
 	},
+	"v1.Patch": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Patch is provided to give a concrete name and type to the Kubernetes PATCH request body.",
+				Properties:  map[string]spec.Schema{},
+			},
+		},
+		Dependencies: []string{},
+	},
 	"v1.PersistentVolume": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "PersistentVolume (PV) is a storage resource provisioned by an administrator. It is analogous to a node. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md",
+				Description: "PersistentVolume (PV) is a storage resource provisioned by an administrator. It is analogous to a node. More info: http://kubernetes.io/docs/user-guide/persistent-volumes",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
@@ -9933,13 +10044,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"spec": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Spec defines a specification of a persistent volume owned by the cluster. Provisioned by an administrator. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistent-volumes",
+							Description: "Spec defines a specification of a persistent volume owned by the cluster. Provisioned by an administrator. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistent-volumes",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PersistentVolumeSpec"),
 						},
 					},
 					"status": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Status represents the current information/status for the persistent volume. Populated by the system. Read-only. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistent-volumes",
+							Description: "Status represents the current information/status for the persistent volume. Populated by the system. Read-only. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistent-volumes",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PersistentVolumeStatus"),
 						},
 					},
@@ -9962,13 +10073,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"spec": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Spec defines the desired characteristics of a volume requested by a pod author. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistentvolumeclaims",
+							Description: "Spec defines the desired characteristics of a volume requested by a pod author. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistentvolumeclaims",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PersistentVolumeClaimSpec"),
 						},
 					},
 					"status": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Status represents the current information/status of a persistent volume claim. Read-only. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistentvolumeclaims",
+							Description: "Status represents the current information/status of a persistent volume claim. Read-only. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistentvolumeclaims",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PersistentVolumeClaimStatus"),
 						},
 					},
@@ -9986,12 +10097,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "A list of persistent volume claims. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistentvolumeclaims",
+							Description: "A list of persistent volume claims. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistentvolumeclaims",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10007,7 +10118,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.PersistentVolumeClaim"},
+			"v1.ListMeta", "v1.PersistentVolumeClaim"},
 	},
 	"v1.PersistentVolumeClaimSpec": {
 		Schema: spec.Schema{
@@ -10016,7 +10127,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"accessModes": {
 						SchemaProps: spec.SchemaProps{
-							Description: "AccessModes contains the desired access modes the volume should have. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#access-modes-1",
+							Description: "AccessModes contains the desired access modes the volume should have. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#access-modes-1",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10031,12 +10142,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"selector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "A label query over volumes to consider for binding.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"resources": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Resources represents the minimum resources the volume should have. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#resources",
+							Description: "Resources represents the minimum resources the volume should have. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#resources",
 							Ref:         spec.MustCreateRef("#/definitions/v1.ResourceRequirements"),
 						},
 					},
@@ -10051,7 +10162,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.LabelSelector", "v1.ResourceRequirements"},
+			"v1.LabelSelector", "v1.ResourceRequirements"},
 	},
 	"v1.PersistentVolumeClaimStatus": {
 		Schema: spec.Schema{
@@ -10067,7 +10178,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"accessModes": {
 						SchemaProps: spec.SchemaProps{
-							Description: "AccessModes contains the actual access modes the volume backing the PVC has. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#access-modes-1",
+							Description: "AccessModes contains the actual access modes the volume backing the PVC has. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#access-modes-1",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10105,7 +10216,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"claimName": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ClaimName is the name of a PersistentVolumeClaim in the same namespace as the pod using this volume. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistentvolumeclaims",
+							Description: "ClaimName is the name of a PersistentVolumeClaim in the same namespace as the pod using this volume. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistentvolumeclaims",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -10131,12 +10242,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "List of persistent volumes. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md",
+							Description: "List of persistent volumes. More info: http://kubernetes.io/docs/user-guide/persistent-volumes",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10152,7 +10263,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.PersistentVolume"},
+			"v1.ListMeta", "v1.PersistentVolume"},
 	},
 	"v1.PersistentVolumeSource": {
 		Schema: spec.Schema{
@@ -10161,19 +10272,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"gcePersistentDisk": {
 						SchemaProps: spec.SchemaProps{
-							Description: "GCEPersistentDisk represents a GCE Disk resource that is attached to a kubelet's host machine and then exposed to the pod. Provisioned by an admin. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#gcepersistentdisk",
+							Description: "GCEPersistentDisk represents a GCE Disk resource that is attached to a kubelet's host machine and then exposed to the pod. Provisioned by an admin. More info: http://kubernetes.io/docs/user-guide/volumes#gcepersistentdisk",
 							Ref:         spec.MustCreateRef("#/definitions/v1.GCEPersistentDiskVolumeSource"),
 						},
 					},
 					"awsElasticBlockStore": {
 						SchemaProps: spec.SchemaProps{
-							Description: "AWSElasticBlockStore represents an AWS Disk resource that is attached to a kubelet's host machine and then exposed to the pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#awselasticblockstore",
+							Description: "AWSElasticBlockStore represents an AWS Disk resource that is attached to a kubelet's host machine and then exposed to the pod. More info: http://kubernetes.io/docs/user-guide/volumes#awselasticblockstore",
 							Ref:         spec.MustCreateRef("#/definitions/v1.AWSElasticBlockStoreVolumeSource"),
 						},
 					},
 					"hostPath": {
 						SchemaProps: spec.SchemaProps{
-							Description: "HostPath represents a directory on the host. Provisioned by a developer or tester. This is useful for single-node development and testing only! On-host storage is not supported in any way and WILL NOT WORK in a multi-node cluster. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#hostpath",
+							Description: "HostPath represents a directory on the host. Provisioned by a developer or tester. This is useful for single-node development and testing only! On-host storage is not supported in any way and WILL NOT WORK in a multi-node cluster. More info: http://kubernetes.io/docs/user-guide/volumes#hostpath",
 							Ref:         spec.MustCreateRef("#/definitions/v1.HostPathVolumeSource"),
 						},
 					},
@@ -10185,7 +10296,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"nfs": {
 						SchemaProps: spec.SchemaProps{
-							Description: "NFS represents an NFS mount on the host. Provisioned by an admin. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#nfs",
+							Description: "NFS represents an NFS mount on the host. Provisioned by an admin. More info: http://kubernetes.io/docs/user-guide/volumes#nfs",
 							Ref:         spec.MustCreateRef("#/definitions/v1.NFSVolumeSource"),
 						},
 					},
@@ -10255,11 +10366,17 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Ref:         spec.MustCreateRef("#/definitions/v1.AzureDiskVolumeSource"),
 						},
 					},
+					"photonPersistentDisk": {
+						SchemaProps: spec.SchemaProps{
+							Description: "PhotonPersistentDisk represents a PhotonController persistent disk attached and mounted on kubelets host machine",
+							Ref:         spec.MustCreateRef("#/definitions/v1.PhotonPersistentDiskVolumeSource"),
+						},
+					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"v1.AWSElasticBlockStoreVolumeSource", "v1.AzureDiskVolumeSource", "v1.AzureFileVolumeSource", "v1.CephFSVolumeSource", "v1.CinderVolumeSource", "v1.FCVolumeSource", "v1.FlexVolumeSource", "v1.FlockerVolumeSource", "v1.GCEPersistentDiskVolumeSource", "v1.GlusterfsVolumeSource", "v1.HostPathVolumeSource", "v1.ISCSIVolumeSource", "v1.NFSVolumeSource", "v1.QuobyteVolumeSource", "v1.RBDVolumeSource", "v1.VsphereVirtualDiskVolumeSource"},
+			"v1.AWSElasticBlockStoreVolumeSource", "v1.AzureDiskVolumeSource", "v1.AzureFileVolumeSource", "v1.CephFSVolumeSource", "v1.CinderVolumeSource", "v1.FCVolumeSource", "v1.FlexVolumeSource", "v1.FlockerVolumeSource", "v1.GCEPersistentDiskVolumeSource", "v1.GlusterfsVolumeSource", "v1.HostPathVolumeSource", "v1.ISCSIVolumeSource", "v1.NFSVolumeSource", "v1.PhotonPersistentDiskVolumeSource", "v1.QuobyteVolumeSource", "v1.RBDVolumeSource", "v1.VsphereVirtualDiskVolumeSource"},
 	},
 	"v1.PersistentVolumeSpec": {
 		Schema: spec.Schema{
@@ -10268,7 +10385,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"capacity": {
 						SchemaProps: spec.SchemaProps{
-							Description: "A description of the persistent volume's resources and capacity. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#capacity",
+							Description: "A description of the persistent volume's resources and capacity. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#capacity",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -10281,7 +10398,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"accessModes": {
 						SchemaProps: spec.SchemaProps{
-							Description: "AccessModes contains all ways the volume can be mounted. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#access-modes",
+							Description: "AccessModes contains all ways the volume can be mounted. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#access-modes",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10295,13 +10412,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"claimRef": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ClaimRef is part of a bi-directional binding between PersistentVolume and PersistentVolumeClaim. Expected to be non-nil when bound. claim.VolumeName is the authoritative bind between PV and PVC. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#binding",
+							Description: "ClaimRef is part of a bi-directional binding between PersistentVolume and PersistentVolumeClaim. Expected to be non-nil when bound. claim.VolumeName is the authoritative bind between PV and PVC. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#binding",
 							Ref:         spec.MustCreateRef("#/definitions/v1.ObjectReference"),
 						},
 					},
 					"persistentVolumeReclaimPolicy": {
 						SchemaProps: spec.SchemaProps{
-							Description: "What happens to a persistent volume when released from its claim. Valid options are Retain (default) and Recycle. Recycling must be supported by the volume plugin underlying this persistent volume. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#recycling-policy",
+							Description: "What happens to a persistent volume when released from its claim. Valid options are Retain (default) and Recycle. Recycling must be supported by the volume plugin underlying this persistent volume. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#recycling-policy",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -10319,7 +10436,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"phase": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Phase indicates if a volume is available, bound to a claim, or released by a claim. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#phase",
+							Description: "Phase indicates if a volume is available, bound to a claim, or released by a claim. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#phase",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -10339,6 +10456,31 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 						},
 					},
 				},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.PhotonPersistentDiskVolumeSource": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Represents a Photon Controller persistent disk resource.",
+				Properties: map[string]spec.Schema{
+					"pdID": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ID that identifies Photon Controller persistent disk",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"fsType": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Filesystem type to mount. Must be a filesystem type supported by the host operating system. Ex. \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"pdID"},
 			},
 		},
 		Dependencies: []string{},
@@ -10417,7 +10559,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"labelSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "A label query over a set of resources, in this case pods.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"namespaces": {
@@ -10446,7 +10588,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.LabelSelector"},
+			"v1.LabelSelector"},
 	},
 	"v1.PodAntiAffinity": {
 		Schema: spec.Schema{
@@ -10537,14 +10679,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"type": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Type is the type of the condition. Currently only Ready. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#pod-conditions",
+							Description: "Type is the type of the condition. Currently only Ready. More info: http://kubernetes.io/docs/user-guide/pod-states#pod-conditions",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"status": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Status is the status of the condition. Can be True, False, Unknown. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#pod-conditions",
+							Description: "Status is the status of the condition. Can be True, False, Unknown. More info: http://kubernetes.io/docs/user-guide/pod-states#pod-conditions",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -10552,13 +10694,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastProbeTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time we probed the condition.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transitioned from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -10580,7 +10722,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.PodExecOptions": {
 		Schema: spec.Schema{
@@ -10650,12 +10792,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "List of pods. More info: http://releases.k8s.io/HEAD/docs/user-guide/pods.md",
+							Description: "List of pods. More info: http://kubernetes.io/docs/user-guide/pods",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10671,7 +10813,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Pod"},
+			"v1.ListMeta", "v1.Pod"},
 	},
 	"v1.PodLogOptions": {
 		Schema: spec.Schema{
@@ -10709,7 +10851,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"sinceTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "An RFC3339 timestamp from which to show logs. If this value precedes the time a pod was started, only logs since the pod start will be returned. If this value is in the future, no logs will be returned. Only one of sinceSeconds or sinceTime may be specified.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"timestamps": {
@@ -10737,7 +10879,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1.PodProxyOptions": {
 		Schema: spec.Schema{
@@ -10832,7 +10974,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"volumes": {
 						SchemaProps: spec.SchemaProps{
-							Description: "List of volumes that can be mounted by containers belonging to the pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md",
+							Description: "List of volumes that can be mounted by containers belonging to the pod. More info: http://kubernetes.io/docs/user-guide/volumes",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10845,7 +10987,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"containers": {
 						SchemaProps: spec.SchemaProps{
-							Description: "List of containers belonging to the pod. Containers cannot currently be added or removed. There must be at least one container in a Pod. Cannot be updated. More info: http://releases.k8s.io/HEAD/docs/user-guide/containers.md",
+							Description: "List of containers belonging to the pod. Containers cannot currently be added or removed. There must be at least one container in a Pod. Cannot be updated. More info: http://kubernetes.io/docs/user-guide/containers",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10858,7 +11000,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"restartPolicy": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Restart policy for all containers within the pod. One of Always, OnFailure, Never. Default to Always. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#restartpolicy",
+							Description: "Restart policy for all containers within the pod. One of Always, OnFailure, Never. Default to Always. More info: http://kubernetes.io/docs/user-guide/pod-states#restartpolicy",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -10886,7 +11028,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"nodeSelector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "NodeSelector is a selector which must be true for the pod to fit on a node. Selector which must match a node's labels for the pod to be scheduled on that node. More info: http://releases.k8s.io/HEAD/docs/user-guide/node-selection/README.md",
+							Description: "NodeSelector is a selector which must be true for the pod to fit on a node. Selector which must match a node's labels for the pod to be scheduled on that node. More info: http://kubernetes.io/docs/user-guide/node-selection/README",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -10948,7 +11090,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"imagePullSecrets": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ImagePullSecrets is an optional list of references to secrets in the same namespace to use for pulling any of the images used by this PodSpec. If specified, these secrets will be passed to individual puller implementations for them to use. For example, in the case of docker, only DockerConfig type secrets are honored. More info: http://releases.k8s.io/HEAD/docs/user-guide/images.md#specifying-imagepullsecrets-on-a-pod",
+							Description: "ImagePullSecrets is an optional list of references to secrets in the same namespace to use for pulling any of the images used by this PodSpec. If specified, these secrets will be passed to individual puller implementations for them to use. For example, in the case of docker, only DockerConfig type secrets are honored. More info: http://kubernetes.io/docs/user-guide/images#specifying-imagepullsecrets-on-a-pod",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -10987,14 +11129,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"phase": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Current condition of the pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#pod-phase",
+							Description: "Current condition of the pod. More info: http://kubernetes.io/docs/user-guide/pod-states#pod-phase",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"conditions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Current service state of pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#pod-conditions",
+							Description: "Current service state of pod. More info: http://kubernetes.io/docs/user-guide/pod-states#pod-conditions",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -11036,12 +11178,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "RFC 3339 date and time at which the object was acknowledged by the Kubelet. This is before the Kubelet pulled the container image(s) for the pod.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"containerStatuses": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The list has one entry per container in the manifest. Each entry is currently the output of `docker inspect`. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#container-statuses",
+							Description: "The list has one entry per container in the manifest. Each entry is currently the output of `docker inspect`. More info: http://kubernetes.io/docs/user-guide/pod-states#container-statuses",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -11056,7 +11198,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v1.ContainerStatus", "v1.PodCondition"},
+			"v1.ContainerStatus", "v1.PodCondition", "v1.Time"},
 	},
 	"v1.PodStatusResult": {
 		Schema: spec.Schema{
@@ -11112,7 +11254,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -11133,7 +11275,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.PodTemplate"},
+			"v1.ListMeta", "v1.PodTemplate"},
 	},
 	"v1.PodTemplateSpec": {
 		Schema: spec.Schema{
@@ -11189,7 +11331,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"evictionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Time at which this entry was added to the list.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -11211,7 +11353,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v1.PodSignature"},
+			"v1.PodSignature", "v1.Time"},
 	},
 	"v1.PreferredSchedulingTerm": {
 		Schema: spec.Schema{
@@ -11245,14 +11387,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"initialDelaySeconds": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Number of seconds after the container has started before liveness probes are initiated. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#container-probes",
+							Description: "Number of seconds after the container has started before liveness probes are initiated. More info: http://kubernetes.io/docs/user-guide/pod-states#container-probes",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"timeoutSeconds": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Number of seconds after which the probe times out. Defaults to 1 second. Minimum value is 1. More info: http://releases.k8s.io/HEAD/docs/user-guide/pod-states.md#container-probes",
+							Description: "Number of seconds after which the probe times out. Defaults to 1 second. Minimum value is 1. More info: http://kubernetes.io/docs/user-guide/pod-states#container-probes",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -11357,7 +11499,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"fsType": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#rbd",
+							Description: "Filesystem type of the volume that you want to mount. Tip: Ensure that the filesystem type is supported by the host operating system. Examples: \"ext4\", \"xfs\", \"ntfs\". Implicitly inferred to be \"ext4\" if unspecified. More info: http://kubernetes.io/docs/user-guide/volumes#rbd",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -11464,6 +11606,52 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1.ObjectMeta", "v1.ReplicationControllerSpec", "v1.ReplicationControllerStatus"},
 	},
+	"v1.ReplicationControllerCondition": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ReplicationControllerCondition describes the state of a replication controller at a certain point.",
+				Properties: map[string]spec.Schema{
+					"type": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Type of replication controller condition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status of the condition, one of True, False, Unknown.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"lastTransitionTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The last time the condition transitioned from one status to another.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The reason for the condition's last transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human readable message indicating details about the transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"type", "status"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Time"},
+	},
 	"v1.ReplicationControllerList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -11472,12 +11660,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "List of replication controllers. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md",
+							Description: "List of replication controllers. More info: http://kubernetes.io/docs/user-guide/replication-controller",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -11493,7 +11681,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.ReplicationController"},
+			"v1.ListMeta", "v1.ReplicationController"},
 	},
 	"v1.ReplicationControllerSpec": {
 		Schema: spec.Schema{
@@ -11502,14 +11690,21 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"replicas": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the number of desired replicas. This is a pointer to distinguish between explicit zero and unspecified. Defaults to 1. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#what-is-a-replication-controller",
+							Description: "Replicas is the number of desired replicas. This is a pointer to distinguish between explicit zero and unspecified. Defaults to 1. More info: http://kubernetes.io/docs/user-guide/replication-controller#what-is-a-replication-controller",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"minReadySeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Minimum number of seconds for which a newly created pod should be ready without any of its container crashing, for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready)",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the Replicas count. If Selector is empty, it is defaulted to the labels present on the Pod template. Label keys and values that must match in order to be controlled by this replication controller, if empty defaulted to labels on Pod template. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
+							Description: "Selector is a label query over pods that should match the Replicas count. If Selector is empty, it is defaulted to the labels present on the Pod template. Label keys and values that must match in order to be controlled by this replication controller, if empty defaulted to labels on Pod template. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -11523,7 +11718,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. This takes precedence over a TemplateRef. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#pod-template",
+							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. This takes precedence over a TemplateRef. More info: http://kubernetes.io/docs/user-guide/replication-controller#pod-template",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
 						},
 					},
@@ -11540,7 +11735,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"replicas": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the most recently oberved number of replicas. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#what-is-a-replication-controller",
+							Description: "Replicas is the most recently oberved number of replicas. More info: http://kubernetes.io/docs/user-guide/replication-controller#what-is-a-replication-controller",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -11559,6 +11754,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"availableReplicas": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The number of available replicas (ready for at least minReadySeconds) for this replication controller.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 					"observedGeneration": {
 						SchemaProps: spec.SchemaProps{
 							Description: "ObservedGeneration reflects the generation of the most recently observed replication controller.",
@@ -11566,11 +11768,25 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int64",
 						},
 					},
+					"conditions": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Represents the latest available observations of a replication controller's current state.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1.ReplicationControllerCondition"),
+									},
+								},
+							},
+						},
+					},
 				},
 				Required: []string{"replicas"},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"v1.ReplicationControllerCondition"},
 	},
 	"v1.ResourceFieldSelector": {
 		Schema: spec.Schema{
@@ -11641,7 +11857,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -11662,7 +11878,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.ResourceQuota"},
+			"v1.ListMeta", "v1.ResourceQuota"},
 	},
 	"v1.ResourceQuotaSpec": {
 		Schema: spec.Schema{
@@ -11776,6 +11992,31 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"resource.Quantity"},
 	},
+	"v1.RootPaths": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "RootPaths lists the paths available at root. For example: \"/healthz\", \"/apis\".",
+				Properties: map[string]spec.Schema{
+					"paths": {
+						SchemaProps: spec.SchemaProps{
+							Description: "paths are the paths available at root.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Type:   []string{"string"},
+										Format: "",
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"paths"},
+			},
+		},
+		Dependencies: []string{},
+	},
 	"v1.SELinuxOptions": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -11874,7 +12115,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "label query over pods that should match the replicas count. This is same as the label selector but in the string format to avoid introspection by clients. The string will be in the same format as the query-param syntax. More info about label selectors: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
+							Description: "label query over pods that should match the replicas count. This is same as the label selector but in the string format to avoid introspection by clients. The string will be in the same format as the query-param syntax. More info about label selectors: http://kubernetes.io/docs/user-guide/labels#label-selectors",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -11903,15 +12144,8 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Type: []string{"array"},
-										Items: &spec.SchemaOrArray{
-											Schema: &spec.Schema{
-												SchemaProps: spec.SchemaProps{
-													Type:   []string{"integer"},
-													Format: "byte",
-												},
-											},
-										},
+										Type:   []string{"string"},
+										Format: "byte",
 									},
 								},
 							},
@@ -11970,12 +12204,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Items is a list of secret objects. More info: http://releases.k8s.io/HEAD/docs/user-guide/secrets.md",
+							Description: "Items is a list of secret objects. More info: http://kubernetes.io/docs/user-guide/secrets",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -11991,7 +12225,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Secret"},
+			"v1.ListMeta", "v1.Secret"},
 	},
 	"v1.SecretVolumeSource": {
 		Schema: spec.Schema{
@@ -12000,7 +12234,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"secretName": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the secret in the pod's namespace to use. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#secrets",
+							Description: "Name of the secret in the pod's namespace to use. More info: http://kubernetes.io/docs/user-guide/volumes#secrets",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -12099,6 +12333,31 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1.ObjectReference"},
 	},
+	"v1.ServerAddressByClientCIDR": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ServerAddressByClientCIDR helps the client to determine the server address that they should use, depending on the clientCIDR that they match.",
+				Properties: map[string]spec.Schema{
+					"clientCIDR": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The CIDR with which clients can match their IP to figure out the server address that they should use.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"serverAddress": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Address of this server, suitable for a client that matches the above CIDR. This can be a hostname, hostname:port, IP or IP:port.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"clientCIDR", "serverAddress"},
+			},
+		},
+		Dependencies: []string{},
+	},
 	"v1.Service": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -12141,7 +12400,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"secrets": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Secrets is the list of secrets allowed to be used by pods running using this ServiceAccount. More info: http://releases.k8s.io/HEAD/docs/user-guide/secrets.md",
+							Description: "Secrets is the list of secrets allowed to be used by pods running using this ServiceAccount. More info: http://kubernetes.io/docs/user-guide/secrets",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -12154,7 +12413,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"imagePullSecrets": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling any images in pods that reference this ServiceAccount. ImagePullSecrets are distinct from Secrets because Secrets can be mounted in the pod, but ImagePullSecrets are only accessed by the kubelet. More info: http://releases.k8s.io/HEAD/docs/user-guide/secrets.md#manually-specifying-an-imagepullsecret",
+							Description: "ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling any images in pods that reference this ServiceAccount. ImagePullSecrets are distinct from Secrets because Secrets can be mounted in the pod, but ImagePullSecrets are only accessed by the kubelet. More info: http://kubernetes.io/docs/user-guide/secrets#manually-specifying-an-imagepullsecret",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -12179,7 +12438,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -12200,7 +12459,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.ServiceAccount"},
+			"v1.ListMeta", "v1.ServiceAccount"},
 	},
 	"v1.ServiceList": {
 		Schema: spec.Schema{
@@ -12210,7 +12469,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -12231,7 +12490,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.Service"},
+			"v1.ListMeta", "v1.Service"},
 	},
 	"v1.ServicePort": {
 		Schema: spec.Schema{
@@ -12261,13 +12520,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"targetPort": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Number or name of the port to access on the pods targeted by the service. Number must be in the range 1 to 65535. Name must be an IANA_SVC_NAME. If this is a string, it will be looked up as a named port in the target Pod's container ports. If this is not specified, the value of the 'port' field is used (an identity map). This field is ignored for services with clusterIP=None, and should be omitted or set equal to the 'port' field. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#defining-a-service",
+							Description: "Number or name of the port to access on the pods targeted by the service. Number must be in the range 1 to 65535. Name must be an IANA_SVC_NAME. If this is a string, it will be looked up as a named port in the target Pod's container ports. If this is not specified, the value of the 'port' field is used (an identity map). This field is ignored for services with clusterIP=None, and should be omitted or set equal to the 'port' field. More info: http://kubernetes.io/docs/user-guide/services#defining-a-service",
 							Ref:         spec.MustCreateRef("#/definitions/intstr.IntOrString"),
 						},
 					},
 					"nodePort": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The port on each node on which this service is exposed when type=NodePort or LoadBalancer. Usually assigned by the system. If specified, it will be allocated to the service if unused or else creation of the service will fail. Default is to auto-allocate a port if the ServiceType of this Service requires one. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#type--nodeport",
+							Description: "The port on each node on which this service is exposed when type=NodePort or LoadBalancer. Usually assigned by the system. If specified, it will be allocated to the service if unused or else creation of the service will fail. Default is to auto-allocate a port if the ServiceType of this Service requires one. More info: http://kubernetes.io/docs/user-guide/services#type--nodeport",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -12303,7 +12562,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"ports": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The list of ports that are exposed by this service. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#virtual-ips-and-service-proxies",
+							Description: "The list of ports that are exposed by this service. More info: http://kubernetes.io/docs/user-guide/services#virtual-ips-and-service-proxies",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -12316,7 +12575,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Route service traffic to pods with label keys and values matching this selector. If empty or not present, the service is assumed to have an external process managing its endpoints, which Kubernetes will not modify. Only applies to types ClusterIP, NodePort, and LoadBalancer. Ignored if type is ExternalName. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#overview",
+							Description: "Route service traffic to pods with label keys and values matching this selector. If empty or not present, the service is assumed to have an external process managing its endpoints, which Kubernetes will not modify. Only applies to types ClusterIP, NodePort, and LoadBalancer. Ignored if type is ExternalName. More info: http://kubernetes.io/docs/user-guide/services#overview",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -12330,14 +12589,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"clusterIP": {
 						SchemaProps: spec.SchemaProps{
-							Description: "clusterIP is the IP address of the service and is usually assigned randomly by the master. If an address is specified manually and is not in use by others, it will be allocated to the service; otherwise, creation of the service will fail. This field can not be changed through updates. Valid values are \"None\", empty string (\"\"), or a valid IP address. \"None\" can be specified for headless services when proxying is not required. Only applies to types ClusterIP, NodePort, and LoadBalancer. Ignored if type is ExternalName. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#virtual-ips-and-service-proxies",
+							Description: "clusterIP is the IP address of the service and is usually assigned randomly by the master. If an address is specified manually and is not in use by others, it will be allocated to the service; otherwise, creation of the service will fail. This field can not be changed through updates. Valid values are \"None\", empty string (\"\"), or a valid IP address. \"None\" can be specified for headless services when proxying is not required. Only applies to types ClusterIP, NodePort, and LoadBalancer. Ignored if type is ExternalName. More info: http://kubernetes.io/docs/user-guide/services#virtual-ips-and-service-proxies",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"type": {
 						SchemaProps: spec.SchemaProps{
-							Description: "type determines how the Service is exposed. Defaults to ClusterIP. Valid options are ExternalName, ClusterIP, NodePort, and LoadBalancer. \"ExternalName\" maps to the specified externalName. \"ClusterIP\" allocates a cluster-internal IP address for load-balancing to endpoints. Endpoints are determined by the selector or if that is not specified, by manual construction of an Endpoints object. If clusterIP is \"None\", no virtual IP is allocated and the endpoints are published as a set of endpoints rather than a stable IP. \"NodePort\" builds on ClusterIP and allocates a port on every node which routes to the clusterIP. \"LoadBalancer\" builds on NodePort and creates an external load-balancer (if supported in the current cloud) which routes to the clusterIP. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#overview",
+							Description: "type determines how the Service is exposed. Defaults to ClusterIP. Valid options are ExternalName, ClusterIP, NodePort, and LoadBalancer. \"ExternalName\" maps to the specified externalName. \"ClusterIP\" allocates a cluster-internal IP address for load-balancing to endpoints. Endpoints are determined by the selector or if that is not specified, by manual construction of an Endpoints object. If clusterIP is \"None\", no virtual IP is allocated and the endpoints are published as a set of endpoints rather than a stable IP. \"NodePort\" builds on ClusterIP and allocates a port on every node which routes to the clusterIP. \"LoadBalancer\" builds on NodePort and creates an external load-balancer (if supported in the current cloud) which routes to the clusterIP. More info: http://kubernetes.io/docs/user-guide/services#overview",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -12372,7 +12631,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"sessionAffinity": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Supports \"ClientIP\" and \"None\". Used to maintain session affinity. Enable client IP based session affinity. Must be ClientIP or None. Defaults to None. More info: http://releases.k8s.io/HEAD/docs/user-guide/services.md#virtual-ips-and-service-proxies",
+							Description: "Supports \"ClientIP\" and \"None\". Used to maintain session affinity. Enable client IP based session affinity. Must be ClientIP or None. Defaults to None. More info: http://kubernetes.io/docs/user-guide/services#virtual-ips-and-service-proxies",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -12386,7 +12645,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"loadBalancerSourceRanges": {
 						SchemaProps: spec.SchemaProps{
-							Description: "If specified and supported by the platform, this will restrict traffic through the cloud-provider load-balancer will be restricted to the specified client IPs. This field will be ignored if the cloud-provider does not support the feature.\" More info: http://releases.k8s.io/HEAD/docs/user-guide/services-firewalls.md",
+							Description: "If specified and supported by the platform, this will restrict traffic through the cloud-provider load-balancer will be restricted to the specified client IPs. This field will be ignored if the cloud-provider does not support the feature.\" More info: http://kubernetes.io/docs/user-guide/services-firewalls",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -12428,6 +12687,162 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{
 			"v1.LoadBalancerStatus"},
+	},
+	"v1.Status": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Status is a return value for calls that don't return other objects.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status of the operation. One of: \"Success\" or \"Failure\". More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human-readable description of the status of this operation.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A machine-readable description of why this operation is in the \"Failure\" status. If this value is empty there is no information available. A Reason clarifies an HTTP status code but does not override it.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"details": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Extended data associated with the reason.  Each reason may define its own extended details. This field is optional and the data returned is not guaranteed to conform to any schema except that defined by the reason type.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.StatusDetails"),
+						},
+					},
+					"code": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Suggested HTTP return code for this status, 0 if not set.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"v1.ListMeta", "v1.StatusDetails"},
+	},
+	"v1.StatusCause": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StatusCause provides more information about an api.Status failure, including cases when multiple errors are encountered.",
+				Properties: map[string]spec.Schema{
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A machine-readable description of the cause of the error. If this value is empty there is no information available.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human-readable description of the cause of the error.  This field may be presented as-is to a reader.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"field": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The field of the resource that has caused this error, as named by its JSON serialization. May include dot and postfix notation for nested attributes. Arrays are zero-indexed.  Fields may appear more than once in an array of causes due to fields having multiple errors. Optional.\n\nExamples:\n  \"name\" - the field \"name\" on the current resource\n  \"items[0].name\" - the field \"name\" on the first array entry in \"items\"",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.StatusDetails": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StatusDetails is a set of additional properties that MAY be set by the server to provide additional information about a response. The Reason field of a Status object defines what attributes will be set. Clients must ignore fields that do not match the defined type of each attribute, and should assume that any attribute may be empty, invalid, or under defined.",
+				Properties: map[string]spec.Schema{
+					"name": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The name attribute of the resource associated with the status StatusReason (when there is a single name which can be described).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"group": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The group attribute of the resource associated with the status StatusReason.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The kind attribute of the resource associated with the status StatusReason. On some operations may differ from the requested resource Kind. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"causes": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The Causes array includes more details associated with the StatusReason failure. Not all StatusReasons may provide detailed causes.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1.StatusCause"),
+									},
+								},
+							},
+						},
+					},
+					"retryAfterSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "If specified, the time in seconds before the operation should be retried.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"v1.StatusCause"},
+	},
+	"v1.Sysctl": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"Name": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"Value": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"Name", "Value"},
+			},
+		},
+		Dependencies: []string{},
 	},
 	"v1.TCPSocketAction": {
 		Schema: spec.Schema{
@@ -12500,7 +12915,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -12520,7 +12935,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1.TestType"},
+			"v1.ListMeta", "v1.TestType"},
 	},
 	"v1.TestTypeStatus": {
 		Schema: spec.Schema{
@@ -12534,6 +12949,31 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 				},
 				Required: []string{"Blah"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1.Time": v1.Time{}.OpenAPIDefinition(), "v1.Timestamp": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Timestamp is a struct that is equivalent to Time, but intended for protobuf marshalling/unmarshalling. It is generated into a serialization that matches Time. Do not use in Go structs.",
+				Properties: map[string]spec.Schema{
+					"seconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Represents seconds of UTC time since Unix epoch 1970-01-01T00:00:00Z. Must be from from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z inclusive.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"nanos": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Non-negative fractions of a second at nanosecond resolution. Negative second values with fractions must still have non-negative nanos values that count forward in time. Must be from 0 to 999,999,999 inclusive. This field may be limited in precision depending on context.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+				Required: []string{"seconds", "nanos"},
 			},
 		},
 		Dependencies: []string{},
@@ -12576,6 +13016,30 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{},
 	},
+	"v1.TypeMeta": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "TypeMeta describes an individual object in an API response or request with strings representing the type of the object and its API schema version. Structures that are versioned or persisted should inline TypeMeta.",
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{},
+	},
 	"v1.Volume": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -12583,7 +13047,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Volume's name. Must be a DNS_LABEL and unique within the pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Volume's name. Must be a DNS_LABEL and unique within the pod. More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -12640,25 +13104,25 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"hostPath": {
 						SchemaProps: spec.SchemaProps{
-							Description: "HostPath represents a pre-existing file or directory on the host machine that is directly exposed to the container. This is generally used for system agents or other privileged things that are allowed to see the host machine. Most containers will NOT need this. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#hostpath",
+							Description: "HostPath represents a pre-existing file or directory on the host machine that is directly exposed to the container. This is generally used for system agents or other privileged things that are allowed to see the host machine. Most containers will NOT need this. More info: http://kubernetes.io/docs/user-guide/volumes#hostpath",
 							Ref:         spec.MustCreateRef("#/definitions/v1.HostPathVolumeSource"),
 						},
 					},
 					"emptyDir": {
 						SchemaProps: spec.SchemaProps{
-							Description: "EmptyDir represents a temporary directory that shares a pod's lifetime. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#emptydir",
+							Description: "EmptyDir represents a temporary directory that shares a pod's lifetime. More info: http://kubernetes.io/docs/user-guide/volumes#emptydir",
 							Ref:         spec.MustCreateRef("#/definitions/v1.EmptyDirVolumeSource"),
 						},
 					},
 					"gcePersistentDisk": {
 						SchemaProps: spec.SchemaProps{
-							Description: "GCEPersistentDisk represents a GCE Disk resource that is attached to a kubelet's host machine and then exposed to the pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#gcepersistentdisk",
+							Description: "GCEPersistentDisk represents a GCE Disk resource that is attached to a kubelet's host machine and then exposed to the pod. More info: http://kubernetes.io/docs/user-guide/volumes#gcepersistentdisk",
 							Ref:         spec.MustCreateRef("#/definitions/v1.GCEPersistentDiskVolumeSource"),
 						},
 					},
 					"awsElasticBlockStore": {
 						SchemaProps: spec.SchemaProps{
-							Description: "AWSElasticBlockStore represents an AWS Disk resource that is attached to a kubelet's host machine and then exposed to the pod. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#awselasticblockstore",
+							Description: "AWSElasticBlockStore represents an AWS Disk resource that is attached to a kubelet's host machine and then exposed to the pod. More info: http://kubernetes.io/docs/user-guide/volumes#awselasticblockstore",
 							Ref:         spec.MustCreateRef("#/definitions/v1.AWSElasticBlockStoreVolumeSource"),
 						},
 					},
@@ -12670,13 +13134,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"secret": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Secret represents a secret that should populate this volume. More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#secrets",
+							Description: "Secret represents a secret that should populate this volume. More info: http://kubernetes.io/docs/user-guide/volumes#secrets",
 							Ref:         spec.MustCreateRef("#/definitions/v1.SecretVolumeSource"),
 						},
 					},
 					"nfs": {
 						SchemaProps: spec.SchemaProps{
-							Description: "NFS represents an NFS mount on the host that shares a pod's lifetime More info: http://releases.k8s.io/HEAD/docs/user-guide/volumes.md#nfs",
+							Description: "NFS represents an NFS mount on the host that shares a pod's lifetime More info: http://kubernetes.io/docs/user-guide/volumes#nfs",
 							Ref:         spec.MustCreateRef("#/definitions/v1.NFSVolumeSource"),
 						},
 					},
@@ -12694,7 +13158,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"persistentVolumeClaim": {
 						SchemaProps: spec.SchemaProps{
-							Description: "PersistentVolumeClaimVolumeSource represents a reference to a PersistentVolumeClaim in the same namespace. More info: http://releases.k8s.io/HEAD/docs/user-guide/persistent-volumes.md#persistentvolumeclaims",
+							Description: "PersistentVolumeClaimVolumeSource represents a reference to a PersistentVolumeClaim in the same namespace. More info: http://kubernetes.io/docs/user-guide/persistent-volumes#persistentvolumeclaims",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PersistentVolumeClaimVolumeSource"),
 						},
 					},
@@ -12770,11 +13234,17 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Ref:         spec.MustCreateRef("#/definitions/v1.AzureDiskVolumeSource"),
 						},
 					},
+					"photonPersistentDisk": {
+						SchemaProps: spec.SchemaProps{
+							Description: "PhotonPersistentDisk represents a PhotonController persistent disk attached and mounted on kubelets host machine",
+							Ref:         spec.MustCreateRef("#/definitions/v1.PhotonPersistentDiskVolumeSource"),
+						},
+					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"v1.AWSElasticBlockStoreVolumeSource", "v1.AzureDiskVolumeSource", "v1.AzureFileVolumeSource", "v1.CephFSVolumeSource", "v1.CinderVolumeSource", "v1.ConfigMapVolumeSource", "v1.DownwardAPIVolumeSource", "v1.EmptyDirVolumeSource", "v1.FCVolumeSource", "v1.FlexVolumeSource", "v1.FlockerVolumeSource", "v1.GCEPersistentDiskVolumeSource", "v1.GitRepoVolumeSource", "v1.GlusterfsVolumeSource", "v1.HostPathVolumeSource", "v1.ISCSIVolumeSource", "v1.NFSVolumeSource", "v1.PersistentVolumeClaimVolumeSource", "v1.QuobyteVolumeSource", "v1.RBDVolumeSource", "v1.SecretVolumeSource", "v1.VsphereVirtualDiskVolumeSource"},
+			"v1.AWSElasticBlockStoreVolumeSource", "v1.AzureDiskVolumeSource", "v1.AzureFileVolumeSource", "v1.CephFSVolumeSource", "v1.CinderVolumeSource", "v1.ConfigMapVolumeSource", "v1.DownwardAPIVolumeSource", "v1.EmptyDirVolumeSource", "v1.FCVolumeSource", "v1.FlexVolumeSource", "v1.FlockerVolumeSource", "v1.GCEPersistentDiskVolumeSource", "v1.GitRepoVolumeSource", "v1.GlusterfsVolumeSource", "v1.HostPathVolumeSource", "v1.ISCSIVolumeSource", "v1.NFSVolumeSource", "v1.PersistentVolumeClaimVolumeSource", "v1.PhotonPersistentDiskVolumeSource", "v1.QuobyteVolumeSource", "v1.RBDVolumeSource", "v1.SecretVolumeSource", "v1.VsphereVirtualDiskVolumeSource"},
 	},
 	"v1.VsphereVirtualDiskVolumeSource": {
 		Schema: spec.Schema{
@@ -12825,6 +13295,15 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{
 			"v1.PodAffinityTerm"},
+	},
+	"v1.simpleNameGenerator": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "simpleNameGenerator generates random names.",
+				Properties:  map[string]spec.Schema{},
+			},
+		},
+		Dependencies: []string{},
 	},
 	"v1alpha1.CertificateSigningRequest": {
 		Schema: spec.Schema{
@@ -12882,7 +13361,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastUpdateTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "timestamp for the last update to this condition",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 				},
@@ -12890,7 +13369,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1alpha1.CertificateSigningRequestList": {
 		Schema: spec.Schema{
@@ -12898,7 +13377,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -12918,7 +13397,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.CertificateSigningRequest"},
+			"v1.ListMeta", "v1alpha1.CertificateSigningRequest"},
 	},
 	"v1alpha1.CertificateSigningRequestSpec": {
 		Schema: spec.Schema{
@@ -13062,6 +13541,23 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1.ObjectMeta", "v1alpha1.RoleRef", "v1alpha1.Subject"},
 	},
+	"v1alpha1.ClusterRoleBindingBuilder": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ClusterRoleBindingBuilder let's us attach methods.  A no-no for API types. We use it to construct bindings in code.  It's more compact than trying to write them out in a literal.",
+				Properties: map[string]spec.Schema{
+					"ClusterRoleBinding": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/v1alpha1.ClusterRoleBinding"),
+						},
+					},
+				},
+				Required: []string{"ClusterRoleBinding"},
+			},
+		},
+		Dependencies: []string{
+			"v1alpha1.ClusterRoleBinding"},
+	},
 	"v1alpha1.ClusterRoleBindingList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -13070,7 +13566,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -13091,7 +13587,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.ClusterRoleBinding"},
+			"v1.ListMeta", "v1alpha1.ClusterRoleBinding"},
 	},
 	"v1alpha1.ClusterRoleList": {
 		Schema: spec.Schema{
@@ -13101,7 +13597,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -13122,30 +13618,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.ClusterRole"},
-	},
-	"v1alpha1.Eviction": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "Eviction evicts a pod from its node subject to certain policies and safety constraints. This is a subresource of Pod.  A request to cause such an eviction is created by POSTing to .../pods/<pod name>/evictions.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "ObjectMeta describes the pod that is being evicted.",
-							Ref:         spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
-						},
-					},
-					"deleteOptions": {
-						SchemaProps: spec.SchemaProps{
-							Description: "DeleteOptions may be provided",
-							Ref:         spec.MustCreateRef("#/definitions/v1.DeleteOptions"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"v1.DeleteOptions", "v1.ObjectMeta"},
+			"v1.ListMeta", "v1alpha1.ClusterRole"},
 	},
 	"v1alpha1.ImageReview": {
 		Schema: spec.Schema{
@@ -13269,7 +13742,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"bindAddress": {
@@ -13317,7 +13790,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"iptablesSyncPeriodSeconds": {
 						SchemaProps: spec.SchemaProps{
 							Description: "iptablesSyncPeriod is the period that iptables rules are refreshed (e.g. '5s', '1m', '2h22m').  Must be greater than 0.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+					"iptablesMinSyncPeriodSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "iptablesMinSyncPeriod is the minimum period that iptables rules are refreshed (e.g. '5s', '1m', '2h22m').",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"kubeconfigPath": {
@@ -13372,35 +13851,48 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"udpTimeoutMilliseconds": {
 						SchemaProps: spec.SchemaProps{
 							Description: "udpIdleTimeout is how long an idle UDP connection will be kept open (e.g. '250ms', '2s'). Must be greater than 0. Only applicable for proxyMode=userspace.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"conntrackMax": {
 						SchemaProps: spec.SchemaProps{
-							Description: "conntrackMax is the maximum number of NAT connections to track (0 to leave as-is).  This takes precedence over conntrackMaxPerCore.",
+							Description: "conntrackMax is the maximum number of NAT connections to track (0 to leave as-is).  This takes precedence over conntrackMaxPerCore and conntrackMin.",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"conntrackMaxPerCore": {
 						SchemaProps: spec.SchemaProps{
-							Description: "conntrackMaxPerCore is the maximum number of NAT connections to track per CPU core (0 to leave as-is).  This value is only considered if conntrackMax == 0.",
+							Description: "conntrackMaxPerCore is the maximum number of NAT connections to track per CPU core (0 to leave the limit as-is and ignore conntrackMin).",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"conntrackMin": {
+						SchemaProps: spec.SchemaProps{
+							Description: "conntrackMin is the minimum value of connect-tracking records to allocate, regardless of conntrackMaxPerCore (set conntrackMaxPerCore=0 to leave the limit as-is).",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"conntrackTCPEstablishedTimeout": {
 						SchemaProps: spec.SchemaProps{
-							Description: "conntrackTCPEstablishedTimeout is how long an idle TCP connection will be kept open (e.g. '250ms', '2s').  Must be greater than 0.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Description: "conntrackTCPEstablishedTimeout is how long an idle TCP connection will be kept open (e.g. '2s').  Must be greater than 0.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+					"conntrackTCPCloseWaitTimeout": {
+						SchemaProps: spec.SchemaProps{
+							Description: "conntrackTCPCloseWaitTimeout is how long an idle conntrack entry in CLOSE_WAIT state will remain in the conntrack table. (e.g. '60s'). Must be greater than 0 to set.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "bindAddress", "clusterCIDR", "healthzBindAddress", "healthzPort", "hostnameOverride", "iptablesMasqueradeBit", "iptablesSyncPeriodSeconds", "kubeconfigPath", "masqueradeAll", "master", "oomScoreAdj", "mode", "portRange", "resourceContainer", "udpTimeoutMilliseconds", "conntrackMax", "conntrackMaxPerCore", "conntrackTCPEstablishedTimeout"},
+				Required: []string{"TypeMeta", "bindAddress", "clusterCIDR", "healthzBindAddress", "healthzPort", "hostnameOverride", "iptablesMasqueradeBit", "iptablesSyncPeriodSeconds", "iptablesMinSyncPeriodSeconds", "kubeconfigPath", "masqueradeAll", "master", "oomScoreAdj", "mode", "portRange", "resourceContainer", "udpTimeoutMilliseconds", "conntrackMax", "conntrackMaxPerCore", "conntrackMin", "conntrackTCPEstablishedTimeout", "conntrackTCPCloseWaitTimeout"},
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Duration", "unversioned.TypeMeta"},
+			"v1.Duration", "v1.TypeMeta"},
 	},
 	"v1alpha1.KubeSchedulerConfiguration": {
 		Schema: spec.Schema{
@@ -13408,7 +13900,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"port": {
@@ -13442,6 +13934,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"enableProfiling": {
 						SchemaProps: spec.SchemaProps{
 							Description: "enableProfiling enables profiling via web interface.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"enableContentionProfiling": {
+						SchemaProps: spec.SchemaProps{
+							Description: "enableContentionProfiling enables lock contention profiling, if enableProfiling is true.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -13495,11 +13994,81 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "port", "address", "algorithmProvider", "policyConfigFile", "enableProfiling", "contentType", "kubeAPIQPS", "kubeAPIBurst", "schedulerName", "hardPodAffinitySymmetricWeight", "failureDomains", "leaderElection"},
+				Required: []string{"TypeMeta", "port", "address", "algorithmProvider", "policyConfigFile", "enableProfiling", "enableContentionProfiling", "contentType", "kubeAPIQPS", "kubeAPIBurst", "schedulerName", "hardPodAffinitySymmetricWeight", "failureDomains", "leaderElection"},
 			},
 		},
 		Dependencies: []string{
-			"unversioned.TypeMeta", "v1alpha1.LeaderElectionConfiguration"},
+			"v1.TypeMeta", "v1alpha1.LeaderElectionConfiguration"},
+	},
+	"v1alpha1.KubeletAnonymousAuthentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"enabled": {
+						SchemaProps: spec.SchemaProps{
+							Description: "enabled allows anonymous requests to the kubelet server. Requests that are not rejected by another authentication method are treated as anonymous requests. Anonymous requests have a username of system:anonymous, and a group name of system:unauthenticated.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"enabled"},
+			},
+		},
+		Dependencies: []string{},
+	},
+	"v1alpha1.KubeletAuthentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"x509": {
+						SchemaProps: spec.SchemaProps{
+							Description: "x509 contains settings related to x509 client certificate authentication",
+							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.KubeletX509Authentication"),
+						},
+					},
+					"webhook": {
+						SchemaProps: spec.SchemaProps{
+							Description: "webhook contains settings related to webhook bearer token authentication",
+							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.KubeletWebhookAuthentication"),
+						},
+					},
+					"anonymous": {
+						SchemaProps: spec.SchemaProps{
+							Description: "anonymous contains settings related to anonymous authentication",
+							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.KubeletAnonymousAuthentication"),
+						},
+					},
+				},
+				Required: []string{"x509", "webhook", "anonymous"},
+			},
+		},
+		Dependencies: []string{
+			"v1alpha1.KubeletAnonymousAuthentication", "v1alpha1.KubeletWebhookAuthentication", "v1alpha1.KubeletX509Authentication"},
+	},
+	"v1alpha1.KubeletAuthorization": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"mode": {
+						SchemaProps: spec.SchemaProps{
+							Description: "mode is the authorization mode to apply to requests to the kubelet server. Valid values are AlwaysAllow and Webhook. Webhook mode uses the SubjectAccessReview API to determine authorization.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"webhook": {
+						SchemaProps: spec.SchemaProps{
+							Description: "webhook contains settings related to Webhook authorization.",
+							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.KubeletWebhookAuthorization"),
+						},
+					},
+				},
+				Required: []string{"mode", "webhook"},
+			},
+		},
+		Dependencies: []string{
+			"v1alpha1.KubeletWebhookAuthorization"},
 	},
 	"v1alpha1.KubeletConfiguration": {
 		Schema: spec.Schema{
@@ -13507,7 +14076,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"TypeMeta": {
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.TypeMeta"),
+							Ref: spec.MustCreateRef("#/definitions/v1.TypeMeta"),
 						},
 					},
 					"podManifestPath": {
@@ -13520,19 +14089,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"syncFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "syncFrequency is the max period between synchronizing running containers and config",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"fileCheckFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "fileCheckFrequency is the duration between checking config files for new data",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"httpCheckFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "httpCheckFrequency is the duration between checking http for new data",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"manifestURL": {
@@ -13596,6 +14165,18 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Description: "certDirectory is the directory where the TLS certs are located (by default /var/run/kubernetes). If tlsCertFile and tlsPrivateKeyFile are provided, this flag will be ignored.",
 							Type:        []string{"string"},
 							Format:      "",
+						},
+					},
+					"authentication": {
+						SchemaProps: spec.SchemaProps{
+							Description: "authentication specifies how requests to the Kubelet's server are authenticated",
+							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.KubeletAuthentication"),
+						},
+					},
+					"authorization": {
+						SchemaProps: spec.SchemaProps{
+							Description: "authorization specifies how requests to the Kubelet's server are authorized",
+							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.KubeletAuthorization"),
 						},
 					},
 					"hostnameOverride": {
@@ -13720,7 +14301,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"minimumGCAge": {
 						SchemaProps: spec.SchemaProps{
 							Description: "minimumGCAge is the minimum age for a finished container before it is garbage collected.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"maxPerPodContainerCount": {
@@ -13796,19 +14377,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"streamingConnectionIdleTimeout": {
 						SchemaProps: spec.SchemaProps{
 							Description: "streamingConnectionIdleTimeout is the maximum time a streaming connection can be idle before the connection is automatically closed.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"nodeStatusUpdateFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "nodeStatusUpdateFrequency is the frequency that kubelet posts node status to master. Note: be cautious when changing the constant, it must work with nodeMonitorGracePeriod in nodecontroller.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"imageMinimumGCAge": {
 						SchemaProps: spec.SchemaProps{
 							Description: "imageMinimumGCAge is the minimum age for an unused image before it is garbage collected.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"imageGCHighThresholdPercent": {
@@ -13835,7 +14416,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"volumeStatsAggPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "How frequently to calculate and cache volume disk usage for all pods",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"networkPluginName": {
@@ -13922,10 +14503,17 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
-					"CgroupsPerQOS": {
+					"experimentalCgroupsPerQOS": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Enable QoS based Cgroup hierarchy: top level cgroups for QoS Classes And all Burstable and BestEffort pods are brought up under their specific top level QoS cgroup.",
 							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"cgroupDriver": {
+						SchemaProps: spec.SchemaProps{
+							Description: "driver that the kubelet uses to manipulate cgroups on the host (cgroupfs or systemd)",
+							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
@@ -13953,12 +14541,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"runtimeRequestTimeout": {
 						SchemaProps: spec.SchemaProps{
 							Description: "runtimeRequestTimeout is the timeout for all runtime requests except long running requests - pull, logs, exec and attach.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"rktPath": {
 						SchemaProps: spec.SchemaProps{
 							Description: "rktPath is the  path of rkt binary. Leave empty to use the first rkt in $PATH.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"experimentalMounterPath": {
+						SchemaProps: spec.SchemaProps{
+							Description: "experimentalMounterPath is the path to mounter binary. If not set, kubelet will attempt to use mount binary that is available via $PATH,",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -13991,16 +14586,9 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
-					"configureCbr0": {
-						SchemaProps: spec.SchemaProps{
-							Description: "configureCBR0 enables the kublet to configure cbr0 based on Node.Spec.PodCIDR.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
 					"hairpinMode": {
 						SchemaProps: spec.SchemaProps{
-							Description: "How should the kubelet configure the container bridge for hairpin packets. Setting this flag allows endpoints in a Service to loadbalance back to themselves if they should try to access their own Service. Values:\n  \"promiscuous-bridge\": make the container bridge promiscuous.\n  \"hairpin-veth\":       set the hairpin flag on container veth interfaces.\n  \"none\":               do nothing.\nSetting --configure-cbr0 to false implies that to achieve hairpin NAT one must set --hairpin-mode=veth-flag, because bridge assumes the existence of a container bridge named cbr0.",
+							Description: "How should the kubelet configure the container bridge for hairpin packets. Setting this flag allows endpoints in a Service to loadbalance back to themselves if they should try to access their own Service. Values:\n  \"promiscuous-bridge\": make the container bridge promiscuous.\n  \"hairpin-veth\":       set the hairpin flag on container veth interfaces.\n  \"none\":               do nothing.\nGenerally, one must set --hairpin-mode=veth-flag to achieve hairpin NAT, because promiscous-bridge assumes the existence of a container bridge named cbr0.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -14070,14 +14658,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"reconcileCIDR": {
 						SchemaProps: spec.SchemaProps{
-							Description: "reconcileCIDR is Reconcile node CIDR with the CIDR specified by the API server. No-op if register-node or configure-cbr0 is false.",
+							Description: "reconcileCIDR is Reconcile node CIDR with the CIDR specified by the API server. Won't have any effect if register-node is false.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
 					},
 					"registerSchedulable": {
 						SchemaProps: spec.SchemaProps{
-							Description: "registerSchedulable tells the kubelet to register the node as schedulable. No-op if register-node is false.",
+							Description: "registerSchedulable tells the kubelet to register the node as schedulable. Won't have any effect if register-node is false.",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},
@@ -14110,17 +14698,10 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "",
 						},
 					},
-					"experimentalFlannelOverlay": {
-						SchemaProps: spec.SchemaProps{
-							Description: "experimentalFlannelOverlay enables experimental support for starting the kubelet with the default overlay network (flannel). Assumes flanneld is already running in client mode.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
 					"outOfDiskTransitionFrequency": {
 						SchemaProps: spec.SchemaProps{
 							Description: "outOfDiskTransitionFrequency is duration for which the kubelet has to wait before transitioning out of out-of-disk node condition status.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"nodeIP": {
@@ -14182,7 +14763,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"evictionPressureTransitionPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Duration for which the kubelet has to wait before transitioning out of an eviction pressure condition.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"evictionMaxPodGracePeriod": {
@@ -14215,7 +14796,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"systemReserved": {
 						SchemaProps: spec.SchemaProps{
-							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for non-kubernetes components. Currently only cpu and memory are supported. [default=none] See http://releases.k8s.io/HEAD/docs/user-guide/compute-resources.md for more detail.",
+							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for non-kubernetes components. Currently only cpu and memory are supported. [default=none] See http://kubernetes.io/docs/user-guide/compute-resources for more detail.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -14229,7 +14810,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"kubeReserved": {
 						SchemaProps: spec.SchemaProps{
-							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for kubernetes system components. Currently only cpu and memory are supported. [default=none] See http://releases.k8s.io/HEAD/docs/user-guide/compute-resources.md for more detail.",
+							Description: "A set of ResourceName=ResourceQuantity (e.g. cpu=200m,memory=150G) pairs that describe resources reserved for kubernetes system components. Currently only cpu and memory are supported. [default=none] See http://kubernetes.io/docs/user-guide/compute-resources for more detail.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -14283,19 +14864,104 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							},
 						},
 					},
-					"experimentalRuntimeIntegrationType": {
+					"featureGates": {
 						SchemaProps: spec.SchemaProps{
-							Description: "How to integrate with runtime. If set to CRI, kubelet will switch to using the new Container Runtine Interface.",
+							Description: "featureGates is a string of comma-separated key=value pairs that describe feature gates for alpha/experimental features.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"enableCRI": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Enable Container Runtime Interface (CRI) integration.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"experimentalFailSwapOn": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Tells the Kubelet to fail to start if swap is enabled on the node.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"ExperimentalCheckNodeCapabilitiesBeforeMount": {
+						SchemaProps: spec.SchemaProps{
+							Description: "This flag, if set, enables a check prior to mount operations to verify that the required components (binaries, etc.) to mount the volume are available on the underlying node. If the check is enabled and fails the mount operation fails.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"TypeMeta", "podManifestPath", "syncFrequency", "fileCheckFrequency", "httpCheckFrequency", "manifestURL", "manifestURLHeader", "enableServer", "address", "port", "readOnlyPort", "tlsCertFile", "tlsPrivateKeyFile", "certDirectory", "authentication", "authorization", "hostnameOverride", "podInfraContainerImage", "dockerEndpoint", "rootDirectory", "seccompProfileRoot", "allowPrivileged", "hostNetworkSources", "hostPIDSources", "hostIPCSources", "registryPullQPS", "registryBurst", "eventRecordQPS", "eventBurst", "enableDebuggingHandlers", "minimumGCAge", "maxPerPodContainerCount", "maxContainerCount", "cAdvisorPort", "healthzPort", "healthzBindAddress", "oomScoreAdj", "registerNode", "clusterDomain", "masterServiceNamespace", "clusterDNS", "streamingConnectionIdleTimeout", "nodeStatusUpdateFrequency", "imageMinimumGCAge", "imageGCHighThresholdPercent", "imageGCLowThresholdPercent", "lowDiskSpaceThresholdMB", "volumeStatsAggPeriod", "networkPluginName", "networkPluginDir", "cniConfDir", "cniBinDir", "networkPluginMTU", "volumePluginDir", "cloudProvider", "cloudConfigFile", "kubeletCgroups", "runtimeCgroups", "systemCgroups", "cgroupRoot", "containerRuntime", "remoteRuntimeEndpoint", "remoteImageEndpoint", "runtimeRequestTimeout", "rktPath", "rktAPIEndpoint", "rktStage1Image", "lockFilePath", "exitOnLockContention", "hairpinMode", "babysitDaemons", "maxPods", "nvidiaGPUs", "dockerExecHandlerName", "podCIDR", "resolvConf", "cpuCFSQuota", "containerized", "maxOpenFiles", "reconcileCIDR", "registerSchedulable", "contentType", "kubeAPIQPS", "kubeAPIBurst", "serializeImagePulls", "outOfDiskTransitionFrequency", "nodeIP", "nodeLabels", "nonMasqueradeCIDR", "enableCustomMetrics", "evictionHard", "evictionSoft", "evictionSoftGracePeriod", "evictionPressureTransitionPeriod", "evictionMaxPodGracePeriod", "evictionMinimumReclaim", "podsPerCore", "enableControllerAttachDetach", "systemReserved", "kubeReserved", "protectKernelDefaults", "makeIPTablesUtilChains", "iptablesMasqueradeBit", "iptablesDropBit"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Duration", "v1.TypeMeta", "v1alpha1.KubeletAuthentication", "v1alpha1.KubeletAuthorization"},
+	},
+	"v1alpha1.KubeletWebhookAuthentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"enabled": {
+						SchemaProps: spec.SchemaProps{
+							Description: "enabled allows bearer token authentication backed by the tokenreviews.authentication.k8s.io API",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"cacheTTL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cacheTTL enables caching of authentication results",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+				},
+				Required: []string{"enabled", "cacheTTL"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Duration"},
+	},
+	"v1alpha1.KubeletWebhookAuthorization": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"cacheAuthorizedTTL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cacheAuthorizedTTL is the duration to cache 'authorized' responses from the webhook authorizer.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+					"cacheUnauthorizedTTL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cacheUnauthorizedTTL is the duration to cache 'unauthorized' responses from the webhook authorizer.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
+						},
+					},
+				},
+				Required: []string{"cacheAuthorizedTTL", "cacheUnauthorizedTTL"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Duration"},
+	},
+	"v1alpha1.KubeletX509Authentication": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Properties: map[string]spec.Schema{
+					"clientCAFile": {
+						SchemaProps: spec.SchemaProps{
+							Description: "clientCAFile is the path to a PEM-encoded certificate bundle. If set, any request presenting a client certificate signed by one of the authorities in the bundle is authenticated with a username corresponding to the CommonName, and groups corresponding to the Organization in the client certificate.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 				},
-				Required: []string{"TypeMeta", "podManifestPath", "syncFrequency", "fileCheckFrequency", "httpCheckFrequency", "manifestURL", "manifestURLHeader", "enableServer", "address", "port", "readOnlyPort", "tlsCertFile", "tlsPrivateKeyFile", "certDirectory", "hostnameOverride", "podInfraContainerImage", "dockerEndpoint", "rootDirectory", "seccompProfileRoot", "allowPrivileged", "hostNetworkSources", "hostPIDSources", "hostIPCSources", "registryPullQPS", "registryBurst", "eventRecordQPS", "eventBurst", "enableDebuggingHandlers", "minimumGCAge", "maxPerPodContainerCount", "maxContainerCount", "cAdvisorPort", "healthzPort", "healthzBindAddress", "oomScoreAdj", "registerNode", "clusterDomain", "masterServiceNamespace", "clusterDNS", "streamingConnectionIdleTimeout", "nodeStatusUpdateFrequency", "imageMinimumGCAge", "imageGCHighThresholdPercent", "imageGCLowThresholdPercent", "lowDiskSpaceThresholdMB", "volumeStatsAggPeriod", "networkPluginName", "networkPluginDir", "cniConfDir", "cniBinDir", "networkPluginMTU", "volumePluginDir", "cloudProvider", "cloudConfigFile", "kubeletCgroups", "runtimeCgroups", "systemCgroups", "cgroupRoot", "containerRuntime", "remoteRuntimeEndpoint", "remoteImageEndpoint", "runtimeRequestTimeout", "rktPath", "rktAPIEndpoint", "rktStage1Image", "lockFilePath", "exitOnLockContention", "configureCbr0", "hairpinMode", "babysitDaemons", "maxPods", "nvidiaGPUs", "dockerExecHandlerName", "podCIDR", "resolvConf", "cpuCFSQuota", "containerized", "maxOpenFiles", "reconcileCIDR", "registerSchedulable", "contentType", "kubeAPIQPS", "kubeAPIBurst", "serializeImagePulls", "experimentalFlannelOverlay", "outOfDiskTransitionFrequency", "nodeIP", "nodeLabels", "nonMasqueradeCIDR", "enableCustomMetrics", "evictionHard", "evictionSoft", "evictionSoftGracePeriod", "evictionPressureTransitionPeriod", "evictionMaxPodGracePeriod", "evictionMinimumReclaim", "podsPerCore", "enableControllerAttachDetach", "systemReserved", "kubeReserved", "protectKernelDefaults", "makeIPTablesUtilChains", "iptablesMasqueradeBit", "iptablesDropBit"},
+				Required: []string{"clientCAFile"},
 			},
 		},
-		Dependencies: []string{
-			"unversioned.Duration", "unversioned.TypeMeta"},
+		Dependencies: []string{},
 	},
 	"v1alpha1.LeaderElectionConfiguration": {
 		Schema: spec.Schema{
@@ -14312,19 +14978,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"leaseDuration": {
 						SchemaProps: spec.SchemaProps{
 							Description: "leaseDuration is the duration that non-leader candidates will wait after observing a leadership renewal until attempting to acquire leadership of a led but unrenewed leader slot. This is effectively the maximum duration that a leader can be stopped before it is replaced by another candidate. This is only applicable if leader election is enabled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"renewDeadline": {
 						SchemaProps: spec.SchemaProps{
 							Description: "renewDeadline is the interval between attempts by the acting master to renew a leadership slot before it stops leading. This must be less than or equal to the lease duration. This is only applicable if leader election is enabled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 					"retryPeriod": {
 						SchemaProps: spec.SchemaProps{
 							Description: "retryPeriod is the duration the clients should wait between attempting acquisition and renewal of a leadership. This is only applicable if leader election is enabled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Duration"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Duration"),
 						},
 					},
 				},
@@ -14332,259 +14998,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Duration"},
-	},
-	"v1alpha1.PetSet": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PetSet represents a set of pods with consistent identities. Identities are defined as:\n - Network: A single stable DNS and hostname.\n - Storage: As many VolumeClaims as requested.\nThe PetSet guarantees that a given network identity will always map to the same storage identity. PetSet is currently in alpha and subject to change without notice.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
-						},
-					},
-					"spec": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Spec defines the desired identities of pets in this set.",
-							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.PetSetSpec"),
-						},
-					},
-					"status": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Status is the current status of Pets in this PetSet. This data may be out of date by some window of time.",
-							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.PetSetStatus"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"v1.ObjectMeta", "v1alpha1.PetSetSpec", "v1alpha1.PetSetStatus"},
-	},
-	"v1alpha1.PetSetList": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PetSetList is a collection of PetSets.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
-						},
-					},
-					"items": {
-						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v1alpha1.PetSet"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"items"},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.PetSet"},
-	},
-	"v1alpha1.PetSetSpec": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A PetSetSpec is the specification of a PetSet.",
-				Properties: map[string]spec.Schema{
-					"replicas": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the desired number of replicas of the given Template. These are replicas in the sense that they are instantiations of the same Template, but individual replicas also have a consistent identity. If unspecified, defaults to 1.",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-					"selector": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the replica count. If empty, defaulted to labels on the pod template. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
-						},
-					},
-					"template": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. Each pod stamped out by the PetSet will fulfill this Template, but have a unique identity from the rest of the PetSet.",
-							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
-						},
-					},
-					"volumeClaimTemplates": {
-						SchemaProps: spec.SchemaProps{
-							Description: "VolumeClaimTemplates is a list of claims that pets are allowed to reference. The PetSet controller is responsible for mapping network identities to claims in a way that maintains the identity of a pet. Every claim in this list must have at least one matching (by name) volumeMount in one container in the template. A claim in this list takes precedence over any volumes in the template, with the same name.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v1.PersistentVolumeClaim"),
-									},
-								},
-							},
-						},
-					},
-					"serviceName": {
-						SchemaProps: spec.SchemaProps{
-							Description: "ServiceName is the name of the service that governs this PetSet. This service must exist before the PetSet, and is responsible for the network identity of the set. Pets get DNS/hostnames that follow the pattern: pet-specific-string.serviceName.default.svc.cluster.local where \"pet-specific-string\" is managed by the PetSet controller.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-				Required: []string{"template", "serviceName"},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.LabelSelector", "v1.PersistentVolumeClaim", "v1.PodTemplateSpec"},
-	},
-	"v1alpha1.PetSetStatus": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PetSetStatus represents the current state of a PetSet.",
-				Properties: map[string]spec.Schema{
-					"observedGeneration": {
-						SchemaProps: spec.SchemaProps{
-							Description: "most recent generation observed by this autoscaler.",
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-					"replicas": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the number of actual replicas.",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-				},
-				Required: []string{"replicas"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"v1alpha1.PodDisruptionBudget": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PodDisruptionBudget is an object to define the max disruption that can be caused to a collection of pods",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
-						},
-					},
-					"spec": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Specification of the desired behavior of the PodDisruptionBudget.",
-							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.PodDisruptionBudgetSpec"),
-						},
-					},
-					"status": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Most recently observed status of the PodDisruptionBudget.",
-							Ref:         spec.MustCreateRef("#/definitions/v1alpha1.PodDisruptionBudgetStatus"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"v1.ObjectMeta", "v1alpha1.PodDisruptionBudgetSpec", "v1alpha1.PodDisruptionBudgetStatus"},
-	},
-	"v1alpha1.PodDisruptionBudgetList": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PodDisruptionBudgetList is a collection of PodDisruptionBudgets.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
-						},
-					},
-					"items": {
-						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v1alpha1.PodDisruptionBudget"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"items"},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.PodDisruptionBudget"},
-	},
-	"v1alpha1.PodDisruptionBudgetSpec": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PodDisruptionBudgetSpec is a description of a PodDisruptionBudget.",
-				Properties: map[string]spec.Schema{
-					"minAvailable": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The minimum number of pods that must be available simultaneously.  This can be either an integer or a string specifying a percentage, e.g. \"28%\".",
-							Ref:         spec.MustCreateRef("#/definitions/intstr.IntOrString"),
-						},
-					},
-					"selector": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Label query over pods whose evictions are managed by the disruption budget.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.LabelSelector"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"intstr.IntOrString", "unversioned.LabelSelector"},
-	},
-	"v1alpha1.PodDisruptionBudgetStatus": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "PodDisruptionBudgetStatus represents information about the status of a PodDisruptionBudget. Status may trail the actual state of a system.",
-				Properties: map[string]spec.Schema{
-					"disruptionAllowed": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Whether or not a disruption is currently allowed.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
-					"currentHealthy": {
-						SchemaProps: spec.SchemaProps{
-							Description: "current number of healthy pods",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-					"desiredHealthy": {
-						SchemaProps: spec.SchemaProps{
-							Description: "minimum desired number of healthy pods",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-					"expectedPods": {
-						SchemaProps: spec.SchemaProps{
-							Description: "total number of pods counted by this disruption budget",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-				},
-				Required: []string{"disruptionAllowed", "currentHealthy", "desiredHealthy", "expectedPods"},
-			},
-		},
-		Dependencies: []string{},
+			"v1.Duration"},
 	},
 	"v1alpha1.PolicyRule": {
 		Schema: spec.Schema{
@@ -14674,6 +15088,23 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"runtime.RawExtension"},
 	},
+	"v1alpha1.PolicyRuleBuilder": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "PolicyRuleBuilder let's us attach methods.  A no-no for API types. We use it to construct rules in code.  It's more compact than trying to write them out in a literal and allows us to perform some basic checking during construction",
+				Properties: map[string]spec.Schema{
+					"PolicyRule": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/v1alpha1.PolicyRule"),
+						},
+					},
+				},
+				Required: []string{"PolicyRule"},
+			},
+		},
+		Dependencies: []string{
+			"v1alpha1.PolicyRule"},
+	},
 	"v1alpha1.Role": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -14750,7 +15181,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -14771,7 +15202,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.RoleBinding"},
+			"v1.ListMeta", "v1alpha1.RoleBinding"},
 	},
 	"v1alpha1.RoleList": {
 		Schema: spec.Schema{
@@ -14781,7 +15212,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -14802,7 +15233,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1alpha1.Role"},
+			"v1.ListMeta", "v1alpha1.Role"},
 	},
 	"v1alpha1.RoleRef": {
 		Schema: spec.Schema{
@@ -14960,13 +15391,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastProbeTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition was checked.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transit from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -14988,7 +15419,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1beta1.ClusterList": {
 		Schema: spec.Schema{
@@ -14998,7 +15429,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -15019,7 +15450,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.Cluster"},
+			"v1.ListMeta", "v1beta1.Cluster"},
 	},
 	"v1beta1.ClusterSpec": {
 		Schema: spec.Schema{
@@ -15229,7 +15660,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -15250,7 +15681,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.DaemonSet"},
+			"v1.ListMeta", "v1beta1.DaemonSet"},
 	},
 	"v1beta1.DaemonSetSpec": {
 		Schema: spec.Schema{
@@ -15259,13 +15690,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that are managed by the daemon set. Must match in order to be controlled. If empty, defaulted to labels on Pod template. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Description: "Selector is a label query over pods that are managed by the daemon set. Must match in order to be controlled. If empty, defaulted to labels on Pod template. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created. The DaemonSet will create exactly one copy of this pod on every node that matches the template's node selector (or on every node if no node selector is specified). More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#pod-template",
+							Description: "Template is the object that describes the pod that will be created. The DaemonSet will create exactly one copy of this pod on every node that matches the template's node selector (or on every node if no node selector is specified). More info: http://kubernetes.io/docs/user-guide/replication-controller#pod-template",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
 						},
 					},
@@ -15274,7 +15705,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"v1.PodTemplateSpec", "v1beta1.LabelSelector"},
+			"v1.LabelSelector", "v1.PodTemplateSpec"},
 	},
 	"v1beta1.DaemonSetStatus": {
 		Schema: spec.Schema{
@@ -15302,8 +15733,15 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"numberReady": {
+						SchemaProps: spec.SchemaProps{
+							Description: "NumberReady is the number of nodes that should be running the daemon pod and have one or more of the daemon pod running and ready.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 				},
-				Required: []string{"currentNumberScheduled", "numberMisscheduled", "desiredNumberScheduled"},
+				Required: []string{"currentNumberScheduled", "numberMisscheduled", "desiredNumberScheduled", "numberReady"},
 			},
 		},
 		Dependencies: []string{},
@@ -15337,6 +15775,58 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1.ObjectMeta", "v1beta1.DeploymentSpec", "v1beta1.DeploymentStatus"},
 	},
+	"v1beta1.DeploymentCondition": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "DeploymentCondition describes the state of a deployment at a certain point.",
+				Properties: map[string]spec.Schema{
+					"type": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Type of deployment condition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status of the condition, one of True, False, Unknown.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"lastUpdateTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The last time this condition was updated.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"lastTransitionTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Last time the condition transitioned from one status to another.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The reason for the condition's last transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human readable message indicating details about the transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"type", "status"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Time"},
+	},
 	"v1beta1.DeploymentList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -15345,7 +15835,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -15366,7 +15856,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.Deployment"},
+			"v1.ListMeta", "v1beta1.Deployment"},
 	},
 	"v1beta1.DeploymentRollback": {
 		Schema: spec.Schema{
@@ -15422,7 +15912,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"selector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Label selector for pods. Existing ReplicaSets whose pods are selected by this will be the ones affected by this deployment.",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
@@ -15464,12 +15954,19 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Ref:         spec.MustCreateRef("#/definitions/v1beta1.RollbackConfig"),
 						},
 					},
+					"progressDeadlineSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The maximum time in seconds for a deployment to make progress before it is considered to be failed. The deployment controller will continue to process failed deployments and a condition with a ProgressDeadlineExceeded reason will be surfaced in the deployment status. Once autoRollback is implemented, the deployment controller will automatically rollback failed deployments. Note that progress will not be estimated during the time a deployment is paused. This is not set by default.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 				},
 				Required: []string{"template"},
 			},
 		},
 		Dependencies: []string{
-			"v1.PodTemplateSpec", "v1beta1.DeploymentStrategy", "v1beta1.LabelSelector", "v1beta1.RollbackConfig"},
+			"v1.LabelSelector", "v1.PodTemplateSpec", "v1beta1.DeploymentStrategy", "v1beta1.RollbackConfig"},
 	},
 	"v1beta1.DeploymentStatus": {
 		Schema: spec.Schema{
@@ -15511,10 +16008,24 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"conditions": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Represents the latest available observations of a deployment's current state.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1beta1.DeploymentCondition"),
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"v1beta1.DeploymentCondition"},
 	},
 	"v1beta1.DeploymentStrategy": {
 		Schema: spec.Schema{
@@ -15540,30 +16051,28 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1beta1.RollingUpdateDeployment"},
 	},
-	"v1beta1.ExportOptions": {
+	"v1beta1.Eviction": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "ExportOptions is the query options to the standard REST get call.",
+				Description: "Eviction evicts a pod from its node subject to certain policies and safety constraints. This is a subresource of Pod.  A request to cause such an eviction is created by POSTing to .../pods/<pod name>/evictions.",
 				Properties: map[string]spec.Schema{
-					"export": {
+					"metadata": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Should this value be exported.  Export strips fields that a user can not specify.",
-							Type:        []string{"boolean"},
-							Format:      "",
+							Description: "ObjectMeta describes the pod that is being evicted.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
 						},
 					},
-					"exact": {
+					"deleteOptions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Should the export be exact.  Exact export maintains cluster-specific fields like 'Namespace'",
-							Type:        []string{"boolean"},
-							Format:      "",
+							Description: "DeleteOptions may be provided",
+							Ref:         spec.MustCreateRef("#/definitions/v1.DeleteOptions"),
 						},
 					},
 				},
-				Required: []string{"export", "exact"},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"v1.DeleteOptions", "v1.ObjectMeta"},
 	},
 	"v1beta1.FSGroupStrategyOptions": {
 		Schema: spec.Schema{
@@ -15683,7 +16192,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -15704,7 +16213,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.HorizontalPodAutoscaler"},
+			"v1.ListMeta", "v1beta1.HorizontalPodAutoscaler"},
 	},
 	"v1beta1.HorizontalPodAutoscalerSpec": {
 		Schema: spec.Schema{
@@ -15759,7 +16268,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastScaleTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "last time the HorizontalPodAutoscaler scaled the number of pods; used by the autoscaler to control how often the number of pods is changed.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"currentReplicas": {
@@ -15788,7 +16297,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1beta1.HostPortRange": {
 		Schema: spec.Schema{
@@ -15902,7 +16411,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard object's metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -15923,7 +16432,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.Ingress"},
+			"v1.ListMeta", "v1beta1.Ingress"},
 	},
 	"v1beta1.IngressRule": {
 		Schema: spec.Schema{
@@ -16052,7 +16561,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 	"v1beta1.Job": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "Job represents the configuration of a single job.",
+				Description: "Job represents the configuration of a single job. DEPRECATED: extensions/v1beta1.Job is deprecated, use batch/v1.Job instead.",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
@@ -16100,13 +16609,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastProbeTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition was checked.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transit from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -16128,17 +16637,17 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v1beta1.JobList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "JobList is a collection of jobs.",
+				Description: "JobList is a collection of jobs. DEPRECATED: extensions/v1beta1.JobList is deprecated, use batch/v1.JobList instead.",
 				Properties: map[string]spec.Schema{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -16159,7 +16668,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.Job"},
+			"v1.ListMeta", "v1beta1.Job"},
 	},
 	"v1beta1.JobSpec": {
 		Schema: spec.Schema{
@@ -16168,14 +16677,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"parallelism": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Parallelism specifies the maximum desired number of pods the job should run at any given time. The actual number of pods running in steady state will be less than this number when ((.spec.completions - .status.successful) < .spec.parallelism), i.e. when the work left to do is less than max parallelism. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Parallelism specifies the maximum desired number of pods the job should run at any given time. The actual number of pods running in steady state will be less than this number when ((.spec.completions - .status.successful) < .spec.parallelism), i.e. when the work left to do is less than max parallelism. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"completions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Completions specifies the desired number of successfully finished pods the job should be run with.  Setting to nil means that the success of any pod signals the success of all pods, and allows parallelism to have any positive value.  Setting to 1 means that parallelism is limited to 1 and the success of that pod signals the success of the job. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Completions specifies the desired number of successfully finished pods the job should be run with.  Setting to nil means that the success of any pod signals the success of all pods, and allows parallelism to have any positive value.  Setting to 1 means that parallelism is limited to 1 and the success of that pod signals the success of the job. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -16189,8 +16698,8 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"autoSelector": {
@@ -16202,7 +16711,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created when executing a job. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Template is the object that describes the pod that will be created when executing a job. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
 						},
 					},
@@ -16211,7 +16720,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"v1.PodTemplateSpec", "v1beta1.LabelSelector"},
+			"v1.LabelSelector", "v1.PodTemplateSpec"},
 	},
 	"v1beta1.JobStatus": {
 		Schema: spec.Schema{
@@ -16220,7 +16729,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"conditions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Conditions represent the latest available observations of an object's current state. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Conditions represent the latest available observations of an object's current state. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -16234,13 +16743,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "StartTime represents time when the job was acknowledged by the Job Manager. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"completionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "CompletionTime represents time when the job was completed. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"active": {
@@ -16268,129 +16777,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v1beta1.JobCondition"},
-	},
-	"v1beta1.LabelSelector": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A label selector is a label query over a set of resources. The result of matchLabels and matchExpressions are ANDed. An empty label selector matches all objects. A null label selector matches no objects.",
-				Properties: map[string]spec.Schema{
-					"matchLabels": {
-						SchemaProps: spec.SchemaProps{
-							Description: "matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is \"key\", the operator is \"In\", and the values array contains only \"value\". The requirements are ANDed.",
-							Type:        []string{"object"},
-							AdditionalProperties: &spec.SchemaOrBool{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-					"matchExpressions": {
-						SchemaProps: spec.SchemaProps{
-							Description: "matchExpressions is a list of label selector requirements. The requirements are ANDed.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v1beta1.LabelSelectorRequirement"),
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"v1beta1.LabelSelectorRequirement"},
-	},
-	"v1beta1.LabelSelectorRequirement": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A label selector requirement is a selector that contains values, a key, and an operator that relates the key and values.",
-				Properties: map[string]spec.Schema{
-					"key": {
-						SchemaProps: spec.SchemaProps{
-							Description: "key is the label key that the selector applies to.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"operator": {
-						SchemaProps: spec.SchemaProps{
-							Description: "operator represents a key's relationship to a set of values. Valid operators ard In, NotIn, Exists and DoesNotExist.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"values": {
-						SchemaProps: spec.SchemaProps{
-							Description: "values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"key", "operator"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"v1beta1.ListOptions": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ListOptions is the query options to a standard REST list call.",
-				Properties: map[string]spec.Schema{
-					"labelSelector": {
-						SchemaProps: spec.SchemaProps{
-							Description: "A selector to restrict the list of returned objects by their labels. Defaults to everything.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"fieldSelector": {
-						SchemaProps: spec.SchemaProps{
-							Description: "A selector to restrict the list of returned objects by their fields. Defaults to everything.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"watch": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Watch for changes to the described resources and return them as a stream of add, update, and remove notifications. Specify resourceVersion.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
-					"resourceVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "When specified with a watch call, shows changes that occur after that particular version of a resource. Defaults to changes from the beginning of history.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"timeoutSeconds": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Timeout for the list/watch call.",
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{},
+			"v1.Time", "v1beta1.JobCondition"},
 	},
 	"v1beta1.LocalSubjectAccessReview": {
 		Schema: spec.Schema{
@@ -16488,7 +16875,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -16509,7 +16896,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.NetworkPolicy"},
+			"v1.ListMeta", "v1beta1.NetworkPolicy"},
 	},
 	"v1beta1.NetworkPolicyPeer": {
 		Schema: spec.Schema{
@@ -16518,20 +16905,20 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"podSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "This is a label selector which selects Pods in this namespace. This field follows standard label selector semantics. If not provided, this selector selects no pods. If present but empty, this selector selects all pods in this namespace.",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"namespaceSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Selects Namespaces using cluster scoped-labels.  This matches all pods in all namespaces selected by this label selector. This field follows standard label selector semantics. If omitted, this selector selects no namespaces. If present but empty, this selector selects all namespaces.",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"v1beta1.LabelSelector"},
+			"v1.LabelSelector"},
 	},
 	"v1beta1.NetworkPolicyPort": {
 		Schema: spec.Schema{
@@ -16563,7 +16950,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"podSelector": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Selects the pods to which this NetworkPolicy object applies.  The array of ingress rules is applied to any pods selected by this field. Multiple network policies can select the same set of pods.  In this case, the ingress rules for each are combined additively. This field is NOT optional and follows standard label selector semantics. An empty podSelector matches all pods in this namespace.",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"ingress": {
@@ -16584,7 +16971,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"v1beta1.LabelSelector", "v1beta1.NetworkPolicyIngressRule"},
+			"v1.LabelSelector", "v1beta1.NetworkPolicyIngressRule"},
 	},
 	"v1beta1.NonResourceAttributes": {
 		Schema: spec.Schema{
@@ -16609,6 +16996,146 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{},
+	},
+	"v1beta1.PodDisruptionBudget": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "PodDisruptionBudget is an object to define the max disruption that can be caused to a collection of pods",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
+						},
+					},
+					"spec": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Specification of the desired behavior of the PodDisruptionBudget.",
+							Ref:         spec.MustCreateRef("#/definitions/v1beta1.PodDisruptionBudgetSpec"),
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Most recently observed status of the PodDisruptionBudget.",
+							Ref:         spec.MustCreateRef("#/definitions/v1beta1.PodDisruptionBudgetStatus"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"v1.ObjectMeta", "v1beta1.PodDisruptionBudgetSpec", "v1beta1.PodDisruptionBudgetStatus"},
+	},
+	"v1beta1.PodDisruptionBudgetList": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "PodDisruptionBudgetList is a collection of PodDisruptionBudgets.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1beta1.PodDisruptionBudget"),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			"v1.ListMeta", "v1beta1.PodDisruptionBudget"},
+	},
+	"v1beta1.PodDisruptionBudgetSpec": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "PodDisruptionBudgetSpec is a description of a PodDisruptionBudget.",
+				Properties: map[string]spec.Schema{
+					"minAvailable": {
+						SchemaProps: spec.SchemaProps{
+							Description: "An eviction is allowed if at least \"minAvailable\" pods selected by \"selector\" will still be available after the eviction, i.e. even in the absence of the evicted pod.  So for example you can prevent all voluntary evictions by specifying \"100%\".",
+							Ref:         spec.MustCreateRef("#/definitions/intstr.IntOrString"),
+						},
+					},
+					"selector": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Label query over pods whose evictions are managed by the disruption budget.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"intstr.IntOrString", "v1.LabelSelector"},
+	},
+	"v1beta1.PodDisruptionBudgetStatus": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "PodDisruptionBudgetStatus represents information about the status of a PodDisruptionBudget. Status may trail the actual state of a system.",
+				Properties: map[string]spec.Schema{
+					"observedGeneration": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Most recent generation observed when updating this PDB status. PodDisruptionsAllowed and other status informatio is valid only if observedGeneration equals to PDB's object generation.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"disruptedPods": {
+						SchemaProps: spec.SchemaProps{
+							Description: "DisruptedPods contains information about pods whose eviction was processed by the API server eviction subresource handler but has not yet been observed by the PodDisruptionBudget controller. A pod will be in this map from the time when the API server processed the eviction request to the time when the pod is seen by PDB controller as having been marked for deletion (or after a timeout). The key in the map is the name of the pod and the value is the time when the API server processed the eviction request. If the deletion didn't occur and a pod is still there it will be removed from the list automatically by PodDisruptionBudget controller after some time. If everything goes smooth this map should be empty for the most of the time. Large number of entries in the map may indicate problems with pod deletions.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1.Time"),
+									},
+								},
+							},
+						},
+					},
+					"disruptionsAllowed": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Number of pod disruptions that are currently allowed.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"currentHealthy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "current number of healthy pods",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"desiredHealthy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "minimum desired number of healthy pods",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"expectedPods": {
+						SchemaProps: spec.SchemaProps{
+							Description: "total number of pods counted by this disruption budget",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+				Required: []string{"disruptedPods", "disruptionsAllowed", "currentHealthy", "desiredHealthy", "expectedPods"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Time"},
 	},
 	"v1beta1.PodSecurityPolicy": {
 		Schema: spec.Schema{
@@ -16641,7 +17168,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -16662,7 +17189,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.PodSecurityPolicy"},
+			"v1.ListMeta", "v1beta1.PodSecurityPolicy"},
 	},
 	"v1beta1.PodSecurityPolicySpec": {
 		Schema: spec.Schema{
@@ -16833,6 +17360,52 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		Dependencies: []string{
 			"v1.ObjectMeta", "v1beta1.ReplicaSetSpec", "v1beta1.ReplicaSetStatus"},
 	},
+	"v1beta1.ReplicaSetCondition": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "ReplicaSetCondition describes the state of a replica set at a certain point.",
+				Properties: map[string]spec.Schema{
+					"type": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Type of replica set condition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status of the condition, one of True, False, Unknown.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"lastTransitionTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The last time the condition transitioned from one status to another.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+					"reason": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The reason for the condition's last transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"message": {
+						SchemaProps: spec.SchemaProps{
+							Description: "A human readable message indicating details about the transition.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"type", "status"},
+			},
+		},
+		Dependencies: []string{
+			"v1.Time"},
+	},
 	"v1beta1.ReplicaSetList": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -16841,12 +17414,12 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
 						SchemaProps: spec.SchemaProps{
-							Description: "List of ReplicaSets. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md",
+							Description: "List of ReplicaSets. More info: http://kubernetes.io/docs/user-guide/replication-controller",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -16862,7 +17435,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.ReplicaSet"},
+			"v1.ListMeta", "v1beta1.ReplicaSet"},
 	},
 	"v1beta1.ReplicaSetSpec": {
 		Schema: spec.Schema{
@@ -16871,20 +17444,27 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"replicas": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the number of desired replicas. This is a pointer to distinguish between explicit zero and unspecified. Defaults to 1. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#what-is-a-replication-controller",
+							Description: "Replicas is the number of desired replicas. This is a pointer to distinguish between explicit zero and unspecified. Defaults to 1. More info: http://kubernetes.io/docs/user-guide/replication-controller#what-is-a-replication-controller",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"minReadySeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Minimum number of seconds for which a newly created pod should be ready without any of its container crashing, for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready)",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the replica count. If the selector is empty, it is defaulted to the labels present on the pod template. Label keys and values that must match in order to be controlled by this replica set. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/v1beta1.LabelSelector"),
+							Description: "Selector is a label query over pods that should match the replica count. If the selector is empty, it is defaulted to the labels present on the pod template. Label keys and values that must match in order to be controlled by this replica set. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#pod-template",
+							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. More info: http://kubernetes.io/docs/user-guide/replication-controller#pod-template",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
 						},
 					},
@@ -16892,7 +17472,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"v1.PodTemplateSpec", "v1beta1.LabelSelector"},
+			"v1.LabelSelector", "v1.PodTemplateSpec"},
 	},
 	"v1beta1.ReplicaSetStatus": {
 		Schema: spec.Schema{
@@ -16901,7 +17481,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"replicas": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Replicas is the most recently oberved number of replicas. More info: http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#what-is-a-replication-controller",
+							Description: "Replicas is the most recently oberved number of replicas. More info: http://kubernetes.io/docs/user-guide/replication-controller#what-is-a-replication-controller",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -16920,6 +17500,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int32",
 						},
 					},
+					"availableReplicas": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The number of available replicas (ready for at least minReadySeconds) for this replica set.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 					"observedGeneration": {
 						SchemaProps: spec.SchemaProps{
 							Description: "ObservedGeneration reflects the generation of the most recently observed ReplicaSet.",
@@ -16927,11 +17514,25 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 							Format:      "int64",
 						},
 					},
+					"conditions": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Represents the latest available observations of a replica set's current state.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1beta1.ReplicaSetCondition"),
+									},
+								},
+							},
+						},
+					},
 				},
 				Required: []string{"replicas"},
 			},
 		},
-		Dependencies: []string{},
+		Dependencies: []string{
+			"v1beta1.ReplicaSetCondition"},
 	},
 	"v1beta1.ReplicationControllerDummy": {
 		Schema: spec.Schema{
@@ -17024,7 +17625,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"maxUnavailable": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The maximum number of pods that can be unavailable during the update. Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%). Absolute number is calculated from percentage by rounding up. This can not be 0 if MaxSurge is 0. By default, a fixed value of 1 is used. Example: when this is set to 30%, the old RC can be scaled down to 70% of desired pods immediately when the rolling update starts. Once new pods are ready, old RC can be scaled down further, followed by scaling up the new RC, ensuring that the total number of pods available at all times during the update is at least 70% of desired pods.",
+							Description: "The maximum number of pods that can be unavailable during the update. Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%). Absolute number is calculated from percentage by rounding down. This can not be 0 if MaxSurge is 0. By default, a fixed value of 1 is used. Example: when this is set to 30%, the old RC can be scaled down to 70% of desired pods immediately when the rolling update starts. Once new pods are ready, old RC can be scaled down further, followed by scaling up the new RC, ensuring that the total number of pods available at all times during the update is at least 70% of desired pods.",
 							Ref:         spec.MustCreateRef("#/definitions/intstr.IntOrString"),
 						},
 					},
@@ -17157,7 +17758,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "label query over pods that should match the replicas count. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
+							Description: "label query over pods that should match the replicas count. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Schema: &spec.Schema{
@@ -17171,7 +17772,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"targetSelector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "label selector for pods that should match the replicas count. This is a serializated version of both map-based and more expressive set-based selectors. This is done to avoid introspection in the clients. The string will be in the same format as the query-param syntax. If the target type only supports map-based selectors, both this field and map-based selector field are populated. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
+							Description: "label selector for pods that should match the replicas count. This is a serializated version of both map-based and more expressive set-based selectors. This is done to avoid introspection in the clients. The string will be in the same format as the query-param syntax. If the target type only supports map-based selectors, both this field and map-based selector field are populated. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -17259,6 +17860,139 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{},
 	},
+	"v1beta1.StatefulSet": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StatefulSet represents a set of pods with consistent identities. Identities are defined as:\n - Network: A single stable DNS and hostname.\n - Storage: As many VolumeClaims as requested.\nThe StatefulSet guarantees that a given network identity will always map to the same storage identity.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
+						},
+					},
+					"spec": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Spec defines the desired identities of pods in this set.",
+							Ref:         spec.MustCreateRef("#/definitions/v1beta1.StatefulSetSpec"),
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status is the current status of Pods in this StatefulSet. This data may be out of date by some window of time.",
+							Ref:         spec.MustCreateRef("#/definitions/v1beta1.StatefulSetStatus"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"v1.ObjectMeta", "v1beta1.StatefulSetSpec", "v1beta1.StatefulSetStatus"},
+	},
+	"v1beta1.StatefulSetList": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StatefulSetList is a collection of StatefulSets.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/definitions/v1.ListMeta"),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1beta1.StatefulSet"),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			"v1.ListMeta", "v1beta1.StatefulSet"},
+	},
+	"v1beta1.StatefulSetSpec": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "A StatefulSetSpec is the specification of a StatefulSet.",
+				Properties: map[string]spec.Schema{
+					"replicas": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Replicas is the desired number of replicas of the given Template. These are replicas in the sense that they are instantiations of the same Template, but individual replicas also have a consistent identity. If unspecified, defaults to 1.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"selector": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Selector is a label query over pods that should match the replica count. If empty, defaulted to labels on the pod template. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
+						},
+					},
+					"template": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Template is the object that describes the pod that will be created if insufficient replicas are detected. Each pod stamped out by the StatefulSet will fulfill this Template, but have a unique identity from the rest of the StatefulSet.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
+						},
+					},
+					"volumeClaimTemplates": {
+						SchemaProps: spec.SchemaProps{
+							Description: "VolumeClaimTemplates is a list of claims that pods are allowed to reference. The StatefulSet controller is responsible for mapping network identities to claims in a way that maintains the identity of a pod. Every claim in this list must have at least one matching (by name) volumeMount in one container in the template. A claim in this list takes precedence over any volumes in the template, with the same name.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1.PersistentVolumeClaim"),
+									},
+								},
+							},
+						},
+					},
+					"serviceName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ServiceName is the name of the service that governs this StatefulSet. This service must exist before the StatefulSet, and is responsible for the network identity of the set. Pods get DNS/hostnames that follow the pattern: pod-specific-string.serviceName.default.svc.cluster.local where \"pod-specific-string\" is managed by the StatefulSet controller.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"template", "serviceName"},
+			},
+		},
+		Dependencies: []string{
+			"v1.LabelSelector", "v1.PersistentVolumeClaim", "v1.PodTemplateSpec"},
+	},
+	"v1beta1.StatefulSetStatus": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StatefulSetStatus represents the current state of a StatefulSet.",
+				Properties: map[string]spec.Schema{
+					"observedGeneration": {
+						SchemaProps: spec.SchemaProps{
+							Description: "most recent generation observed by this autoscaler.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"replicas": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Replicas is the number of actual replicas.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+				Required: []string{"replicas"},
+			},
+		},
+		Dependencies: []string{},
+	},
 	"v1beta1.StorageClass": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -17306,7 +18040,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -17327,7 +18061,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.StorageClass"},
+			"v1.ListMeta", "v1beta1.StorageClass"},
 	},
 	"v1beta1.SubjectAccessReview": {
 		Schema: spec.Schema{
@@ -17469,7 +18203,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"name": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Name of the referent; More info: http://releases.k8s.io/HEAD/docs/user-guide/identifiers.md#names",
+							Description: "Name of the referent; More info: http://kubernetes.io/docs/user-guide/identifiers#names",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -17593,7 +18327,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -17614,7 +18348,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.ThirdPartyResourceData"},
+			"v1.ListMeta", "v1beta1.ThirdPartyResourceData"},
 	},
 	"v1beta1.ThirdPartyResourceList": {
 		Schema: spec.Schema{
@@ -17624,7 +18358,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -17645,7 +18379,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v1beta1.ThirdPartyResource"},
+			"v1.ListMeta", "v1beta1.ThirdPartyResource"},
 	},
 	"v1beta1.TokenReview": {
 		Schema: spec.Schema{
@@ -17783,6 +18517,142 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{},
 	},
+	"v2alpha1.CronJob": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJob represents the configuration of a single cron job.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Standard object's metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
+							Ref:         spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
+						},
+					},
+					"spec": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Spec is a structure defining the expected behavior of a job, including the schedule. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
+							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.CronJobSpec"),
+						},
+					},
+					"status": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Status is a structure describing current status of a job. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
+							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.CronJobStatus"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"v1.ObjectMeta", "v2alpha1.CronJobSpec", "v2alpha1.CronJobStatus"},
+	},
+	"v2alpha1.CronJobList": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJobList is a collection of cron jobs.",
+				Properties: map[string]spec.Schema{
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Items is the list of CronJob.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v2alpha1.CronJob"),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			"v1.ListMeta", "v2alpha1.CronJob"},
+	},
+	"v2alpha1.CronJobSpec": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJobSpec describes how the job execution will look like and when it will actually run.",
+				Properties: map[string]spec.Schema{
+					"schedule": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Schedule contains the schedule in Cron format, see https://en.wikipedia.org/wiki/Cron.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"startingDeadlineSeconds": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Optional deadline in seconds for starting the job if it misses scheduled time for any reason.  Missed jobs executions will be counted as failed ones.",
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"concurrencyPolicy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ConcurrencyPolicy specifies how to treat concurrent executions of a Job.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"suspend": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Suspend flag tells the controller to suspend subsequent executions, it does not apply to already started executions.  Defaults to false.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"jobTemplate": {
+						SchemaProps: spec.SchemaProps{
+							Description: "JobTemplate is the object that describes the job that will be created when executing a CronJob.",
+							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.JobTemplateSpec"),
+						},
+					},
+				},
+				Required: []string{"schedule", "jobTemplate"},
+			},
+		},
+		Dependencies: []string{
+			"v2alpha1.JobTemplateSpec"},
+	},
+	"v2alpha1.CronJobStatus": {
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "CronJobStatus represents the current state of a cron job.",
+				Properties: map[string]spec.Schema{
+					"active": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Active holds pointers to currently running jobs.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: spec.MustCreateRef("#/definitions/v1.ObjectReference"),
+									},
+								},
+							},
+						},
+					},
+					"lastScheduleTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "LastScheduleTime keeps information of when was the last time the job was successfully scheduled.",
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			"v1.ObjectReference", "v1.Time"},
+	},
 	"v2alpha1.Job": {
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -17834,13 +18704,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"lastProbeTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition was checked.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"lastTransitionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Last time the condition transit from one status to another.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"reason": {
@@ -17862,7 +18732,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time"},
+			"v1.Time"},
 	},
 	"v2alpha1.JobList": {
 		Schema: spec.Schema{
@@ -17872,7 +18742,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -17893,7 +18763,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.ListMeta", "v2alpha1.Job"},
+			"v1.ListMeta", "v2alpha1.Job"},
 	},
 	"v2alpha1.JobSpec": {
 		Schema: spec.Schema{
@@ -17902,14 +18772,14 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"parallelism": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Parallelism specifies the maximum desired number of pods the job should run at any given time. The actual number of pods running in steady state will be less than this number when ((.spec.completions - .status.successful) < .spec.parallelism), i.e. when the work left to do is less than max parallelism. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Parallelism specifies the maximum desired number of pods the job should run at any given time. The actual number of pods running in steady state will be less than this number when ((.spec.completions - .status.successful) < .spec.parallelism), i.e. when the work left to do is less than max parallelism. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
 					},
 					"completions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Completions specifies the desired number of successfully finished pods the job should be run with.  Setting to nil means that the success of any pod signals the success of all pods, and allows parallelism to have any positive value.  Setting to 1 means that parallelism is limited to 1 and the success of that pod signals the success of the job. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Completions specifies the desired number of successfully finished pods the job should be run with.  Setting to nil means that the success of any pod signals the success of all pods, and allows parallelism to have any positive value.  Setting to 1 means that parallelism is limited to 1 and the success of that pod signals the success of the job. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"integer"},
 							Format:      "int32",
 						},
@@ -17923,8 +18793,8 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"selector": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors",
-							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.LabelSelector"),
+							Description: "Selector is a label query over pods that should match the pod count. Normally, the system sets this field for you. More info: http://kubernetes.io/docs/user-guide/labels#label-selectors",
+							Ref:         spec.MustCreateRef("#/definitions/v1.LabelSelector"),
 						},
 					},
 					"manualSelector": {
@@ -17936,7 +18806,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					},
 					"template": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Template is the object that describes the pod that will be created when executing a job. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Template is the object that describes the pod that will be created when executing a job. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Ref:         spec.MustCreateRef("#/definitions/v1.PodTemplateSpec"),
 						},
 					},
@@ -17945,7 +18815,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"v1.PodTemplateSpec", "v2alpha1.LabelSelector"},
+			"v1.LabelSelector", "v1.PodTemplateSpec"},
 	},
 	"v2alpha1.JobStatus": {
 		Schema: spec.Schema{
@@ -17954,7 +18824,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 				Properties: map[string]spec.Schema{
 					"conditions": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Conditions represent the latest available observations of an object's current state. More info: http://releases.k8s.io/HEAD/docs/user-guide/jobs.md",
+							Description: "Conditions represent the latest available observations of an object's current state. More info: http://kubernetes.io/docs/user-guide/jobs",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
@@ -17968,13 +18838,13 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 					"startTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "StartTime represents time when the job was acknowledged by the Job Manager. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"completionTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "CompletionTime represents time when the job was completed. It is not guaranteed to be set in happens-before order across separate operations. It is represented in RFC3339 form and is in UTC.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
+							Ref:         spec.MustCreateRef("#/definitions/v1.Time"),
 						},
 					},
 					"active": {
@@ -18002,7 +18872,7 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 			},
 		},
 		Dependencies: []string{
-			"unversioned.Time", "v2alpha1.JobCondition"},
+			"v1.Time", "v2alpha1.JobCondition"},
 	},
 	"v2alpha1.JobTemplate": {
 		Schema: spec.Schema{
@@ -18049,219 +18919,6 @@ var OpenAPIDefinitions *common.OpenAPIDefinitions = &common.OpenAPIDefinitions{
 		},
 		Dependencies: []string{
 			"v1.ObjectMeta", "v2alpha1.JobSpec"},
-	},
-	"v2alpha1.LabelSelector": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A label selector is a label query over a set of resources. The result of matchLabels and matchExpressions are ANDed. An empty label selector matches all objects. A null label selector matches no objects.",
-				Properties: map[string]spec.Schema{
-					"matchLabels": {
-						SchemaProps: spec.SchemaProps{
-							Description: "matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is \"key\", the operator is \"In\", and the values array contains only \"value\". The requirements are ANDed.",
-							Type:        []string{"object"},
-							AdditionalProperties: &spec.SchemaOrBool{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-					"matchExpressions": {
-						SchemaProps: spec.SchemaProps{
-							Description: "matchExpressions is a list of label selector requirements. The requirements are ANDed.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v2alpha1.LabelSelectorRequirement"),
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"v2alpha1.LabelSelectorRequirement"},
-	},
-	"v2alpha1.LabelSelectorRequirement": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "A label selector requirement is a selector that contains values, a key, and an operator that relates the key and values.",
-				Properties: map[string]spec.Schema{
-					"key": {
-						SchemaProps: spec.SchemaProps{
-							Description: "key is the label key that the selector applies to.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"operator": {
-						SchemaProps: spec.SchemaProps{
-							Description: "operator represents a key's relationship to a set of values. Valid operators ard In, NotIn, Exists and DoesNotExist.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"values": {
-						SchemaProps: spec.SchemaProps{
-							Description: "values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Type:   []string{"string"},
-										Format: "",
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"key", "operator"},
-			},
-		},
-		Dependencies: []string{},
-	},
-	"v2alpha1.ScheduledJob": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJob represents the configuration of a single scheduled job.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Standard object's metadata. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/v1.ObjectMeta"),
-						},
-					},
-					"spec": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Spec is a structure defining the expected behavior of a job, including the schedule. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
-							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.ScheduledJobSpec"),
-						},
-					},
-					"status": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Status is a structure describing current status of a job. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status",
-							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.ScheduledJobStatus"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"v1.ObjectMeta", "v2alpha1.ScheduledJobSpec", "v2alpha1.ScheduledJobStatus"},
-	},
-	"v2alpha1.ScheduledJobList": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJobList is a collection of scheduled jobs.",
-				Properties: map[string]spec.Schema{
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Standard list metadata More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.ListMeta"),
-						},
-					},
-					"items": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Items is the list of ScheduledJob.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v2alpha1.ScheduledJob"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"items"},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.ListMeta", "v2alpha1.ScheduledJob"},
-	},
-	"v2alpha1.ScheduledJobSpec": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJobSpec describes how the job execution will look like and when it will actually run.",
-				Properties: map[string]spec.Schema{
-					"schedule": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Schedule contains the schedule in Cron format, see https://en.wikipedia.org/wiki/Cron.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"startingDeadlineSeconds": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Optional deadline in seconds for starting the job if it misses scheduled time for any reason.  Missed jobs executions will be counted as failed ones.",
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-					"concurrencyPolicy": {
-						SchemaProps: spec.SchemaProps{
-							Description: "ConcurrencyPolicy specifies how to treat concurrent executions of a Job.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"suspend": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Suspend flag tells the controller to suspend subsequent executions, it does not apply to already started executions.  Defaults to false.",
-							Type:        []string{"boolean"},
-							Format:      "",
-						},
-					},
-					"jobTemplate": {
-						SchemaProps: spec.SchemaProps{
-							Description: "JobTemplate is the object that describes the job that will be created when executing a ScheduledJob.",
-							Ref:         spec.MustCreateRef("#/definitions/v2alpha1.JobTemplateSpec"),
-						},
-					},
-				},
-				Required: []string{"schedule", "jobTemplate"},
-			},
-		},
-		Dependencies: []string{
-			"v2alpha1.JobTemplateSpec"},
-	},
-	"v2alpha1.ScheduledJobStatus": {
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "ScheduledJobStatus represents the current state of a Job.",
-				Properties: map[string]spec.Schema{
-					"active": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Active holds pointers to currently running jobs.",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: spec.MustCreateRef("#/definitions/v1.ObjectReference"),
-									},
-								},
-							},
-						},
-					},
-					"lastScheduleTime": {
-						SchemaProps: spec.SchemaProps{
-							Description: "LastScheduleTime keeps information of when was the last time the job was successfully scheduled.",
-							Ref:         spec.MustCreateRef("#/definitions/unversioned.Time"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"unversioned.Time", "v1.ObjectReference"},
 	},
 	"version.Info": {
 		Schema: spec.Schema{

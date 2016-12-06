@@ -52,6 +52,8 @@ func TestCloneTLSConfig(t *testing.T) {
 		// These fields are not copied
 		"SessionTicketsDisabled",
 		"SessionTicketKey",
+		"DynamicRecordSizingDisabled",
+		"Renegotiation",
 
 		// These fields are unexported
 		"serverInitOnce",
@@ -214,5 +216,26 @@ func TestProxierWithNoProxyCIDR(t *testing.T) {
 			t.Errorf("%s: expected %v, got %v", test.name, test.expectedDelegated, actualDelegated)
 			continue
 		}
+	}
+}
+
+type fakeTLSClientConfigHolder struct {
+	called bool
+}
+
+func (f *fakeTLSClientConfigHolder) TLSClientConfig() *tls.Config {
+	f.called = true
+	return nil
+}
+func (f *fakeTLSClientConfigHolder) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, nil
+}
+
+func TestTLSClientConfigHolder(t *testing.T) {
+	rt := &fakeTLSClientConfigHolder{}
+	TLSClientConfig(rt)
+
+	if !rt.called {
+		t.Errorf("didn't find tls config")
 	}
 }

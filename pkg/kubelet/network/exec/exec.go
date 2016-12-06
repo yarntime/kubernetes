@@ -65,8 +65,8 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/componentconfig"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/network"
 	utilexec "k8s.io/kubernetes/pkg/util/exec"
@@ -118,7 +118,12 @@ func (plugin *execNetworkPlugin) Init(host network.Host, hairpinMode componentco
 	plugin.host = host
 	// call the init script
 	out, err := utilexec.New().Command(plugin.getExecutable(), initCmd).CombinedOutput()
-	glog.V(5).Infof("Init 'exec' network plugin output: %s, %v", string(out), err)
+	if err != nil {
+		glog.V(5).Infof("Init 'exec' network plugin output: %s, %v", string(out), err)
+	} else {
+		glog.V(5).Infof("Init 'exec' network plugin output: %s", string(out))
+	}
+
 	return err
 }
 
@@ -142,27 +147,38 @@ func (plugin *execNetworkPlugin) validate() error {
 
 func (plugin *execNetworkPlugin) SetUpPod(namespace string, name string, id kubecontainer.ContainerID) error {
 	out, err := utilexec.New().Command(plugin.getExecutable(), setUpCmd, namespace, name, id.ID).CombinedOutput()
-	glog.V(5).Infof("SetUpPod 'exec' network plugin output: %s, %v", string(out), err)
+	if err != nil {
+		glog.V(5).Infof("SetUpPod 'exec' network plugin output: %s, %v", string(out), err)
+	} else {
+		glog.V(5).Infof("SetUpPod 'exec' network plugin output: %s", string(out))
+	}
+
 	return err
 }
 
 func (plugin *execNetworkPlugin) TearDownPod(namespace string, name string, id kubecontainer.ContainerID) error {
 	out, err := utilexec.New().Command(plugin.getExecutable(), tearDownCmd, namespace, name, id.ID).CombinedOutput()
-	glog.V(5).Infof("TearDownPod 'exec' network plugin output: %s, %v", string(out), err)
+	if err != nil {
+		glog.V(5).Infof("TearDownPod 'exec' network plugin output: %s, %v", string(out), err)
+	} else {
+		glog.V(5).Infof("TearDownPod 'exec' network plugin output: %s", string(out))
+	}
 	return err
 }
 
 func (plugin *execNetworkPlugin) GetPodNetworkStatus(namespace string, name string, id kubecontainer.ContainerID) (*network.PodNetworkStatus, error) {
 	out, err := utilexec.New().Command(plugin.getExecutable(), statusCmd, namespace, name, id.ID).CombinedOutput()
-	glog.V(5).Infof("Status 'exec' network plugin output: %s, %v", string(out), err)
 	if err != nil {
+		glog.V(5).Infof("Status 'exec' network plugin output: %s, %v", string(out), err)
 		return nil, err
+	} else {
+		glog.V(5).Infof("Status 'exec' network plugin output: %s", string(out))
 	}
 	if string(out) == "" {
 		return nil, nil
 	}
 	findVersion := struct {
-		unversioned.TypeMeta `json:",inline"`
+		metav1.TypeMeta `json:",inline"`
 	}{}
 	err = json.Unmarshal(out, &findVersion)
 	if err != nil {

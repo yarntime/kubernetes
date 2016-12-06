@@ -17,11 +17,12 @@ limitations under the License.
 package apiserver
 
 import (
+	"bytes"
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 
 	"github.com/emicklei/go-restful"
 )
@@ -36,8 +37,8 @@ func TestScopeNamingGenerateLink(t *testing.T) {
 	s := scopeNaming{
 		meta.RESTScopeNamespace,
 		selfLinker,
-		func(name, namespace string) string {
-			return "/api/v1/namespaces/" + namespace + "/services/" + name
+		func(name, namespace string) bytes.Buffer {
+			return *bytes.NewBufferString("/api/v1/namespaces/" + namespace + "/services/" + name)
 		},
 		true,
 	}
@@ -46,11 +47,11 @@ func TestScopeNamingGenerateLink(t *testing.T) {
 			Name:      "foo",
 			Namespace: "other",
 		},
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind: "Service",
 		},
 	}
-	_, _, err := s.GenerateLink(&restful.Request{}, service)
+	_, err := s.GenerateLink(&restful.Request{}, service)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
 	}

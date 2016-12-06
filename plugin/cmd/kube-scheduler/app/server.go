@@ -24,13 +24,16 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	goruntime "runtime"
 	"strconv"
 
-	"k8s.io/kubernetes/pkg/api"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/kubernetes/pkg/api/v1"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
+	v1core "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/typed/core/v1"
 	"k8s.io/kubernetes/pkg/client/leaderelection"
+	"k8s.io/kubernetes/pkg/client/leaderelection/resourcelock"
 	"k8s.io/kubernetes/pkg/client/record"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
 	"k8s.io/kubernetes/pkg/healthz"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -86,11 +89,10 @@ func Run(s *options.SchedulerServer) error {
 	kubeconfig.QPS = s.KubeAPIQPS
 	kubeconfig.Burst = int(s.KubeAPIBurst)
 
-	kubeClient, err := client.New(kubeconfig)
 	if err != nil {
 		glog.Fatalf("Invalid API configuration: %v", err)
 	}
-	kubeClientset, err := clientset.NewForConfig(kubeconfig)
+	leaderElectionClient, err := clientset.NewForConfig(restclient.AddUserAgent(kubeconfig, "leader-election"))
 	if err != nil {
 		glog.Fatalf("Invalid API configuration: %v", err)
 	}
@@ -102,6 +104,9 @@ func Run(s *options.SchedulerServer) error {
 			mux.HandleFunc("/debug/pprof/", pprof.Index)
 			mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 			mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			if s.EnableContentionProfiling {
+				goruntime.SetBlockProfileRate(1)
+			}
 		}
 		configz.InstallHandler(mux)
 		mux.Handle("/metrics", prometheus.Handler())
@@ -113,7 +118,7 @@ func Run(s *options.SchedulerServer) error {
 		glog.Fatal(server.ListenAndServe())
 	}()
 
-	configFactory := factory.NewConfigFactory(kubeClient, s.SchedulerName, s.HardPodAffinitySymmetricWeight, s.FailureDomains)
+	configFactory := factory.NewConfigFactory(leaderElectionClient, s.SchedulerName, s.HardPodAffinitySymmetricWeight, s.FailureDomains)
 	config, err := createConfig(s, configFactory)
 
 	if err != nil {
@@ -121,9 +126,9 @@ func Run(s *options.SchedulerServer) error {
 	}
 
 	eventBroadcaster := record.NewBroadcaster()
-	config.Recorder = eventBroadcaster.NewRecorder(api.EventSource{Component: s.SchedulerName})
+	config.Recorder = eventBroadcaster.NewRecorder(v1.EventSource{Component: s.SchedulerName})
 	eventBroadcaster.StartLogging(glog.Infof)
-	eventBroadcaster.StartRecordingToSink(kubeClient.Events(""))
+	eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: leaderElectionClient.Core().Events("")})
 
 	sched := scheduler.New(config)
 
@@ -144,17 +149,24 @@ func Run(s *options.SchedulerServer) error {
 		return err
 	}
 
-	leaderelection.RunOrDie(leaderelection.LeaderElectionConfig{
-		EndpointsMeta: api.ObjectMeta{
+	// TODO: enable other lock types
+	rl := resourcelock.EndpointsLock{
+		EndpointsMeta: v1.ObjectMeta{
 			Namespace: "kube-system",
 			Name:      "kube-scheduler",
 		},
-		EndpointsClient: kubeClientset.Core(),
-		Identity:        id,
-		EventRecorder:   config.Recorder,
-		LeaseDuration:   s.LeaderElection.LeaseDuration.Duration,
-		RenewDeadline:   s.LeaderElection.RenewDeadline.Duration,
-		RetryPeriod:     s.LeaderElection.RetryPeriod.Duration,
+		Client: leaderElectionClient,
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity:      id,
+			EventRecorder: config.Recorder,
+		},
+	}
+
+	leaderelection.RunOrDie(leaderelection.LeaderElectionConfig{
+		Lock:          &rl,
+		LeaseDuration: s.LeaderElection.LeaseDuration.Duration,
+		RenewDeadline: s.LeaderElection.RenewDeadline.Duration,
+		RetryPeriod:   s.LeaderElection.RetryPeriod.Duration,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: run,
 			OnStoppedLeading: func() {

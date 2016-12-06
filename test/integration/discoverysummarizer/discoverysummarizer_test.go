@@ -65,17 +65,18 @@ func runDiscoverySummarizer(t *testing.T) string {
 	return serverURL
 }
 
-func runAPIServer(t *testing.T) string {
+func runAPIServer(t *testing.T, stopCh <-chan struct{}) string {
 	serverRunOptions := apiserver.NewServerRunOptions()
-	// Change the port, because otherwise it will fail if examples/apiserver/apiserver_test and this are run in parallel.
-	serverRunOptions.InsecurePort = 8083
+	// Change the ports, because otherwise it will fail if examples/apiserver/apiserver_test and this are run in parallel.
+	serverRunOptions.SecureServing.ServingOptions.BindPort = 6443 + 3
+	serverRunOptions.InsecureServing.BindPort = 8080 + 3
 	go func() {
-		if err := apiserver.Run(serverRunOptions); err != nil {
+		if err := serverRunOptions.Run(stopCh); err != nil {
 			t.Fatalf("Error in bringing up the example apiserver: %v", err)
 		}
 	}()
 
-	serverURL := fmt.Sprintf("http://localhost:%d", serverRunOptions.InsecurePort)
+	serverURL := fmt.Sprintf("http://localhost:%d", serverRunOptions.InsecureServing.BindPort)
 	if err := waitForServerUp(serverURL); err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -98,7 +99,9 @@ func TestRunDiscoverySummarizer(t *testing.T) {
 	testResponse(t, discoveryURL, "/randomPath", http.StatusNotFound)
 
 	// Run the APIServer now to test the good case.
-	runAPIServer(t)
+	stopCh := make(chan struct{})
+	runAPIServer(t, stopCh)
+	defer close(stopCh)
 
 	// Test /api path.
 	// There is no server running at that URL, so we will get a 500.

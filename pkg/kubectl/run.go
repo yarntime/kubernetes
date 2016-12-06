@@ -23,12 +23,12 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	batchv1 "k8s.io/kubernetes/pkg/apis/batch/v1"
 	batchv2alpha1 "k8s.io/kubernetes/pkg/apis/batch/v2alpha1"
 	"k8s.io/kubernetes/pkg/apis/extensions"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/validation"
 )
@@ -109,7 +109,7 @@ func (DeploymentV1Beta1) Generate(genericParams map[string]interface{}) (runtime
 		},
 		Spec: extensions.DeploymentSpec{
 			Replicas: int32(count),
-			Selector: &unversioned.LabelSelector{MatchLabels: labels},
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
 					Labels: labels,
@@ -292,7 +292,7 @@ func (JobV1Beta1) Generate(genericParams map[string]interface{}) (runtime.Object
 			Labels: labels,
 		},
 		Spec: batch.JobSpec{
-			Selector: &unversioned.LabelSelector{
+			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},
 			ManualSelector: newBool(true),
@@ -401,9 +401,9 @@ func (JobV1) Generate(genericParams map[string]interface{}) (runtime.Object, err
 	return &job, nil
 }
 
-type ScheduledJobV2Alpha1 struct{}
+type CronJobV2Alpha1 struct{}
 
-func (ScheduledJobV2Alpha1) ParamNames() []GeneratorParam {
+func (CronJobV2Alpha1) ParamNames() []GeneratorParam {
 	return []GeneratorParam{
 		{"labels", false},
 		{"default-name", false},
@@ -425,7 +425,7 @@ func (ScheduledJobV2Alpha1) ParamNames() []GeneratorParam {
 	}
 }
 
-func (ScheduledJobV2Alpha1) Generate(genericParams map[string]interface{}) (runtime.Object, error) {
+func (CronJobV2Alpha1) Generate(genericParams map[string]interface{}) (runtime.Object, error) {
 	args, err := getArgs(genericParams)
 	if err != nil {
 		return nil, err
@@ -477,12 +477,12 @@ func (ScheduledJobV2Alpha1) Generate(genericParams map[string]interface{}) (runt
 	}
 	podSpec.RestartPolicy = restartPolicy
 
-	scheduledJob := batchv2alpha1.ScheduledJob{
+	cronJob := batchv2alpha1.CronJob{
 		ObjectMeta: v1.ObjectMeta{
 			Name:   name,
 			Labels: labels,
 		},
-		Spec: batchv2alpha1.ScheduledJobSpec{
+		Spec: batchv2alpha1.CronJobSpec{
 			Schedule:          params["schedule"],
 			ConcurrencyPolicy: batchv2alpha1.AllowConcurrent,
 			JobTemplate: batchv2alpha1.JobTemplateSpec{
@@ -498,7 +498,7 @@ func (ScheduledJobV2Alpha1) Generate(genericParams map[string]interface{}) (runt
 		},
 	}
 
-	return &scheduledJob, nil
+	return &cronJob, nil
 }
 
 type BasicReplicationController struct{}
@@ -830,7 +830,7 @@ func updateV1PodPorts(params map[string]string, podSpec *v1.PodSpec) (err error)
 	}
 
 	// Don't include the port if it was not specified.
-	if port > 0 {
+	if len(params["port"]) > 0 {
 		podSpec.Containers[0].Ports = []v1.ContainerPort{
 			{
 				ContainerPort: int32(port),

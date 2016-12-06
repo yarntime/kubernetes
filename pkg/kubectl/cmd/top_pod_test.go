@@ -23,9 +23,11 @@ import (
 	"strings"
 	"testing"
 
-	metrics_api "k8s.io/heapster/metrics/apis/metrics/v1alpha1"
-	"k8s.io/kubernetes/pkg/client/unversioned/fake"
 	"net/url"
+
+	metricsapi "k8s.io/heapster/metrics/apis/metrics/v1alpha1"
+	"k8s.io/kubernetes/pkg/client/restclient/fake"
+	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 )
 
 func TestTopPodAllNamespacesMetrics(t *testing.T) {
@@ -40,7 +42,7 @@ func TestTopPodAllNamespacesMetrics(t *testing.T) {
 
 	expectedPath := fmt.Sprintf("%s/%s/pods", baseMetricsAddress, metricsApiVersion)
 
-	f, tf, _, ns := NewAPIFactory()
+	f, tf, _, ns := cmdtesting.NewAPIFactory()
 	tf.Printer = &testPrinter{}
 	tf.Client = &fake.RESTClient{
 		NegotiatedSerializer: ns,
@@ -83,14 +85,14 @@ func TestTopPodAllInNamespaceMetrics(t *testing.T) {
 	metrics := testPodMetricsData()
 	testNamespace := "testnamespace"
 	nonTestNamespace := "anothernamespace"
-	expectedMetrics := metrics_api.PodMetricsList{
+	expectedMetrics := metricsapi.PodMetricsList{
 		ListMeta: metrics.ListMeta,
 		Items:    metrics.Items[0:2],
 	}
 	for _, m := range expectedMetrics.Items {
 		m.Namespace = testNamespace
 	}
-	nonExpectedMetrics := metrics_api.PodMetricsList{
+	nonExpectedMetrics := metricsapi.PodMetricsList{
 		ListMeta: metrics.ListMeta,
 		Items:    metrics.Items[2:],
 	}
@@ -99,7 +101,7 @@ func TestTopPodAllInNamespaceMetrics(t *testing.T) {
 	}
 	expectedPath := fmt.Sprintf("%s/%s/namespaces/%s/pods", baseMetricsAddress, metricsApiVersion, testNamespace)
 
-	f, tf, _, ns := NewAPIFactory()
+	f, tf, _, ns := cmdtesting.NewAPIFactory()
 	tf.Printer = &testPrinter{}
 	tf.Client = &fake.RESTClient{
 		NegotiatedSerializer: ns,
@@ -142,7 +144,7 @@ func TestTopPodWithNameMetrics(t *testing.T) {
 	initTestErrorHandler(t)
 	metrics := testPodMetricsData()
 	expectedMetrics := metrics.Items[0]
-	nonExpectedMetrics := metrics_api.PodMetricsList{
+	nonExpectedMetrics := metricsapi.PodMetricsList{
 		ListMeta: metrics.ListMeta,
 		Items:    metrics.Items[1:],
 	}
@@ -150,7 +152,7 @@ func TestTopPodWithNameMetrics(t *testing.T) {
 	expectedMetrics.Namespace = testNamespace
 	expectedPath := fmt.Sprintf("%s/%s/namespaces/%s/pods/%s", baseMetricsAddress, metricsApiVersion, testNamespace, expectedMetrics.Name)
 
-	f, tf, _, ns := NewAPIFactory()
+	f, tf, _, ns := cmdtesting.NewAPIFactory()
 	tf.Printer = &testPrinter{}
 	tf.Client = &fake.RESTClient{
 		NegotiatedSerializer: ns,
@@ -190,11 +192,11 @@ func TestTopPodWithNameMetrics(t *testing.T) {
 func TestTopPodWithLabelSelectorMetrics(t *testing.T) {
 	initTestErrorHandler(t)
 	metrics := testPodMetricsData()
-	expectedMetrics := metrics_api.PodMetricsList{
+	expectedMetrics := metricsapi.PodMetricsList{
 		ListMeta: metrics.ListMeta,
 		Items:    metrics.Items[0:2],
 	}
-	nonExpectedMetrics := metrics_api.PodMetricsList{
+	nonExpectedMetrics := metricsapi.PodMetricsList{
 		ListMeta: metrics.ListMeta,
 		Items:    metrics.Items[2:],
 	}
@@ -203,7 +205,7 @@ func TestTopPodWithLabelSelectorMetrics(t *testing.T) {
 	expectedPath := fmt.Sprintf("%s/%s/namespaces/%s/pods", baseMetricsAddress, metricsApiVersion, testNamespace)
 	expectedQuery := fmt.Sprintf("labelSelector=%s", url.QueryEscape(label))
 
-	f, tf, _, ns := NewAPIFactory()
+	f, tf, _, ns := cmdtesting.NewAPIFactory()
 	tf.Printer = &testPrinter{}
 	tf.Client = &fake.RESTClient{
 		NegotiatedSerializer: ns,
@@ -247,7 +249,7 @@ func TestTopPodWithContainersMetrics(t *testing.T) {
 	initTestErrorHandler(t)
 	metrics := testPodMetricsData()
 	expectedMetrics := metrics.Items[0]
-	nonExpectedMetrics := metrics_api.PodMetricsList{
+	nonExpectedMetrics := metricsapi.PodMetricsList{
 		ListMeta: metrics.ListMeta,
 		Items:    metrics.Items[1:],
 	}
@@ -255,7 +257,7 @@ func TestTopPodWithContainersMetrics(t *testing.T) {
 	expectedMetrics.Namespace = testNamespace
 	expectedPath := fmt.Sprintf("%s/%s/namespaces/%s/pods/%s", baseMetricsAddress, metricsApiVersion, testNamespace, expectedMetrics.Name)
 
-	f, tf, _, ns := NewAPIFactory()
+	f, tf, _, ns := cmdtesting.NewAPIFactory()
 	tf.Printer = &testPrinter{}
 	tf.Client = &fake.RESTClient{
 		NegotiatedSerializer: ns,

@@ -27,14 +27,14 @@ import (
 
 	_ "k8s.io/kubernetes/pkg/api/install"
 
-	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/meta/metatypes"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/apimachinery/registered"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/client/typed/dynamic"
 	"k8s.io/kubernetes/pkg/controller/garbagecollector/metaonly"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/runtime/serializer"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/clock"
@@ -49,7 +49,7 @@ func TestNewGarbageCollector(t *testing.T) {
 	metaOnlyClientPool := dynamic.NewClientPool(config, registered.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
 	config.ContentConfig.NegotiatedSerializer = nil
 	clientPool := dynamic.NewClientPool(config, registered.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
-	podResource := []unversioned.GroupVersionResource{{Version: "v1", Resource: "pods"}}
+	podResource := map[schema.GroupVersionResource]struct{}{schema.GroupVersionResource{Version: "v1", Resource: "pods"}: {}}
 	gc, err := NewGarbageCollector(metaOnlyClientPool, clientPool, registered.RESTMapper(), podResource)
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +94,7 @@ func (f *fakeActionHandler) ServeHTTP(response http.ResponseWriter, request *htt
 		fakeResponse.statusCode = 200
 		fakeResponse.content = []byte("{\"kind\": \"List\"}")
 	}
+	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(fakeResponse.statusCode)
 	response.Write(fakeResponse.content)
 }
@@ -112,7 +113,7 @@ func setupGC(t *testing.T, config *restclient.Config) *GarbageCollector {
 	metaOnlyClientPool := dynamic.NewClientPool(config, registered.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
 	config.ContentConfig.NegotiatedSerializer = nil
 	clientPool := dynamic.NewClientPool(config, registered.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
-	podResource := []unversioned.GroupVersionResource{{Version: "v1", Resource: "pods"}}
+	podResource := map[schema.GroupVersionResource]struct{}{schema.GroupVersionResource{Version: "v1", Resource: "pods"}: {}}
 	gc, err := NewGarbageCollector(metaOnlyClientPool, clientPool, registered.RESTMapper(), podResource)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +123,7 @@ func setupGC(t *testing.T, config *restclient.Config) *GarbageCollector {
 
 func getPod(podName string, ownerReferences []v1.OwnerReference) *v1.Pod {
 	return &v1.Pod{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
@@ -230,14 +231,14 @@ func verifyGraphInvariants(scenario string, uidToNode map[types.UID]*node, t *te
 }
 
 func createEvent(eventType eventType, selfUID string, owners []string) event {
-	var ownerReferences []api.OwnerReference
+	var ownerReferences []v1.OwnerReference
 	for i := 0; i < len(owners); i++ {
-		ownerReferences = append(ownerReferences, api.OwnerReference{UID: types.UID(owners[i])})
+		ownerReferences = append(ownerReferences, v1.OwnerReference{UID: types.UID(owners[i])})
 	}
 	return event{
 		eventType: eventType,
-		obj: &api.Pod{
-			ObjectMeta: api.ObjectMeta{
+		obj: &v1.Pod{
+			ObjectMeta: v1.ObjectMeta{
 				UID:             types.UID(selfUID),
 				OwnerReferences: ownerReferences,
 			},
@@ -343,14 +344,14 @@ func TestGCListWatcher(t *testing.T) {
 	srv, clientConfig := testServerAndClientConfig(testHandler.ServeHTTP)
 	defer srv.Close()
 	clientPool := dynamic.NewClientPool(clientConfig, registered.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
-	podResource := unversioned.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podResource := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 	client, err := clientPool.ClientForGroupVersionResource(podResource)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lw := gcListWatcher(client, podResource)
-	lw.Watch(api.ListOptions{ResourceVersion: "1"})
-	lw.List(api.ListOptions{ResourceVersion: "1"})
+	lw.Watch(v1.ListOptions{ResourceVersion: "1"})
+	lw.List(v1.ListOptions{ResourceVersion: "1"})
 	if e, a := 2, len(testHandler.actions); e != a {
 		t.Errorf("expect %d requests, got %d", e, a)
 	}

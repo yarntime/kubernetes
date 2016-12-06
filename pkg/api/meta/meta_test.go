@@ -25,15 +25,16 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api/meta/metatypes"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
+	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/types"
 )
 
 func TestAPIObjectMeta(t *testing.T) {
 	j := &api.Pod{
-		TypeMeta: unversioned.TypeMeta{APIVersion: "/a", Kind: "b"},
+		TypeMeta: metav1.TypeMeta{APIVersion: "/a", Kind: "b"},
 		ObjectMeta: api.ObjectMeta{
 			Namespace:       "bar",
 			Name:            "foo",
@@ -147,7 +148,7 @@ func TestGenericTypeMeta(t *testing.T) {
 		Name              string               `json:"name,omitempty"`
 		GenerateName      string               `json:"generateName,omitempty"`
 		UID               string               `json:"uid,omitempty"`
-		CreationTimestamp unversioned.Time     `json:"creationTimestamp,omitempty"`
+		CreationTimestamp metav1.Time          `json:"creationTimestamp,omitempty"`
 		SelfLink          string               `json:"selfLink,omitempty"`
 		ResourceVersion   string               `json:"resourceVersion,omitempty"`
 		APIVersion        string               `json:"apiVersion,omitempty"`
@@ -197,7 +198,7 @@ type InternalTypeMeta struct {
 	Name              string               `json:"name,omitempty"`
 	GenerateName      string               `json:"generateName,omitempty"`
 	UID               string               `json:"uid,omitempty"`
-	CreationTimestamp unversioned.Time     `json:"creationTimestamp,omitempty"`
+	CreationTimestamp metav1.Time          `json:"creationTimestamp,omitempty"`
 	SelfLink          string               `json:"selfLink,omitempty"`
 	ResourceVersion   string               `json:"resourceVersion,omitempty"`
 	APIVersion        string               `json:"apiVersion,omitempty"`
@@ -216,20 +217,20 @@ type MyAPIObject struct {
 	TypeMeta InternalTypeMeta `json:",inline"`
 }
 
-func (obj *MyAPIObject) GetListMeta() unversioned.List { return &obj.TypeMeta }
+func (obj *MyAPIObject) GetListMeta() metav1.List { return &obj.TypeMeta }
 
-func (obj *MyAPIObject) GetObjectKind() unversioned.ObjectKind { return obj }
-func (obj *MyAPIObject) SetGroupVersionKind(gvk unversioned.GroupVersionKind) {
+func (obj *MyAPIObject) GetObjectKind() schema.ObjectKind { return obj }
+func (obj *MyAPIObject) SetGroupVersionKind(gvk schema.GroupVersionKind) {
 	obj.TypeMeta.APIVersion, obj.TypeMeta.Kind = gvk.ToAPIVersionAndKind()
 }
-func (obj *MyAPIObject) GroupVersionKind() unversioned.GroupVersionKind {
-	return unversioned.FromAPIVersionAndKind(obj.TypeMeta.APIVersion, obj.TypeMeta.Kind)
+func (obj *MyAPIObject) GroupVersionKind() schema.GroupVersionKind {
+	return schema.FromAPIVersionAndKind(obj.TypeMeta.APIVersion, obj.TypeMeta.Kind)
 }
 
 type MyIncorrectlyMarkedAsAPIObject struct{}
 
-func (obj *MyIncorrectlyMarkedAsAPIObject) GetObjectKind() unversioned.ObjectKind {
-	return unversioned.EmptyObjectKind
+func (obj *MyIncorrectlyMarkedAsAPIObject) GetObjectKind() schema.ObjectKind {
+	return schema.EmptyObjectKind
 }
 
 func TestResourceVersionerOfAPI(t *testing.T) {
@@ -332,7 +333,7 @@ func TestTypeMetaSelfLinker(t *testing.T) {
 }
 
 type MyAPIObject2 struct {
-	unversioned.TypeMeta
+	metav1.TypeMeta
 	v1.ObjectMeta
 }
 
@@ -395,7 +396,7 @@ func TestAccessOwnerReferences(t *testing.T) {
 // BenchmarkAccessorSetFastPath shows the interface fast path
 func BenchmarkAccessorSetFastPath(b *testing.B) {
 	obj := &api.Pod{
-		TypeMeta: unversioned.TypeMeta{APIVersion: "/a", Kind: "b"},
+		TypeMeta: metav1.TypeMeta{APIVersion: "/a", Kind: "b"},
 		ObjectMeta: api.ObjectMeta{
 			Namespace:       "bar",
 			Name:            "foo",
