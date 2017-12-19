@@ -19,13 +19,12 @@ package initialresources
 import (
 	"flag"
 	"fmt"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"time"
-
-	"k8s.io/kubernetes/pkg/api"
 )
 
 var (
-	influxdbHost = flag.String("ir-influxdb-host", "localhost:8080/api/v1/proxy/namespaces/kube-system/services/monitoring-influxdb:api", "Address of InfluxDB which contains metrics required by InitialResources")
+	influxdbHost = flag.String("ir-influxdb-host", "localhost:8080/api/v1/namespaces/kube-system/services/monitoring-influxdb:api/proxy", "Address of InfluxDB which contains metrics required by InitialResources")
 	user         = flag.String("ir-user", "root", "User used for connecting to InfluxDB")
 	// TODO: figure out how to better pass password here
 	password       = flag.String("ir-password", "root", "Password used for connecting to InfluxDB")

@@ -24,14 +24,14 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/v1"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
-	"k8s.io/kubernetes/pkg/client/record"
-	"k8s.io/kubernetes/pkg/conversion"
+	"k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/securitycontext"
-	"k8s.io/kubernetes/pkg/types"
 )
 
 const (
@@ -60,8 +60,8 @@ func (s sortedPods) Less(i, j int) bool {
 
 func CreateValidPod(name, namespace string) *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			UID:       types.UID(name), // for the purpose of testing, this is unique enough
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       types.UID(name + namespace), // for the purpose of testing, this is unique enough
 			Name:      name,
 			Namespace: namespace,
 		},
@@ -70,10 +70,11 @@ func CreateValidPod(name, namespace string) *v1.Pod {
 			DNSPolicy:     v1.DNSClusterFirst,
 			Containers: []v1.Container{
 				{
-					Name:            "ctr",
-					Image:           "image",
-					ImagePullPolicy: "IfNotPresent",
-					SecurityContext: securitycontext.ValidSecurityContextWithContainerDefaults(),
+					Name:                     "ctr",
+					Image:                    "image",
+					ImagePullPolicy:          "IfNotPresent",
+					SecurityContext:          securitycontext.ValidSecurityContextWithContainerDefaults(),
+					TerminationMessagePolicy: v1.TerminationMessageReadFile,
 				},
 			},
 		},
@@ -86,7 +87,7 @@ func CreatePodUpdate(op kubetypes.PodOperation, source string, pods ...*v1.Pod) 
 
 func createPodConfigTester(mode PodConfigNotificationMode) (chan<- interface{}, <-chan kubetypes.PodUpdate, *PodConfig) {
 	eventBroadcaster := record.NewBroadcaster()
-	config := NewPodConfig(mode, eventBroadcaster.NewRecorder(v1.EventSource{Component: "kubelet"}))
+	config := NewPodConfig(mode, eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "kubelet"}))
 	channel := config.Channel(TestSource)
 	ch := config.Updates()
 	return channel, ch, config
@@ -101,7 +102,7 @@ func expectPodUpdate(t *testing.T, ch <-chan kubetypes.PodUpdate, expected ...ku
 		// except for "Pods", which are compared separately below.
 		expectedCopy, updateCopy := expected[i], update
 		expectedCopy.Pods, updateCopy.Pods = nil, nil
-		if !api.Semantic.DeepEqual(expectedCopy, updateCopy) {
+		if !apiequality.Semantic.DeepEqual(expectedCopy, updateCopy) {
 			t.Fatalf("Expected %#v, Got %#v", expectedCopy, updateCopy)
 		}
 
@@ -145,8 +146,10 @@ func TestNewPodAddedInvalidNamespace(t *testing.T) {
 	// see an update
 	podUpdate := CreatePodUpdate(kubetypes.ADD, TestSource, CreateValidPod("foo", ""))
 	channel <- podUpdate
+	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.ADD, TestSource, CreateValidPod("foo", "")))
+
 	config.Sync()
-	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.SET, kubetypes.AllSource))
+	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.SET, kubetypes.AllSource, CreateValidPod("foo", "")))
 }
 
 func TestNewPodAddedDefaultNamespace(t *testing.T) {
@@ -187,7 +190,7 @@ func TestInvalidPodFiltered(t *testing.T) {
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.ADD, TestSource, CreateValidPod("foo", "new")))
 
 	// add an invalid update
-	podUpdate = CreatePodUpdate(kubetypes.UPDATE, TestSource, &v1.Pod{ObjectMeta: v1.ObjectMeta{Name: "foo"}})
+	podUpdate = CreatePodUpdate(kubetypes.UPDATE, TestSource, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}})
 	channel <- podUpdate
 	expectNoPodUpdate(t, ch)
 }
@@ -205,7 +208,7 @@ func TestNewPodAddedSnapshotAndUpdates(t *testing.T) {
 
 	// container updates are separated as UPDATE
 	pod := *podUpdate.Pods[0]
-	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent}}
+	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent, TerminationMessagePolicy: v1.TerminationMessageReadFile}}
 	channel <- CreatePodUpdate(kubetypes.ADD, TestSource, &pod)
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.UPDATE, TestSource, &pod))
 }
@@ -223,7 +226,7 @@ func TestNewPodAddedSnapshot(t *testing.T) {
 
 	// container updates are separated as UPDATE
 	pod := *podUpdate.Pods[0]
-	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent}}
+	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent, TerminationMessagePolicy: v1.TerminationMessageReadFile}}
 	channel <- CreatePodUpdate(kubetypes.ADD, TestSource, &pod)
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.SET, TestSource, &pod))
 }
@@ -241,12 +244,12 @@ func TestNewPodAddedUpdatedRemoved(t *testing.T) {
 
 	// an kubetypes.ADD should be converted to kubetypes.UPDATE
 	pod := CreateValidPod("foo", "new")
-	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent}}
+	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent, TerminationMessagePolicy: v1.TerminationMessageReadFile}}
 	podUpdate = CreatePodUpdate(kubetypes.ADD, TestSource, pod)
 	channel <- podUpdate
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.UPDATE, TestSource, pod))
 
-	podUpdate = CreatePodUpdate(kubetypes.REMOVE, TestSource, &v1.Pod{ObjectMeta: v1.ObjectMeta{Name: "foo", Namespace: "new"}})
+	podUpdate = CreatePodUpdate(kubetypes.REMOVE, TestSource, CreateValidPod("foo", "new"))
 	channel <- podUpdate
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.REMOVE, TestSource, pod))
 }
@@ -283,7 +286,7 @@ func TestNewPodAddedUpdatedSet(t *testing.T) {
 
 	// should be converted to an kubetypes.ADD, kubetypes.REMOVE, and kubetypes.UPDATE
 	pod := CreateValidPod("foo2", "new")
-	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent}}
+	pod.Spec.Containers = []v1.Container{{Name: "bar", Image: "test", ImagePullPolicy: v1.PullIfNotPresent, TerminationMessagePolicy: v1.TerminationMessageReadFile}}
 	podUpdate = CreatePodUpdate(kubetypes.SET, TestSource, pod, CreateValidPod("foo3", "new"), CreateValidPod("foo4", "new"))
 	channel <- podUpdate
 	expectPodUpdate(t, ch,
@@ -369,16 +372,13 @@ func TestPodUpdateAnnotations(t *testing.T) {
 	pod.Annotations = make(map[string]string, 0)
 	pod.Annotations["kubernetes.io/blah"] = "blah"
 
-	clone, err := conversion.NewCloner().DeepCopy(pod)
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
+	clone := pod.DeepCopy()
 
-	podUpdate := CreatePodUpdate(kubetypes.SET, TestSource, CreateValidPod("foo1", "new"), clone.(*v1.Pod), CreateValidPod("foo3", "new"))
+	podUpdate := CreatePodUpdate(kubetypes.SET, TestSource, CreateValidPod("foo1", "new"), clone, CreateValidPod("foo3", "new"))
 	channel <- podUpdate
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.ADD, TestSource, CreateValidPod("foo1", "new"), pod, CreateValidPod("foo3", "new")))
 
-	pod.Annotations["kubenetes.io/blah"] = "superblah"
+	pod.Annotations["kubernetes.io/blah"] = "superblah"
 	podUpdate = CreatePodUpdate(kubetypes.SET, TestSource, CreateValidPod("foo1", "new"), pod, CreateValidPod("foo3", "new"))
 	channel <- podUpdate
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.UPDATE, TestSource, pod))
@@ -401,12 +401,9 @@ func TestPodUpdateLabels(t *testing.T) {
 	pod.Labels = make(map[string]string, 0)
 	pod.Labels["key"] = "value"
 
-	clone, err := conversion.NewCloner().DeepCopy(pod)
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
+	clone := pod.DeepCopy()
 
-	podUpdate := CreatePodUpdate(kubetypes.SET, TestSource, clone.(*v1.Pod))
+	podUpdate := CreatePodUpdate(kubetypes.SET, TestSource, clone)
 	channel <- podUpdate
 	expectPodUpdate(t, ch, CreatePodUpdate(kubetypes.ADD, TestSource, pod))
 

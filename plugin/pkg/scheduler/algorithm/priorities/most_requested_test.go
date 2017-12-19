@@ -20,8 +20,9 @@ import (
 	"reflect"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 )
@@ -44,16 +45,16 @@ func TestMostRequested(t *testing.T) {
 			{
 				Resources: v1.ResourceRequirements{
 					Requests: v1.ResourceList{
-						"cpu":    resource.MustParse("1000m"),
-						"memory": resource.MustParse("0"),
+						v1.ResourceCPU:    resource.MustParse("1000m"),
+						v1.ResourceMemory: resource.MustParse("0"),
 					},
 				},
 			},
 			{
 				Resources: v1.ResourceRequirements{
 					Requests: v1.ResourceList{
-						"cpu":    resource.MustParse("2000m"),
-						"memory": resource.MustParse("0"),
+						v1.ResourceCPU:    resource.MustParse("2000m"),
+						v1.ResourceMemory: resource.MustParse("0"),
 					},
 				},
 			},
@@ -67,16 +68,37 @@ func TestMostRequested(t *testing.T) {
 			{
 				Resources: v1.ResourceRequirements{
 					Requests: v1.ResourceList{
-						"cpu":    resource.MustParse("1000m"),
-						"memory": resource.MustParse("2000"),
+						v1.ResourceCPU:    resource.MustParse("1000m"),
+						v1.ResourceMemory: resource.MustParse("2000"),
 					},
 				},
 			},
 			{
 				Resources: v1.ResourceRequirements{
 					Requests: v1.ResourceList{
-						"cpu":    resource.MustParse("2000m"),
-						"memory": resource.MustParse("3000"),
+						v1.ResourceCPU:    resource.MustParse("2000m"),
+						v1.ResourceMemory: resource.MustParse("3000"),
+					},
+				},
+			},
+		},
+	}
+	bigCpuAndMemory := v1.PodSpec{
+		NodeName: "machine1",
+		Containers: []v1.Container{
+			{
+				Resources: v1.ResourceRequirements{
+					Requests: v1.ResourceList{
+						v1.ResourceCPU:    resource.MustParse("2000m"),
+						v1.ResourceMemory: resource.MustParse("4000"),
+					},
+				},
+			},
+			{
+				Resources: v1.ResourceRequirements{
+					Requests: v1.ResourceList{
+						v1.ResourceCPU:    resource.MustParse("3000m"),
+						v1.ResourceMemory: resource.MustParse("5000"),
 					},
 				},
 			},
@@ -140,10 +162,10 @@ func TestMostRequested(t *testing.T) {
 			expectedList: []schedulerapi.HostPriority{{Host: "machine1", Score: 3}, {Host: "machine2", Score: 4}},
 			test:         "no resources requested, pods scheduled with resources",
 			pods: []*v1.Pod{
-				{Spec: cpuOnly, ObjectMeta: v1.ObjectMeta{Labels: labels2}},
-				{Spec: cpuOnly, ObjectMeta: v1.ObjectMeta{Labels: labels1}},
-				{Spec: cpuOnly2, ObjectMeta: v1.ObjectMeta{Labels: labels1}},
-				{Spec: cpuAndMemory, ObjectMeta: v1.ObjectMeta{Labels: labels1}},
+				{Spec: cpuOnly, ObjectMeta: metav1.ObjectMeta{Labels: labels2}},
+				{Spec: cpuOnly, ObjectMeta: metav1.ObjectMeta{Labels: labels1}},
+				{Spec: cpuOnly2, ObjectMeta: metav1.ObjectMeta{Labels: labels1}},
+				{Spec: cpuAndMemory, ObjectMeta: metav1.ObjectMeta{Labels: labels1}},
 			},
 		},
 		{
@@ -167,11 +189,28 @@ func TestMostRequested(t *testing.T) {
 				{Spec: cpuAndMemory},
 			},
 		},
+		{
+			/*
+				Node1 scores on 0-10 scale
+				CPU Score: 5000 > 4000 return 0
+				Memory Score: (9000 * 10) / 10000 = 9
+				Node1 Score: (0 + 9) / 2 = 4
+
+				Node2 scores on 0-10 scale
+				CPU Score: (5000 * 10) / 10000 = 5
+				Memory Score: 9000 > 8000 return 0
+				Node2 Score: (5 + 0) / 2 = 2
+			*/
+			pod:          &v1.Pod{Spec: bigCpuAndMemory},
+			nodes:        []*v1.Node{makeNode("machine1", 4000, 10000), makeNode("machine2", 10000, 8000)},
+			expectedList: []schedulerapi.HostPriority{{Host: "machine1", Score: 4}, {Host: "machine2", Score: 2}},
+			test:         "resources requested with more than the node, pods scheduled with resources",
+		},
 	}
 
 	for _, test := range tests {
 		nodeNameToInfo := schedulercache.CreateNodeNameToInfoMap(test.pods, test.nodes)
-		list, err := priorityFunction(MostRequestedPriorityMap, nil)(test.pod, nodeNameToInfo, test.nodes)
+		list, err := priorityFunction(MostRequestedPriorityMap, nil, nil)(test.pod, nodeNameToInfo, test.nodes)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}

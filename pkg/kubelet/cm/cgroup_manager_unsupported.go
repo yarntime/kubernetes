@@ -54,6 +54,10 @@ func (m *unsupportedCgroupManager) Create(_ *CgroupConfig) error {
 	return fmt.Errorf("Cgroup Manager is not supported in this build")
 }
 
+func (m *unsupportedCgroupManager) GetResourceStats(name CgroupName) (*ResourceStats, error) {
+	return nil, fmt.Errorf("Cgroup Manager is not supported in this build")
+}
+
 func (m *unsupportedCgroupManager) Pids(_ CgroupName) []int {
 	return nil
 }
@@ -72,4 +76,12 @@ func ConvertCgroupFsNameToSystemd(cgroupfsName string) (string, error) {
 
 func ConvertCgroupNameToSystemd(cgroupName CgroupName, outputToCgroupFs bool) string {
 	return ""
+}
+
+func RevertFromSystemdToCgroupStyleName(name string) string {
+	return ""
+}
+
+func IsSystemdStyleName(name string) bool {
+	return false
 }

@@ -18,7 +18,7 @@
 # This script performs etcd upgrade based on the following environmental
 # variables:
 # TARGET_STORAGE - API of etcd to be used (supported: 'etcd2', 'etcd3')
-# TARGET_VERSION - etcd release to be used (supported: '2.2.1', '2.3.7', '3.0.14')
+# TARGET_VERSION - etcd release to be used (supported: '2.2.1', '2.3.7', '3.0.17')
 # DATA_DIRECTORY - directory with etcd data
 #
 # The current etcd version and storage format is detected based on the
@@ -27,8 +27,8 @@
 #
 # The update workflow support the following upgrade steps:
 # - 2.2.1/etcd2 -> 2.3.7/etcd2
-# - 2.3.7/etcd2 -> 3.0.14/etcd2
-# - 3.0.14/etcd2 -> 3.0.14/etcd3
+# - 2.3.7/etcd2 -> 3.0.17/etcd2
+# - 3.0.17/etcd2 -> 3.0.17/etcd3
 #
 # NOTE: The releases supported in this script has to match release binaries
 # present in the etcd image (to make this script work correctly).
@@ -40,17 +40,19 @@ set -o errexit
 set -o nounset
 
 if [ -z "${TARGET_STORAGE:-}" ]; then
-  echo "TARGET_STORAGE variable unset - skipping migration"
-  exit 0
+  echo "TARGET_STORAGE variable unset - unexpected failure"
+  exit 1
 fi
 if [ -z "${TARGET_VERSION:-}" ]; then
-  echo "TARGET_VERSION variable unset - skipping migration"
-  exit 0
+  echo "TARGET_VERSION variable unset - unexpected failure"
+  exit 1
 fi
 if [ -z "${DATA_DIRECTORY:-}" ]; then
-  echo "DATA_DIRECTORY variable unset - skipping migration"
-  exit 0
+  echo "DATA_DIRECTORY variable unset - unexpected failure"
+  exit 1
 fi
+
+echo "$(date +'%Y-%m-%d %H:%M:%S') Detecting if migration is needed"
 
 if [ "${TARGET_STORAGE}" != "etcd2" -a "${TARGET_STORAGE}" != "etcd3" ]; then
   echo "Not supported version of storage: ${TARGET_STORAGE}"
@@ -66,7 +68,7 @@ fi
 # NOTE: SUPPORTED_VERSION has to match release binaries present in the
 # etcd image (to make this script work correctly).
 # We cannot use array since sh doesn't support it.
-SUPPORTED_VERSIONS_STRING="2.2.1 2.3.7 3.0.14"
+SUPPORTED_VERSIONS_STRING="2.2.1 2.3.7 3.0.17"
 SUPPORTED_VERSIONS=$(echo "${SUPPORTED_VERSIONS_STRING}" | tr " " "\n")
 
 VERSION_FILE="version.txt"
@@ -80,6 +82,7 @@ if [ -e "${DATA_DIRECTORY}/${VERSION_FILE}" ]; then
   CURRENT_VERSION="$(echo $VERSION_CONTENTS | cut -d '/' -f 1)"
   CURRENT_STORAGE="$(echo $VERSION_CONTENTS | cut -d '/' -f 2)"
 fi
+ETCD_DATA_PREFIX="${ETCD_DATA_PREFIX:-/registry}"
 
 # If there is no data in DATA_DIRECTORY, this means that we are
 # starting etcd from scratch. In that case, we don't need to do
@@ -151,7 +154,7 @@ ROLLBACK="${ROLLBACK:-/usr/local/bin/rollback}"
 # If we are upgrading from 2.2.1 and this is the first try for upgrade,
 # do the backup to allow restoring from it in case of failed upgrade.
 BACKUP_DIR="${DATA_DIRECTORY}/migration-backup"
-if [ "${CURRENT_VERSION}" = "2.2.1" -a ! -d "${BACKUP_DIR}" ]; then
+if [ "${CURRENT_VERSION}" = "2.2.1" -a "${CURRENT_VERSION}" != "${TARGET_VERSION}" -a ! -d "${BACKUP_DIR}" ]; then
   echo "Backup etcd before starting migration"
   mkdir ${BACKUP_DIR}
   ETCDCTL_CMD="/usr/local/bin/etcdctl-2.2.1"
@@ -186,7 +189,7 @@ for step in ${SUPPORTED_VERSIONS}; do
     CURRENT_VERSION=${step}
     echo "${CURRENT_VERSION}/${CURRENT_STORAGE}" > "${DATA_DIRECTORY}/${VERSION_FILE}"
   fi
-  if [ "$(echo ${CURRENT_VERSION} | cut -c1-2)" = "3." -a "${CURRENT_STORAGE}" = "etcd2" -a "${TARGET_STORAGE}" = "etcd3" ]; then
+  if [ "$(echo ${CURRENT_VERSION} | cut -c1-2)" = "3." -a "${CURRENT_VERSION}" = "${step}" -a "${CURRENT_STORAGE}" = "etcd2" -a "${TARGET_STORAGE}" = "etcd3" ]; then
     # If it is the first 3.x release in the list and we are migrating
     # also from 'etcd2' to 'etcd3', do the migration now.
     echo "Performing etcd2 -> etcd3 migration"
@@ -205,12 +208,31 @@ for step in ${SUPPORTED_VERSIONS}; do
     # Create a lease and attach all keys to it.
     ${ATTACHLEASE} \
       --etcd-address http://127.0.0.1:${ETCD_PORT} \
-      --ttl-keys-prefix "${TTL_KEYS_DIRECTORY:-/registry/events}" \
+      --ttl-keys-prefix "${TTL_KEYS_DIRECTORY:-${ETCD_DATA_PREFIX}/events}" \
       --lease-duration 1h
     # Kill etcd and wait until this is down.
     stop_etcd
     CURRENT_STORAGE="etcd3"
     echo "${CURRENT_VERSION}/${CURRENT_STORAGE}" > "${DATA_DIRECTORY}/${VERSION_FILE}"
+  fi
+  if [ "$(echo ${CURRENT_VERSION} | cut -c1-4)" = "3.1." -a "${CURRENT_VERSION}" = "${step}" -a "${CURRENT_STORAGE}" = "etcd3" ]; then
+    # If we are upgrading to 3.1.* release, if the cluster was migrated
+    # from v2 version, the v2 data may still be around. So now is the
+    # time to actually remove them.
+    echo "Remove stale v2 data"
+    START_VERSION="${step}"
+    START_STORAGE="etcd3"
+    ETCDCTL_CMD="${ETCDCTL:-/usr/local/bin/etcdctl-${START_VERSION}}"
+    if ! start_etcd; then
+      echo "Starting etcd ${step} in v3 mode failed"
+      exit 1
+    fi
+    ${ETCDCTL_CMD} rm --recursive "${ETCD_DATA_PREFIX}"
+    # Kill etcd and wait until this is down.
+    stop_etcd
+    echo "Successfully remove v2 data"
+    # Also remove backup from v2->v3 migration.
+    rm -rf "${BACKUP_DIR}"
   fi
   if [ "${CURRENT_VERSION}" = "${TARGET_VERSION}" -a "${CURRENT_STORAGE}" = "${TARGET_STORAGE}" ]; then
     break
@@ -219,10 +241,10 @@ done
 
 # Do the rollback of needed.
 # NOTE: Rollback is only supported from "3.0.x" version in 'etcd3' mode to
-# "2.3.7" version in 'etcd2' mode.
+# "2.2.1" version in 'etcd2' mode.
 if [ "${CURRENT_STORAGE}" = "etcd3" -a "${TARGET_STORAGE}" = "etcd2" ]; then
-  if [ "$(echo ${CURRENT_VERSION} | cut -c1-4)" != "3.0." -o "${TARGET_VERSION}" != "2.3.7" ]; then
-    echo "etcd3 -> etcd2 downgrade is supported only between 3.0.x and 2.3.7"
+  if [ "$(echo ${CURRENT_VERSION} | cut -c1-4)" != "3.0." -o "${TARGET_VERSION}" != "2.2.1" ]; then
+    echo "etcd3 -> etcd2 downgrade is supported only between 3.0.x and 2.2.1"
     return 0
   fi
   echo "Backup and remove all existing v2 data"
@@ -237,6 +259,8 @@ if [ "${CURRENT_STORAGE}" = "etcd3" -a "${TARGET_STORAGE}" = "etcd2" ]; then
     exit 1
   fi
   CURRENT_STORAGE="etcd2"
-  CURRENT_VERSION="2.3.7"
+  CURRENT_VERSION="2.2.1"
   echo "${CURRENT_VERSION}/${CURRENT_STORAGE}" > "${DATA_DIRECTORY}/${VERSION_FILE}"
 fi
+
+echo "$(date +'%Y-%m-%d %H:%M:%S') Migration finished"

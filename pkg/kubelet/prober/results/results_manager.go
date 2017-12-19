@@ -19,9 +19,9 @@ package results
 import (
 	"sync"
 
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/types"
 )
 
 // Manager provides a probe results cache and channel of updates.
@@ -77,7 +77,7 @@ type manager struct {
 
 var _ Manager = &manager{}
 
-// NewManager creates ane returns an empty results manager.
+// NewManager creates and returns an empty results manager.
 func NewManager() Manager {
 	return &manager{
 		cache:   make(map[kubecontainer.ContainerID]Result),

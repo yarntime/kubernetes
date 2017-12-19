@@ -18,14 +18,19 @@ package volume
 
 import (
 	"fmt"
+	"hash/fnv"
+	"reflect"
 	"strings"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/watch"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/watch"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/util/slice"
 )
 
 type testcase struct {
@@ -56,8 +61,8 @@ func newEvent(eventtype, message string) watch.Event {
 	return watch.Event{
 		Type: watch.Added,
 		Object: &v1.Event{
-			ObjectMeta: v1.ObjectMeta{
-				Namespace: v1.NamespaceDefault,
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: metav1.NamespaceDefault,
 			},
 			Reason:  "MockEvent",
 			Message: message,
@@ -68,8 +73,8 @@ func newEvent(eventtype, message string) watch.Event {
 
 func newPod(name string, phase v1.PodPhase, message string) *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			Namespace: v1.NamespaceDefault,
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
 			Name:      name,
 		},
 		Status: v1.PodStatus{
@@ -89,8 +94,8 @@ func TestRecyclerPod(t *testing.T) {
 				// Pod gets Running and Succeeded
 				newPodEvent(watch.Added, "podRecyclerSuccess", v1.PodPending, ""),
 				newEvent(v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerSuccess to 127.0.0.1"),
-				newEvent(v1.EventTypeNormal, "pulling image \"gcr.io/google_containers/busybox\""),
-				newEvent(v1.EventTypeNormal, "Successfully pulled image \"gcr.io/google_containers/busybox\""),
+				newEvent(v1.EventTypeNormal, "pulling image \"k8s.gcr.io/busybox\""),
+				newEvent(v1.EventTypeNormal, "Successfully pulled image \"k8s.gcr.io/busybox\""),
 				newEvent(v1.EventTypeNormal, "Created container with docker id 83d929aeac82"),
 				newEvent(v1.EventTypeNormal, "Started container with docker id 83d929aeac82"),
 				newPodEvent(watch.Modified, "podRecyclerSuccess", v1.PodRunning, ""),
@@ -98,8 +103,8 @@ func TestRecyclerPod(t *testing.T) {
 			},
 			expectedEvents: []mockEvent{
 				{v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerSuccess to 127.0.0.1"},
-				{v1.EventTypeNormal, "pulling image \"gcr.io/google_containers/busybox\""},
-				{v1.EventTypeNormal, "Successfully pulled image \"gcr.io/google_containers/busybox\""},
+				{v1.EventTypeNormal, "pulling image \"k8s.gcr.io/busybox\""},
+				{v1.EventTypeNormal, "Successfully pulled image \"k8s.gcr.io/busybox\""},
 				{v1.EventTypeNormal, "Created container with docker id 83d929aeac82"},
 				{v1.EventTypeNormal, "Started container with docker id 83d929aeac82"},
 			},
@@ -114,16 +119,16 @@ func TestRecyclerPod(t *testing.T) {
 				newPodEvent(watch.Added, "podRecyclerFailure", v1.PodPending, ""),
 				newEvent(v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerFailure to 127.0.0.1"),
 				newEvent(v1.EventTypeWarning, "Unable to mount volumes for pod \"recycler-for-podRecyclerFailure_default(3c9809e5-347c-11e6-a79b-3c970e965218)\": timeout expired waiting for volumes to attach/mount"),
-				newEvent(v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"recycler-for-podRecyclerFailure\"/\"default\". list of unattached/unmounted"),
+				newEvent(v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"default\"/\"recycler-for-podRecyclerFailure\". list of unattached/unmounted"),
 				newPodEvent(watch.Modified, "podRecyclerFailure", v1.PodRunning, ""),
 				newPodEvent(watch.Modified, "podRecyclerFailure", v1.PodFailed, "Pod was active on the node longer than specified deadline"),
 			},
 			expectedEvents: []mockEvent{
 				{v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerFailure to 127.0.0.1"},
 				{v1.EventTypeWarning, "Unable to mount volumes for pod \"recycler-for-podRecyclerFailure_default(3c9809e5-347c-11e6-a79b-3c970e965218)\": timeout expired waiting for volumes to attach/mount"},
-				{v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"recycler-for-podRecyclerFailure\"/\"default\". list of unattached/unmounted"},
+				{v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"default\"/\"recycler-for-podRecyclerFailure\". list of unattached/unmounted"},
 			},
-			expectedError: "Pod was active on the node longer than specified deadline",
+			expectedError: "failed to recycle volume: Pod was active on the node longer than specified deadline",
 		},
 		{
 			// Recycler pod gets deleted
@@ -138,32 +143,15 @@ func TestRecyclerPod(t *testing.T) {
 			expectedEvents: []mockEvent{
 				{v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerDeleted to 127.0.0.1"},
 			},
-			expectedError: "recycler pod was deleted",
+			expectedError: "failed to recycle volume: recycler pod was deleted",
 		},
 		{
 			// Another recycler pod is already running
-			name:        "RecyclerRunning",
-			existingPod: newPod("podOldRecycler", v1.PodRunning, ""),
-			createPod:   newPod("podNewRecycler", v1.PodFailed, "mock message"),
-			eventSequence: []watch.Event{
-				// Old pod succeeds
-				newPodEvent(watch.Modified, "podOldRecycler", v1.PodSucceeded, ""),
-			},
-			// No error = old pod succeeded. If the new pod was used, there
-			// would be error with "mock message".
-			expectedError: "",
-		},
-		{
-			// Another recycler pod is already running and fails
-			name:        "FailedRecyclerRunning",
-			existingPod: newPod("podOldRecycler", v1.PodRunning, ""),
-			createPod:   newPod("podNewRecycler", v1.PodFailed, "mock message"),
-			eventSequence: []watch.Event{
-				// Old pod failure
-				newPodEvent(watch.Modified, "podOldRecycler", v1.PodFailed, "Pod was active on the node longer than specified deadline"),
-			},
-			// If the new pod was used, there would be error with "mock message".
-			expectedError: "Pod was active on the node longer than specified deadline",
+			name:          "RecyclerRunning",
+			existingPod:   newPod("podOldRecycler", v1.PodRunning, ""),
+			createPod:     newPod("podNewRecycler", v1.PodFailed, "mock message"),
+			eventSequence: []watch.Event{},
+			expectedError: "old recycler pod found, will retry later",
 		},
 	}
 
@@ -301,5 +289,614 @@ func TestGenerateVolumeName(t *testing.T) {
 	if v3 != expect {
 		t.Errorf("Expected %s, got %s", expect, v3)
 	}
+}
 
+func TestMountOptionFromSpec(t *testing.T) {
+	scenarios := map[string]struct {
+		volume            *Spec
+		expectedMountList []string
+		systemOptions     []string
+	}{
+		"volume-with-mount-options": {
+			volume: createVolumeSpecWithMountOption("good-mount-opts", "ro,nfsvers=3", v1.PersistentVolumeSpec{
+				PersistentVolumeSource: v1.PersistentVolumeSource{
+					NFS: &v1.NFSVolumeSource{Server: "localhost", Path: "/srv", ReadOnly: false},
+				},
+			}),
+			expectedMountList: []string{"ro", "nfsvers=3"},
+			systemOptions:     nil,
+		},
+		"volume-with-bad-mount-options": {
+			volume: createVolumeSpecWithMountOption("good-mount-opts", "", v1.PersistentVolumeSpec{
+				PersistentVolumeSource: v1.PersistentVolumeSource{
+					NFS: &v1.NFSVolumeSource{Server: "localhost", Path: "/srv", ReadOnly: false},
+				},
+			}),
+			expectedMountList: []string{},
+			systemOptions:     nil,
+		},
+		"vol-with-sys-opts": {
+			volume: createVolumeSpecWithMountOption("good-mount-opts", "ro,nfsvers=3", v1.PersistentVolumeSpec{
+				PersistentVolumeSource: v1.PersistentVolumeSource{
+					NFS: &v1.NFSVolumeSource{Server: "localhost", Path: "/srv", ReadOnly: false},
+				},
+			}),
+			expectedMountList: []string{"ro", "nfsvers=3", "fsid=100", "hard"},
+			systemOptions:     []string{"fsid=100", "hard"},
+		},
+		"vol-with-sys-opts-with-dup": {
+			volume: createVolumeSpecWithMountOption("good-mount-opts", "ro,nfsvers=3", v1.PersistentVolumeSpec{
+				PersistentVolumeSource: v1.PersistentVolumeSource{
+					NFS: &v1.NFSVolumeSource{Server: "localhost", Path: "/srv", ReadOnly: false},
+				},
+			}),
+			expectedMountList: []string{"ro", "nfsvers=3", "fsid=100"},
+			systemOptions:     []string{"fsid=100", "ro"},
+		},
+	}
+
+	for name, scenario := range scenarios {
+		mountOptions := MountOptionFromSpec(scenario.volume, scenario.systemOptions...)
+		if !reflect.DeepEqual(slice.SortStrings(mountOptions), slice.SortStrings(scenario.expectedMountList)) {
+			t.Errorf("for %s expected mount options : %v got %v", name, scenario.expectedMountList, mountOptions)
+		}
+	}
+}
+
+func createVolumeSpecWithMountOption(name string, mountOptions string, spec v1.PersistentVolumeSpec) *Spec {
+	annotations := map[string]string{
+		v1.MountOptionAnnotation: mountOptions,
+	}
+	objMeta := metav1.ObjectMeta{
+		Name:        name,
+		Annotations: annotations,
+	}
+
+	pv := &v1.PersistentVolume{
+		ObjectMeta: objMeta,
+		Spec:       spec,
+	}
+	return &Spec{PersistentVolume: pv}
+}
+
+func checkFnv32(t *testing.T, s string, expected int) {
+	h := fnv.New32()
+	h.Write([]byte(s))
+	h.Sum32()
+
+	if int(h.Sum32()) != expected {
+		t.Fatalf("hash of %q was %v, expected %v", s, h.Sum32(), expected)
+	}
+}
+
+func TestChooseZoneForVolume(t *testing.T) {
+	checkFnv32(t, "henley", 1180403676)
+	// 1180403676 mod 3 == 0, so the offset from "henley" is 0, which makes it easier to verify this by inspection
+
+	// A few others
+	checkFnv32(t, "henley-", 2652299129)
+	checkFnv32(t, "henley-a", 1459735322)
+	checkFnv32(t, "", 2166136261)
+
+	tests := []struct {
+		Zones      sets.String
+		VolumeName string
+		Expected   string
+	}{
+		// Test for PVC names that don't have a dash
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley",
+			Expected:   "a", // hash("henley") == 0
+		},
+		// Tests for PVC names that end in - number, but don't look like statefulset PVCs
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-0",
+			Expected:   "a", // hash("henley") == 0
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-1",
+			Expected:   "b", // hash("henley") + 1 == 1
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-2",
+			Expected:   "c", // hash("henley") + 2 == 2
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-3",
+			Expected:   "a", // hash("henley") + 3 == 3 === 0 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-4",
+			Expected:   "b", // hash("henley") + 4 == 4 === 1 mod 3
+		},
+		// Tests for PVC names that are edge cases
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-",
+			Expected:   "c", // hash("henley-") = 2652299129 === 2 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-a",
+			Expected:   "c", // hash("henley-a") = 1459735322 === 2 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium--1",
+			Expected:   "c", // hash("") + 1 == 2166136261 + 1 === 2 mod 3
+		},
+		// Tests for PVC names for simple StatefulSet cases
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-1",
+			Expected:   "b", // hash("henley") + 1 == 1
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "loud-henley-1",
+			Expected:   "b", // hash("henley") + 1 == 1
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "quiet-henley-2",
+			Expected:   "c", // hash("henley") + 2 == 2
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-2",
+			Expected:   "c", // hash("henley") + 2 == 2
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-3",
+			Expected:   "a", // hash("henley") + 3 == 3 === 0 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-4",
+			Expected:   "b", // hash("henley") + 4 == 4 === 1 mod 3
+		},
+		// Tests for statefulsets (or claims) with dashes in the names
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-alpha-henley-2",
+			Expected:   "c", // hash("henley") + 2 == 2
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-beta-henley-3",
+			Expected:   "a", // hash("henley") + 3 == 3 === 0 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-gamma-henley-4",
+			Expected:   "b", // hash("henley") + 4 == 4 === 1 mod 3
+		},
+		// Tests for statefulsets name ending in -
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--2",
+			Expected:   "a", // hash("") + 2 == 0 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--3",
+			Expected:   "b", // hash("") + 3 == 1 mod 3
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--4",
+			Expected:   "c", // hash("") + 4 == 2 mod 3
+		},
+	}
+
+	for _, test := range tests {
+		actual := ChooseZoneForVolume(test.Zones, test.VolumeName)
+
+		if actual != test.Expected {
+			t.Errorf("Test %v failed, expected zone %q, actual %q", test, test.Expected, actual)
+		}
+	}
+}
+
+func TestChooseZonesForVolume(t *testing.T) {
+	checkFnv32(t, "henley", 1180403676)
+	// 1180403676 mod 3 == 0, so the offset from "henley" is 0, which makes it easier to verify this by inspection
+
+	// A few others
+	checkFnv32(t, "henley-", 2652299129)
+	checkFnv32(t, "henley-a", 1459735322)
+	checkFnv32(t, "", 2166136261)
+
+	tests := []struct {
+		Zones      sets.String
+		VolumeName string
+		NumZones   uint32
+		Expected   sets.String
+	}{
+		// Test for PVC names that don't have a dash
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley",
+			NumZones:   1,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 */, "b"),
+		},
+		// Tests for PVC names that end in - number, but don't look like statefulset PVCs
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-0",
+			NumZones:   1,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-0",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 */, "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-1",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("henley") + 1 == 1 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-1",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") + 1 + 1(startingIndex) == 2 */, "a"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-2",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("henley") + 2 == 2 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-2",
+			NumZones:   2,
+			Expected:   sets.NewString("b" /* hash("henley") + 2 + 2(startingIndex) == 4 */, "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-3",
+			NumZones:   1,
+			Expected:   sets.NewString("a" /* hash("henley") + 3 == 3 === 0 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-3",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("henley") + 3 + 3(startingIndex) == 6 */, "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-4",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("henley") + 4 == 4 === 1 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-4",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") + 4 + 4(startingIndex) == 8 */, "a"),
+		},
+		// Tests for PVC names that are edge cases
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("henley-") = 2652299129 === 2 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley-") = 2652299129 === 2 mod 3 = 2 */, "a"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-a",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("henley-a") = 1459735322 === 2 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "henley-a",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley-a") = 1459735322 === 2 mod 3 = 2 */, "a"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium--1",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("") + 1 == 2166136261 + 1 === 2 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium--1",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("") + 1 + 1(startingIndex) == 2166136261 + 1 + 1 === 3 mod 3 = 0 */, "b"),
+		},
+		// Tests for PVC names for simple StatefulSet cases
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-1",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("henley") + 1 == 1 */),
+		},
+		// Tests for PVC names for simple StatefulSet cases
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-1",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") + 1 + 1(startingIndex) == 2 */, "a"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "loud-henley-1",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("henley") + 1 == 1 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "loud-henley-1",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") + 1 + 1(startingIndex) == 2 */, "a"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "quiet-henley-2",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("henley") + 2 == 2 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "quiet-henley-2",
+			NumZones:   2,
+			Expected:   sets.NewString("b" /* hash("henley") + 2 + 2(startingIndex) == 4 */, "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-2",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("henley") + 2 == 2 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-2",
+			NumZones:   2,
+			Expected:   sets.NewString("b" /* hash("henley") + 2 + 2(startingIndex) == 4 */, "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-3",
+			NumZones:   1,
+			Expected:   sets.NewString("a" /* hash("henley") + 3 == 3 === 0 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-3",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("henley") + 3 + 3(startingIndex) == 6 === 6 mod 3 = 0 */, "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-4",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("henley") + 4 == 4 === 1 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley-4",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") + 4 + 4(startingIndex) == 8 === 2 mod 3 */, "a"),
+		},
+		// Tests for statefulsets (or claims) with dashes in the names
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-alpha-henley-2",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("henley") + 2 == 2 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-alpha-henley-2",
+			NumZones:   2,
+			Expected:   sets.NewString("b" /* hash("henley") + 2 + 2(startingIndex) == 4 */, "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-beta-henley-3",
+			NumZones:   1,
+			Expected:   sets.NewString("a" /* hash("henley") + 3 == 3 === 0 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-beta-henley-3",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("henley") + 3 + 3(startingIndex) == 6 === 0 mod 3 */, "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-gamma-henley-4",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("henley") + 4 == 4 === 1 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-gamma-henley-4",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") + 4 + 4(startingIndex) == 8 === 2 mod 3 */, "a"),
+		},
+		// Tests for statefulsets name ending in -
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--2",
+			NumZones:   1,
+			Expected:   sets.NewString("a" /* hash("") + 2 == 0 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--2",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("") + 2 + 2(startingIndex) == 2 mod 3 */, "a"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--3",
+			NumZones:   1,
+			Expected:   sets.NewString("b" /* hash("") + 3 == 1 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--3",
+			NumZones:   2,
+			Expected:   sets.NewString("b" /* hash("") + 3 + 3(startingIndex) == 1 mod 3 */, "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--4",
+			NumZones:   1,
+			Expected:   sets.NewString("c" /* hash("") + 4 == 2 mod 3 */),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--4",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("") + 4 + 4(startingIndex) == 0 mod 3 */, "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--4",
+			NumZones:   3,
+			Expected:   sets.NewString("c" /* hash("") + 4 == 2 mod 3 */, "a", "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c"),
+			VolumeName: "medium-henley--4",
+			NumZones:   4,
+			Expected:   sets.NewString("c" /* hash("") + 4 + 9(startingIndex) == 2 mod 3 */, "a", "b", "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-0",
+			NumZones:   2,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 */, "b"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-1",
+			NumZones:   2,
+			Expected:   sets.NewString("c" /* hash("henley") == 0 + 2 */, "d"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-2",
+			NumZones:   2,
+			Expected:   sets.NewString("e" /* hash("henley") == 0 + 2 + 2(startingIndex) */, "f"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-3",
+			NumZones:   2,
+			Expected:   sets.NewString("g" /* hash("henley") == 0 + 2 + 4(startingIndex) */, "h"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-0",
+			NumZones:   3,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 */, "b", "c"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-1",
+			NumZones:   3,
+			Expected:   sets.NewString("d" /* hash("henley") == 0 + 1 + 2(startingIndex) */, "e", "f"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-2",
+			NumZones:   3,
+			Expected:   sets.NewString("g" /* hash("henley") == 0 + 2 + 4(startingIndex) */, "h", "i"),
+		},
+		{
+			Zones:      sets.NewString("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+			VolumeName: "henley-3",
+			NumZones:   3,
+			Expected:   sets.NewString("a" /* hash("henley") == 0 + 3 + 6(startingIndex) */, "b", "c"),
+		},
+	}
+
+	for _, test := range tests {
+		actual := ChooseZonesForVolume(test.Zones, test.VolumeName, test.NumZones)
+
+		if !actual.Equal(test.Expected) {
+			t.Errorf("Test %v failed, expected zone %#v, actual %#v", test, test.Expected, actual)
+		}
+	}
+}
+
+func TestValidateZone(t *testing.T) {
+	functionUnderTest := "ValidateZone"
+
+	// First part: want an error
+	errCases := []string{"", " 	 	 "}
+	for _, errCase := range errCases {
+		if got := ValidateZone(errCase); got == nil {
+			t.Errorf("%v(%v) returned (%v), want (%v)", functionUnderTest, errCase, got, "an error")
+		}
+	}
+
+	// Second part: want no error
+	succCases := []string{" us-east-1a	"}
+	for _, succCase := range succCases {
+		if got := ValidateZone(succCase); got != nil {
+			t.Errorf("%v(%v) returned (%v), want (%v)", functionUnderTest, succCase, got, nil)
+		}
+	}
+}
+
+func TestGetWindowsPath(t *testing.T) {
+	tests := []struct {
+		path         string
+		expectedPath string
+	}{
+		{
+			path:         `/var/lib/kubelet/pods/146f8428-83e7-11e7-8dd4-000d3a31dac4/volumes/kubernetes.io~disk`,
+			expectedPath: `c:\var\lib\kubelet\pods\146f8428-83e7-11e7-8dd4-000d3a31dac4\volumes\kubernetes.io~disk`,
+		},
+		{
+			path:         `\var/lib/kubelet/pods/146f8428-83e7-11e7-8dd4-000d3a31dac4\volumes\kubernetes.io~disk`,
+			expectedPath: `c:\var\lib\kubelet\pods\146f8428-83e7-11e7-8dd4-000d3a31dac4\volumes\kubernetes.io~disk`,
+		},
+		{
+			path:         `/`,
+			expectedPath: `c:\`,
+		},
+		{
+			path:         ``,
+			expectedPath: ``,
+		},
+	}
+
+	for _, test := range tests {
+		result := GetWindowsPath(test.path)
+		if result != test.expectedPath {
+			t.Errorf("GetWindowsPath(%v) returned (%v), want (%v)", test.path, result, test.expectedPath)
+		}
+	}
 }

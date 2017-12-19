@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TAG = 0.3
-PREFIX = gcr.io/google_containers
+TAG = 0.4
+PREFIX = k8s.gcr.io
 
 all: push
 
 container: image
 
 image:
-	docker build -t $(PREFIX)/volume-gluster . # Build new image and automatically tag it as latest
+	docker build --pull -t $(PREFIX)/volume-gluster . # Build new image and automatically tag it as latest
 	docker tag $(PREFIX)/volume-gluster $(PREFIX)/volume-gluster:$(TAG)  # Add the version tag to the latest image
 
 push: image

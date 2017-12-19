@@ -21,10 +21,12 @@ import (
 
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/admission"
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/admission"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/aws"
-	"k8s.io/kubernetes/pkg/types"
 )
 
 type mockVolumes struct {
@@ -62,8 +64,15 @@ func (c *mockVolumes) DiskIsAttached(volumeName aws.KubernetesVolumeID, nodeName
 	return false, fmt.Errorf("not implemented")
 }
 
-func (c *mockVolumes) DisksAreAttached(diskNames []aws.KubernetesVolumeID, nodeName types.NodeName) (map[aws.KubernetesVolumeID]bool, error) {
+func (c *mockVolumes) DisksAreAttached(nodeDisks map[types.NodeName][]aws.KubernetesVolumeID) (map[types.NodeName]map[aws.KubernetesVolumeID]bool, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+func (c *mockVolumes) ResizeDisk(
+	diskName aws.KubernetesVolumeID,
+	oldSize resource.Quantity,
+	newSize resource.Quantity) (resource.Quantity, error) {
+	return oldSize, nil
 }
 
 func mockVolumeFailure(err error) *mockVolumes {
@@ -79,7 +88,7 @@ func TestAdmission(t *testing.T) {
 	pvHandler := NewPersistentVolumeLabel()
 	handler := admission.NewChainHandler(pvHandler)
 	ignoredPV := api.PersistentVolume{
-		ObjectMeta: api.ObjectMeta{Name: "noncloud", Namespace: "myns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "noncloud", Namespace: "myns"},
 		Spec: api.PersistentVolumeSpec{
 			PersistentVolumeSource: api.PersistentVolumeSource{
 				HostPath: &api.HostPathVolumeSource{
@@ -89,7 +98,7 @@ func TestAdmission(t *testing.T) {
 		},
 	}
 	awsPV := api.PersistentVolume{
-		ObjectMeta: api.ObjectMeta{Name: "noncloud", Namespace: "myns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "noncloud", Namespace: "myns"},
 		Spec: api.PersistentVolumeSpec{
 			PersistentVolumeSource: api.PersistentVolumeSource{
 				AWSElasticBlockStore: &api.AWSElasticBlockStoreVolumeSource{

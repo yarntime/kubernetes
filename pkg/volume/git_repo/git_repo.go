@@ -22,12 +22,12 @@ import (
 	"path"
 	"strings"
 
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/exec"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	utilstrings "k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/utils/exec"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -78,6 +78,14 @@ func (plugin *gitRepoPlugin) CanSupport(spec *volume.Spec) bool {
 }
 
 func (plugin *gitRepoPlugin) RequiresRemount() bool {
+	return false
+}
+
+func (plugin *gitRepoPlugin) SupportsMountOption() bool {
+	return false
+}
+
+func (plugin *gitRepoPlugin) SupportsBulkVolumeVerification() bool {
 	return false
 }
 
@@ -254,13 +262,7 @@ func (c *gitRepoVolumeUnmounter) TearDown() error {
 
 // TearDownAt simply deletes everything in the directory.
 func (c *gitRepoVolumeUnmounter) TearDownAt(dir string) error {
-
-	// Wrap EmptyDir, let it do the teardown.
-	wrapped, err := c.plugin.host.NewWrapperUnmounter(c.volName, wrappedVolumeSpec(), c.podUID)
-	if err != nil {
-		return err
-	}
-	return wrapped.TearDownAt(dir)
+	return volume.UnmountViaEmptyDir(dir, c.plugin.host, c.volName, wrappedVolumeSpec(), c.podUID)
 }
 
 func getVolumeSource(spec *volume.Spec) (*v1.GitRepoVolumeSource, bool) {

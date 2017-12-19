@@ -33,21 +33,24 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"k8s.io/kubernetes/pkg/api"
-	apierrors "k8s.io/kubernetes/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/rest/fake"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	"k8s.io/kubernetes/pkg/api/ref"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/apis/batch"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
-	"k8s.io/kubernetes/pkg/apis/policy"
-	"k8s.io/kubernetes/pkg/client/restclient/fake"
-	"k8s.io/kubernetes/pkg/conversion"
 	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 const (
@@ -55,25 +58,26 @@ const (
 	DeleteMethod   = "Delete"
 )
 
-var node *api.Node
-var cordoned_node *api.Node
+var node *corev1.Node
+var cordoned_node *corev1.Node
+
+func boolptr(b bool) *bool { return &b }
 
 func TestMain(m *testing.M) {
 	// Create a node.
-	node = &api.Node{
-		ObjectMeta: api.ObjectMeta{
+	node = &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "node",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 		},
-		Spec: api.NodeSpec{
+		Spec: corev1.NodeSpec{
 			ExternalID: "node",
 		},
-		Status: api.NodeStatus{},
+		Status: corev1.NodeStatus{},
 	}
-	clone, _ := conversion.NewCloner().DeepCopy(node)
 
 	// A copy of the same node, but cordoned.
-	cordoned_node = clone.(*api.Node)
+	cordoned_node = node.DeepCopy()
 	cordoned_node.Spec.Unschedulable = true
 	os.Exit(m.Run())
 }
@@ -81,8 +85,8 @@ func TestMain(m *testing.M) {
 func TestCordon(t *testing.T) {
 	tests := []struct {
 		description string
-		node        *api.Node
-		expected    *api.Node
+		node        *corev1.Node
+		expected    *corev1.Node
 		cmd         func(cmdutil.Factory, io.Writer) *cobra.Command
 		arg         string
 		expectFatal bool
@@ -147,9 +151,10 @@ func TestCordon(t *testing.T) {
 
 	for _, test := range tests {
 		f, tf, codec, ns := cmdtesting.NewAPIFactory()
-		new_node := &api.Node{}
+		new_node := &corev1.Node{}
 		updated := false
 		tf.Client = &fake.RESTClient{
+			GroupVersion:         legacyscheme.Registry.GroupOrDie(api.GroupName).GroupVersion,
 			NegotiatedSerializer: ns,
 			Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 				m := &MyReq{req}
@@ -158,17 +163,25 @@ func TestCordon(t *testing.T) {
 					return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, test.node)}, nil
 				case m.isFor("GET", "/nodes/bar"):
 					return &http.Response{StatusCode: 404, Header: defaultHeader(), Body: stringBody("nope")}, nil
-				case m.isFor("PUT", "/nodes/node"):
+				case m.isFor("PATCH", "/nodes/node"):
 					data, err := ioutil.ReadAll(req.Body)
 					if err != nil {
 						t.Fatalf("%s: unexpected error: %v", test.description, err)
 					}
 					defer req.Body.Close()
-					if err := runtime.DecodeInto(codec, data, new_node); err != nil {
+					oldJSON, err := runtime.Encode(codec, node)
+					if err != nil {
+						t.Fatalf("%s: unexpected error: %v", test.description, err)
+					}
+					appliedPatch, err := strategicpatch.StrategicMergePatch(oldJSON, data, &corev1.Node{})
+					if err != nil {
+						t.Fatalf("%s: unexpected error: %v", test.description, err)
+					}
+					if err := runtime.DecodeInto(codec, appliedPatch, new_node); err != nil {
 						t.Fatalf("%s: unexpected error: %v", test.description, err)
 					}
 					if !reflect.DeepEqual(test.expected.Spec, new_node.Spec) {
-						t.Fatalf("%s: expected:\n%v\nsaw:\n%v\n", test.description, test.expected.Spec, new_node.Spec)
+						t.Fatalf("%s: expected:\n%v\nsaw:\n%v\n", test.description, test.expected.Spec.Unschedulable, new_node.Spec.Unschedulable)
 					}
 					updated = true
 					return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, new_node)}, nil
@@ -222,7 +235,7 @@ func TestDrain(t *testing.T) {
 	labels["my_key"] = "my_value"
 
 	rc := api.ReplicationController{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "rc",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
@@ -234,74 +247,109 @@ func TestDrain(t *testing.T) {
 		},
 	}
 
-	rc_anno := make(map[string]string)
-	rc_anno[api.CreatedByAnnotation] = refJson(t, &rc)
-
-	rc_pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{
+	rc_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "bar",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Labels:            labels,
-			Annotations:       rc_anno,
+			SelfLink:          testapi.Default.SelfLink("pods", "bar"),
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "v1",
+					Kind:               "ReplicationController",
+					Name:               "rc",
+					UID:                "123",
+					BlockOwnerDeletion: boolptr(true),
+					Controller:         boolptr(true),
+				},
+			},
 		},
-		Spec: api.PodSpec{
+		Spec: corev1.PodSpec{
 			NodeName: "node",
 		},
 	}
 
 	ds := extensions.DaemonSet{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "ds",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
-			SelfLink:          "/apis/extensions/v1beta1/namespaces/default/daemonsets/ds",
+			SelfLink:          testapi.Default.SelfLink("daemonsets", "ds"),
 		},
 		Spec: extensions.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 		},
 	}
 
-	ds_anno := make(map[string]string)
-	ds_anno[api.CreatedByAnnotation] = refJson(t, &ds)
-
-	ds_pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{
+	ds_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "bar",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Labels:            labels,
-			Annotations:       ds_anno,
+			SelfLink:          testapi.Default.SelfLink("pods", "bar"),
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "extensions/v1beta1",
+					Kind:               "DaemonSet",
+					Name:               "ds",
+					BlockOwnerDeletion: boolptr(true),
+					Controller:         boolptr(true),
+				},
+			},
 		},
-		Spec: api.PodSpec{
+		Spec: corev1.PodSpec{
+			NodeName: "node",
+		},
+	}
+
+	orphaned_ds_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "bar",
+			Namespace:         "default",
+			CreationTimestamp: metav1.Time{Time: time.Now()},
+			Labels:            labels,
+			SelfLink:          testapi.Default.SelfLink("pods", "bar"),
+		},
+		Spec: corev1.PodSpec{
 			NodeName: "node",
 		},
 	}
 
 	job := batch.Job{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "job",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
-			SelfLink:          "/apis/extensions/v1beta1/namespaces/default/jobs/job",
+			SelfLink:          testapi.Default.SelfLink("jobs", "job"),
 		},
 		Spec: batch.JobSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 		},
 	}
 
-	job_pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{
+	job_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "bar",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Labels:            labels,
-			Annotations:       map[string]string{api.CreatedByAnnotation: refJson(t, &job)},
+			SelfLink:          testapi.Default.SelfLink("pods", "bar"),
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "v1",
+					Kind:               "Job",
+					Name:               "job",
+					BlockOwnerDeletion: boolptr(true),
+					Controller:         boolptr(true),
+				},
+			},
 		},
 	}
 
 	rs := extensions.ReplicaSet{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "rs",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
@@ -313,47 +361,53 @@ func TestDrain(t *testing.T) {
 		},
 	}
 
-	rs_anno := make(map[string]string)
-	rs_anno[api.CreatedByAnnotation] = refJson(t, &rs)
-
-	rs_pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{
+	rs_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "bar",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Labels:            labels,
-			Annotations:       rs_anno,
+			SelfLink:          testapi.Default.SelfLink("pods", "bar"),
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "v1",
+					Kind:               "ReplicaSet",
+					Name:               "rs",
+					BlockOwnerDeletion: boolptr(true),
+					Controller:         boolptr(true),
+				},
+			},
 		},
-		Spec: api.PodSpec{
+		Spec: corev1.PodSpec{
 			NodeName: "node",
 		},
 	}
 
-	naked_pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{
+	naked_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "bar",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Labels:            labels,
 		},
-		Spec: api.PodSpec{
+		Spec: corev1.PodSpec{
 			NodeName: "node",
 		},
 	}
 
-	emptydir_pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{
+	emptydir_pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:              "bar",
 			Namespace:         "default",
 			CreationTimestamp: metav1.Time{Time: time.Now()},
 			Labels:            labels,
 		},
-		Spec: api.PodSpec{
+		Spec: corev1.PodSpec{
 			NodeName: "node",
-			Volumes: []api.Volume{
+			Volumes: []corev1.Volume{
 				{
 					Name:         "scratch",
-					VolumeSource: api.VolumeSource{EmptyDir: &api.EmptyDirVolumeSource{Medium: ""}},
+					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: ""}},
 				},
 			},
 		},
@@ -361,9 +415,9 @@ func TestDrain(t *testing.T) {
 
 	tests := []struct {
 		description  string
-		node         *api.Node
-		expected     *api.Node
-		pods         []api.Pod
+		node         *corev1.Node
+		expected     *corev1.Node
+		pods         []corev1.Pod
 		rcs          []api.ReplicationController
 		replicaSets  []extensions.ReplicaSet
 		args         []string
@@ -374,7 +428,7 @@ func TestDrain(t *testing.T) {
 			description:  "RC-managed pod",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{rc_pod},
+			pods:         []corev1.Pod{rc_pod},
 			rcs:          []api.ReplicationController{rc},
 			args:         []string{"node"},
 			expectFatal:  false,
@@ -384,17 +438,37 @@ func TestDrain(t *testing.T) {
 			description:  "DS-managed pod",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{ds_pod},
+			pods:         []corev1.Pod{ds_pod},
 			rcs:          []api.ReplicationController{rc},
 			args:         []string{"node"},
 			expectFatal:  true,
 			expectDelete: false,
 		},
 		{
+			description:  "orphaned DS-managed pod",
+			node:         node,
+			expected:     cordoned_node,
+			pods:         []corev1.Pod{orphaned_ds_pod},
+			rcs:          []api.ReplicationController{},
+			args:         []string{"node"},
+			expectFatal:  true,
+			expectDelete: false,
+		},
+		{
+			description:  "orphaned DS-managed pod with --force",
+			node:         node,
+			expected:     cordoned_node,
+			pods:         []corev1.Pod{orphaned_ds_pod},
+			rcs:          []api.ReplicationController{},
+			args:         []string{"node", "--force"},
+			expectFatal:  false,
+			expectDelete: true,
+		},
+		{
 			description:  "DS-managed pod with --ignore-daemonsets",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{ds_pod},
+			pods:         []corev1.Pod{ds_pod},
 			rcs:          []api.ReplicationController{rc},
 			args:         []string{"node", "--ignore-daemonsets"},
 			expectFatal:  false,
@@ -404,7 +478,7 @@ func TestDrain(t *testing.T) {
 			description:  "Job-managed pod",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{job_pod},
+			pods:         []corev1.Pod{job_pod},
 			rcs:          []api.ReplicationController{rc},
 			args:         []string{"node"},
 			expectFatal:  false,
@@ -414,7 +488,7 @@ func TestDrain(t *testing.T) {
 			description:  "RS-managed pod",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{rs_pod},
+			pods:         []corev1.Pod{rs_pod},
 			replicaSets:  []extensions.ReplicaSet{rs},
 			args:         []string{"node"},
 			expectFatal:  false,
@@ -424,7 +498,7 @@ func TestDrain(t *testing.T) {
 			description:  "naked pod",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{naked_pod},
+			pods:         []corev1.Pod{naked_pod},
 			rcs:          []api.ReplicationController{},
 			args:         []string{"node"},
 			expectFatal:  true,
@@ -434,7 +508,7 @@ func TestDrain(t *testing.T) {
 			description:  "naked pod with --force",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{naked_pod},
+			pods:         []corev1.Pod{naked_pod},
 			rcs:          []api.ReplicationController{},
 			args:         []string{"node", "--force"},
 			expectFatal:  false,
@@ -444,7 +518,7 @@ func TestDrain(t *testing.T) {
 			description:  "pod with EmptyDir",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{emptydir_pod},
+			pods:         []corev1.Pod{emptydir_pod},
 			args:         []string{"node", "--force"},
 			expectFatal:  true,
 			expectDelete: false,
@@ -453,7 +527,7 @@ func TestDrain(t *testing.T) {
 			description:  "pod with EmptyDir and --delete-local-data",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{emptydir_pod},
+			pods:         []corev1.Pod{emptydir_pod},
 			args:         []string{"node", "--force", "--delete-local-data=true"},
 			expectFatal:  false,
 			expectDelete: true,
@@ -462,7 +536,7 @@ func TestDrain(t *testing.T) {
 			description:  "empty node",
 			node:         node,
 			expected:     cordoned_node,
-			pods:         []api.Pod{},
+			pods:         []corev1.Pod{},
 			rcs:          []api.ReplicationController{rc},
 			args:         []string{"node"},
 			expectFatal:  false,
@@ -480,11 +554,12 @@ func TestDrain(t *testing.T) {
 			currMethod = DeleteMethod
 		}
 		for _, test := range tests {
-			new_node := &api.Node{}
+			new_node := &corev1.Node{}
 			deleted := false
 			evicted := false
 			f, tf, codec, ns := cmdtesting.NewAPIFactory()
 			tf.Client = &fake.RESTClient{
+				GroupVersion:         legacyscheme.Registry.GroupOrDie(api.GroupName).GroupVersion,
 				NegotiatedSerializer: ns,
 				Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 					m := &MyReq{req}
@@ -525,12 +600,14 @@ func TestDrain(t *testing.T) {
 						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, &test.rcs[0])}, nil
 					case m.isFor("GET", "/namespaces/default/daemonsets/ds"):
 						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(testapi.Extensions.Codec(), &ds)}, nil
+					case m.isFor("GET", "/namespaces/default/daemonsets/missing-ds"):
+						return &http.Response{StatusCode: 404, Header: defaultHeader(), Body: objBody(testapi.Extensions.Codec(), &extensions.DaemonSet{})}, nil
 					case m.isFor("GET", "/namespaces/default/jobs/job"):
-						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(testapi.Extensions.Codec(), &job)}, nil
+						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(testapi.Batch.Codec(), &job)}, nil
 					case m.isFor("GET", "/namespaces/default/replicasets/rs"):
 						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(testapi.Extensions.Codec(), &test.replicaSets[0])}, nil
 					case m.isFor("GET", "/namespaces/default/pods/bar"):
-						return &http.Response{StatusCode: 404, Header: defaultHeader(), Body: objBody(codec, &api.Pod{})}, nil
+						return &http.Response{StatusCode: 404, Header: defaultHeader(), Body: objBody(codec, &corev1.Pod{})}, nil
 					case m.isFor("GET", "/pods"):
 						values, err := url.ParseQuery(req.URL.RawQuery)
 						if err != nil {
@@ -541,16 +618,24 @@ func TestDrain(t *testing.T) {
 						if !reflect.DeepEqual(get_params, values) {
 							t.Fatalf("%s: expected:\n%v\nsaw:\n%v\n", test.description, get_params, values)
 						}
-						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, &api.PodList{Items: test.pods})}, nil
+						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, &corev1.PodList{Items: test.pods})}, nil
 					case m.isFor("GET", "/replicationcontrollers"):
 						return &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, &api.ReplicationControllerList{Items: test.rcs})}, nil
-					case m.isFor("PUT", "/nodes/node"):
+					case m.isFor("PATCH", "/nodes/node"):
 						data, err := ioutil.ReadAll(req.Body)
 						if err != nil {
 							t.Fatalf("%s: unexpected error: %v", test.description, err)
 						}
 						defer req.Body.Close()
-						if err := runtime.DecodeInto(codec, data, new_node); err != nil {
+						oldJSON, err := runtime.Encode(codec, node)
+						if err != nil {
+							t.Fatalf("%s: unexpected error: %v", test.description, err)
+						}
+						appliedPatch, err := strategicpatch.StrategicMergePatch(oldJSON, data, &corev1.Node{})
+						if err != nil {
+							t.Fatalf("%s: unexpected error: %v", test.description, err)
+						}
+						if err := runtime.DecodeInto(codec, appliedPatch, new_node); err != nil {
 							t.Fatalf("%s: unexpected error: %v", test.description, err)
 						}
 						if !reflect.DeepEqual(test.expected.Spec, new_node.Spec) {
@@ -562,7 +647,7 @@ func TestDrain(t *testing.T) {
 						return &http.Response{StatusCode: 204, Header: defaultHeader(), Body: objBody(codec, &test.pods[0])}, nil
 					case m.isFor("POST", "/namespaces/default/pods/bar/eviction"):
 						evicted = true
-						return &http.Response{StatusCode: 201, Header: defaultHeader(), Body: policyObjBody(&policy.Eviction{})}, nil
+						return &http.Response{StatusCode: 201, Header: defaultHeader(), Body: policyObjBody(&policyv1beta1.Eviction{})}, nil
 					default:
 						t.Fatalf("%s: unexpected request: %v %#v\n%#v", test.description, req.Method, req.URL, req)
 						return nil, nil
@@ -587,7 +672,6 @@ func TestDrain(t *testing.T) {
 				cmd.SetArgs(test.args)
 				cmd.Execute()
 			}()
-
 			if test.expectFatal {
 				if !saw_fatal {
 					t.Fatalf("%s: unexpected non-error when using %s", test.description, currMethod)
@@ -622,7 +706,7 @@ func TestDeletePods(t *testing.T) {
 		expectPendingPods bool
 		expectError       bool
 		expectedError     *error
-		getPodFn          func(namespace, name string) (*api.Pod, error)
+		getPodFn          func(namespace, name string) (*corev1.Pod, error)
 	}{
 		{
 			description:       "Wait for deleting to complete",
@@ -631,21 +715,20 @@ func TestDeletePods(t *testing.T) {
 			expectPendingPods: false,
 			expectError:       false,
 			expectedError:     nil,
-			getPodFn: func(namespace, name string) (*api.Pod, error) {
+			getPodFn: func(namespace, name string) (*corev1.Pod, error) {
 				oldPodMap, _ := createPods(false)
 				newPodMap, _ := createPods(true)
 				if oldPod, found := oldPodMap[name]; found {
 					if _, ok := ifHasBeenCalled[name]; !ok {
 						ifHasBeenCalled[name] = true
 						return &oldPod, nil
-					} else {
-						if oldPod.ObjectMeta.Generation < 4 {
-							newPod := newPodMap[name]
-							return &newPod, nil
-						} else {
-							return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, name)
-						}
 					}
+					if oldPod.ObjectMeta.Generation < 4 {
+						newPod := newPodMap[name]
+						return &newPod, nil
+					}
+					return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, name)
+
 				}
 				return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, name)
 			},
@@ -657,12 +740,12 @@ func TestDeletePods(t *testing.T) {
 			expectPendingPods: true,
 			expectError:       true,
 			expectedError:     &wait.ErrWaitTimeout,
-			getPodFn: func(namespace, name string) (*api.Pod, error) {
+			getPodFn: func(namespace, name string) (*corev1.Pod, error) {
 				oldPodMap, _ := createPods(false)
 				if oldPod, found := oldPodMap[name]; found {
 					return &oldPod, nil
 				}
-				return nil, errors.New(fmt.Sprintf("%q: not found", name))
+				return nil, fmt.Errorf("%q: not found", name)
 			},
 		},
 		{
@@ -672,7 +755,7 @@ func TestDeletePods(t *testing.T) {
 			expectPendingPods: true,
 			expectError:       true,
 			expectedError:     nil,
-			getPodFn: func(namespace, name string) (*api.Pod, error) {
+			getPodFn: func(namespace, name string) (*corev1.Pod, error) {
 				return nil, errors.New("This is a random error for testing")
 			},
 		},
@@ -680,9 +763,9 @@ func TestDeletePods(t *testing.T) {
 
 	for _, test := range tests {
 		f, _, _, _ := cmdtesting.NewAPIFactory()
-		o := DrainOptions{}
+		o := DrainOptions{Factory: f}
 		o.mapper, _ = f.Object()
-		o.out = os.Stdout
+		o.Out = os.Stdout
 		_, pods := createPods(false)
 		pendingPods, err := o.waitForDelete(pods, test.interval, test.timeout, false, test.getPodFn)
 
@@ -707,9 +790,9 @@ func TestDeletePods(t *testing.T) {
 	}
 }
 
-func createPods(ifCreateNewPods bool) (map[string]api.Pod, []api.Pod) {
-	podMap := make(map[string]api.Pod)
-	podSlice := []api.Pod{}
+func createPods(ifCreateNewPods bool) (map[string]corev1.Pod, []corev1.Pod) {
+	podMap := make(map[string]corev1.Pod)
+	podSlice := []corev1.Pod{}
 	for i := 0; i < 8; i++ {
 		var uid types.UID
 		if ifCreateNewPods {
@@ -717,8 +800,8 @@ func createPods(ifCreateNewPods bool) (map[string]api.Pod, []api.Pod) {
 		} else {
 			uid = types.UID(strconv.Itoa(i) + strconv.Itoa(i))
 		}
-		pod := api.Pod{
-			ObjectMeta: api.ObjectMeta{
+		pod := corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       "pod" + strconv.Itoa(i),
 				Namespace:  "default",
 				UID:        uid,
@@ -745,7 +828,7 @@ func (m *MyReq) isFor(method string, path string) bool {
 }
 
 func refJson(t *testing.T, o runtime.Object) string {
-	ref, err := api.GetReference(o)
+	ref, err := ref.GetReference(legacyscheme.Scheme, o)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

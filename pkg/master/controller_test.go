@@ -21,16 +21,18 @@ import (
 	"reflect"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	core "k8s.io/client-go/testing"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
-	"k8s.io/kubernetes/pkg/client/testing/core"
-	"k8s.io/kubernetes/pkg/util/intstr"
+	"k8s.io/kubernetes/pkg/master/reconcilers"
 )
 
 func TestReconcileEndpoints(t *testing.T) {
-	ns := api.NamespaceDefault
-	om := func(name string) api.ObjectMeta {
-		return api.ObjectMeta{Namespace: ns, Name: name}
+	ns := metav1.NamespaceDefault
+	om := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Namespace: ns, Name: name}
 	}
 	reconcile_tests := []struct {
 		testName          string
@@ -376,7 +378,7 @@ func TestReconcileEndpoints(t *testing.T) {
 		if test.endpoints != nil {
 			fakeClient = fake.NewSimpleClientset(test.endpoints)
 		}
-		reconciler := NewMasterCountEndpointReconciler(test.additionalMasters+1, fakeClient.Core())
+		reconciler := reconcilers.NewMasterCountEndpointReconciler(test.additionalMasters+1, fakeClient.Core())
 		err := reconciler.ReconcileEndpoints(test.serviceName, net.ParseIP(test.ip), test.endpointPorts, true)
 		if err != nil {
 			t.Errorf("case %q: unexpected error: %v", test.testName, err)
@@ -494,7 +496,7 @@ func TestReconcileEndpoints(t *testing.T) {
 		if test.endpoints != nil {
 			fakeClient = fake.NewSimpleClientset(test.endpoints)
 		}
-		reconciler := NewMasterCountEndpointReconciler(test.additionalMasters+1, fakeClient.Core())
+		reconciler := reconcilers.NewMasterCountEndpointReconciler(test.additionalMasters+1, fakeClient.Core())
 		err := reconciler.ReconcileEndpoints(test.serviceName, net.ParseIP(test.ip), test.endpointPorts, false)
 		if err != nil {
 			t.Errorf("case %q: unexpected error: %v", test.testName, err)
@@ -541,9 +543,9 @@ func TestReconcileEndpoints(t *testing.T) {
 }
 
 func TestCreateOrUpdateMasterService(t *testing.T) {
-	ns := api.NamespaceDefault
-	om := func(name string) api.ObjectMeta {
-		return api.ObjectMeta{Namespace: ns, Name: name}
+	ns := metav1.NamespaceDefault
+	om := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Namespace: ns, Name: name}
 	}
 
 	create_tests := []struct {

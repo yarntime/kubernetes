@@ -19,7 +19,9 @@ package priorities
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	priorityutil "k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/priorities/util"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
@@ -30,8 +32,14 @@ func CalculateNodePreferAvoidPodsPriorityMap(pod *v1.Pod, meta interface{}, node
 	if node == nil {
 		return schedulerapi.HostPriority{}, fmt.Errorf("node not found")
 	}
+	var controllerRef *metav1.OwnerReference
+	if priorityMeta, ok := meta.(*priorityMetadata); ok {
+		controllerRef = priorityMeta.controllerRef
+	} else {
+		// We couldn't parse metadata - fallback to the podspec.
+		controllerRef = priorityutil.GetControllerRef(pod)
+	}
 
-	controllerRef := priorityutil.GetControllerRef(pod)
 	if controllerRef != nil {
 		// Ignore pods that are owned by other controller than ReplicationController
 		// or ReplicaSet.
@@ -40,21 +48,19 @@ func CalculateNodePreferAvoidPodsPriorityMap(pod *v1.Pod, meta interface{}, node
 		}
 	}
 	if controllerRef == nil {
-		return schedulerapi.HostPriority{Host: node.Name, Score: 10}, nil
+		return schedulerapi.HostPriority{Host: node.Name, Score: schedulerapi.MaxPriority}, nil
 	}
 
-	avoids, err := v1.GetAvoidPodsFromNodeAnnotations(node.Annotations)
+	avoids, err := v1helper.GetAvoidPodsFromNodeAnnotations(node.Annotations)
 	if err != nil {
 		// If we cannot get annotation, assume it's schedulable there.
-		return schedulerapi.HostPriority{Host: node.Name, Score: 10}, nil
+		return schedulerapi.HostPriority{Host: node.Name, Score: schedulerapi.MaxPriority}, nil
 	}
 	for i := range avoids.PreferAvoidPods {
 		avoid := &avoids.PreferAvoidPods[i]
-		if controllerRef != nil {
-			if avoid.PodSignature.PodController.Kind == controllerRef.Kind && avoid.PodSignature.PodController.UID == controllerRef.UID {
-				return schedulerapi.HostPriority{Host: node.Name, Score: 0}, nil
-			}
+		if avoid.PodSignature.PodController.Kind == controllerRef.Kind && avoid.PodSignature.PodController.UID == controllerRef.UID {
+			return schedulerapi.HostPriority{Host: node.Name, Score: 0}, nil
 		}
 	}
-	return schedulerapi.HostPriority{Host: node.Name, Score: 10}, nil
+	return schedulerapi.HostPriority{Host: node.Name, Score: schedulerapi.MaxPriority}, nil
 }

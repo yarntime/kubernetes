@@ -21,12 +21,11 @@ import (
 	"os"
 
 	"k8s.io/kubernetes/cmd/kubeadm/app"
-	"k8s.io/kubernetes/cmd/kubeadm/app/util"
 )
 
 func main() {
 	if err := app.Run(); err != nil {
-		fmt.Printf(util.AlphaWarningOnExit)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	os.Exit(0)

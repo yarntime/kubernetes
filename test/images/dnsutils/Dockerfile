@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM alpine
-MAINTAINER Bowei Du "bowei@google.com"
+FROM BASEIMAGE
 
-RUN apk update --no-cache
-RUN apk add bind-tools
+CROSS_BUILD_COPY qemu-QEMUARCH-static /usr/bin/
+
+RUN apk add --no-cache bind-tools

@@ -19,7 +19,7 @@ package priorities
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 
@@ -53,7 +53,7 @@ func calculateUnusedScore(requested int64, capacity int64, node string) int64 {
 			requested, capacity, node)
 		return 0
 	}
-	return ((capacity - requested) * 10) / capacity
+	return ((capacity - requested) * int64(schedulerapi.MaxPriority)) / capacity
 }
 
 // Calculates host priority based on the amount of unused resources.
@@ -73,9 +73,7 @@ func calculateUnusedPriority(pod *v1.Pod, podRequests *schedulercache.Resource, 
 	cpuScore := calculateUnusedScore(totalResources.MilliCPU, allocatableResources.MilliCPU, node.Name)
 	memoryScore := calculateUnusedScore(totalResources.Memory, allocatableResources.Memory, node.Name)
 	if glog.V(10) {
-		// We explicitly don't do glog.V(10).Infof() to avoid computing all the parameters if this is
-		// not logged. There is visible performance gain from it.
-		glog.V(10).Infof(
+		glog.Infof(
 			"%v -> %v: Least Requested Priority, capacity %d millicores %d memory bytes, total request %d millicores %d memory bytes, score %d CPU %d memory",
 			pod.Name, node.Name,
 			allocatableResources.MilliCPU, allocatableResources.Memory,

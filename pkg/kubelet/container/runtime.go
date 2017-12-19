@@ -25,11 +25,11 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/v1"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/runtime"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/flowcontrol"
-	"k8s.io/kubernetes/pkg/util/term"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/flowcontrol"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 	"k8s.io/kubernetes/pkg/volume"
 )
 
@@ -82,8 +82,10 @@ type Runtime interface {
 	// complete list of pods from all avialble sources (e.g., apiserver, http,
 	// file). In this case, garbage collector should refrain itself from aggressive
 	// behavior such as removing all containers of unrecognized pods (yet).
+	// If evictNonDeletedPods is set to true, containers and sandboxes belonging to pods
+	// that are terminated, but not deleted will be evicted.  Otherwise, only deleted pods will be GC'd.
 	// TODO: Revisit this method and make it cleaner.
-	GarbageCollect(gcPolicy ContainerGCPolicy, allSourcesReady bool) error
+	GarbageCollect(gcPolicy ContainerGCPolicy, allSourcesReady bool, evictNonDeletedPods bool) error
 	// Syncs the running pod into the desired pod.
 	SyncPod(pod *v1.Pod, apiPodStatus v1.PodStatus, podStatus *PodStatus, pullSecrets []v1.Secret, backOff *flowcontrol.Backoff) PodSyncResult
 	// KillPod kills all the containers of a pod. Pod may be nil, running pod must not be.
@@ -125,12 +127,11 @@ type Runtime interface {
 // DirectStreamingRuntime is the interface implemented by runtimes for which the streaming calls
 // (exec/attach/port-forward) should be served directly by the Kubelet.
 type DirectStreamingRuntime interface {
-	// Runs the command in the container of the specified pod using nsenter.
-	// Attaches the processes stdin, stdout, and stderr. Optionally uses a
-	// tty.
-	ExecInContainer(containerID ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan term.Size, timeout time.Duration) error
+	// Runs the command in the container of the specified pod. Attaches
+	// the processes stdin, stdout, and stderr. Optionally uses a tty.
+	ExecInContainer(containerID ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize, timeout time.Duration) error
 	// Forward the specified port from the specified pod to the stream.
-	PortForward(pod *Pod, port uint16, stream io.ReadWriteCloser) error
+	PortForward(pod *Pod, port int32, stream io.ReadWriteCloser) error
 	// ContainerAttach encapsulates the attaching to containers for testability
 	ContainerAttacher
 }
@@ -141,15 +142,16 @@ type DirectStreamingRuntime interface {
 type IndirectStreamingRuntime interface {
 	GetExec(id ContainerID, cmd []string, stdin, stdout, stderr, tty bool) (*url.URL, error)
 	GetAttach(id ContainerID, stdin, stdout, stderr, tty bool) (*url.URL, error)
-	GetPortForward(podName, podNamespace string, podUID types.UID) (*url.URL, error)
+	GetPortForward(podName, podNamespace string, podUID types.UID, ports []int32) (*url.URL, error)
 }
 
 type ImageService interface {
 	// PullImage pulls an image from the network to local storage using the supplied
-	// secrets if necessary.
-	PullImage(image ImageSpec, pullSecrets []v1.Secret) error
-	// IsImagePresent checks whether the container image is already in the local storage.
-	IsImagePresent(image ImageSpec) (bool, error)
+	// secrets if necessary. It returns a reference (digest or ID) to the pulled image.
+	PullImage(image ImageSpec, pullSecrets []v1.Secret) (string, error)
+	// GetImageRef gets the reference (digest or ID) of the image which has already been in
+	// the local storage. It returns ("", nil) if the image isn't in the local storage.
+	GetImageRef(image ImageSpec) (string, error)
 	// Gets all images currently on the machine.
 	ListImages() ([]Image, error)
 	// Removes the specified image.
@@ -159,7 +161,7 @@ type ImageService interface {
 }
 
 type ContainerAttacher interface {
-	AttachContainer(id ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan term.Size) (err error)
+	AttachContainer(id ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) (err error)
 }
 
 type ContainerCommandRunner interface {
@@ -190,7 +192,7 @@ type Pod struct {
 type PodPair struct {
 	// APIPod is the v1.Pod
 	APIPod *v1.Pod
-	// RunningPod is the pod defined defined in pkg/kubelet/container/runtime#Pod
+	// RunningPod is the pod defined in pkg/kubelet/container/runtime#Pod
 	RunningPod *Pod
 }
 
@@ -386,6 +388,8 @@ type Mount struct {
 	ReadOnly bool
 	// Whether the mount needs SELinux relabeling
 	SELinuxRelabel bool
+	// Requested propagation mode
+	Propagation runtimeapi.MountPropagation
 }
 
 type PortMapping struct {
@@ -424,10 +428,6 @@ type RunContainerOptions struct {
 	// this directory will be used to create and mount the log file to
 	// container.TerminationMessagePath
 	PodContainerDir string
-	// The list of DNS servers for the container to use.
-	DNS []string
-	// The list of DNS search domains.
-	DNSSearch []string
 	// The parent cgroup to pass to Docker
 	CgroupParent string
 	// The type of container rootfs
@@ -446,9 +446,14 @@ type RunContainerOptions struct {
 type VolumeInfo struct {
 	// Mounter is the volume's mounter
 	Mounter volume.Mounter
+	// BlockVolumeMapper is the Block volume's mapper
+	BlockVolumeMapper volume.BlockVolumeMapper
 	// SELinuxLabeled indicates whether this volume has had the
 	// pod's SELinux label applied to it or not
 	SELinuxLabeled bool
+	// Whether the volume permission is set to read-only or not
+	// This value is passed from volume.spec
+	ReadOnly bool
 }
 
 type VolumeMap map[string]VolumeInfo
@@ -607,7 +612,7 @@ func BuildPodFullName(name, namespace string) string {
 // Parse the pod full name.
 func ParsePodFullName(podFullName string) (string, string, error) {
 	parts := strings.Split(podFullName, "_")
-	if len(parts) != 2 {
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("failed to parse the pod full name %q", podFullName)
 	}
 	return parts[0], parts[1], nil
@@ -625,3 +630,19 @@ func (s SortContainerStatusesByCreationTime) Swap(i, j int) { s[i], s[j] = s[j],
 func (s SortContainerStatusesByCreationTime) Less(i, j int) bool {
 	return s[i].CreatedAt.Before(s[j].CreatedAt)
 }
+
+const (
+	// MaxPodTerminationMessageLogLength is the maximum bytes any one pod may have written
+	// as termination message output across all containers. Containers will be evenly truncated
+	// until output is below this limit.
+	MaxPodTerminationMessageLogLength = 1024 * 12
+	// MaxContainerTerminationMessageLength is the upper bound any one container may write to
+	// its termination message path. Contents above this length will be truncated.
+	MaxContainerTerminationMessageLength = 1024 * 4
+	// MaxContainerTerminationMessageLogLength is the maximum bytes any one container will
+	// have written to its termination message when the message is read from the logs.
+	MaxContainerTerminationMessageLogLength = 1024 * 2
+	// MaxContainerTerminationMessageLogLines is the maximum number of previous lines of
+	// log output that the termination message can contain.
+	MaxContainerTerminationMessageLogLines = 80
+)

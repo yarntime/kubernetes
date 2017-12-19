@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/flowcontrol"
 	. "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/flowcontrol"
-	"k8s.io/kubernetes/pkg/util/term"
 	"k8s.io/kubernetes/pkg/volume"
 )
 
@@ -90,12 +90,12 @@ func (r *Mock) GetPodStatus(uid types.UID, name, namespace string) (*PodStatus, 
 	return args.Get(0).(*PodStatus), args.Error(1)
 }
 
-func (r *Mock) ExecInContainer(containerID ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan term.Size, timeout time.Duration) error {
+func (r *Mock) ExecInContainer(containerID ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize, timeout time.Duration) error {
 	args := r.Called(containerID, cmd, stdin, stdout, stderr, tty)
 	return args.Error(0)
 }
 
-func (r *Mock) AttachContainer(containerID ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan term.Size) error {
+func (r *Mock) AttachContainer(containerID ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
 	args := r.Called(containerID, stdin, stdout, stderr, tty)
 	return args.Error(0)
 }
@@ -105,14 +105,14 @@ func (r *Mock) GetContainerLogs(pod *v1.Pod, containerID ContainerID, logOptions
 	return args.Error(0)
 }
 
-func (r *Mock) PullImage(image ImageSpec, pullSecrets []v1.Secret) error {
+func (r *Mock) PullImage(image ImageSpec, pullSecrets []v1.Secret) (string, error) {
 	args := r.Called(image, pullSecrets)
-	return args.Error(0)
+	return image.Image, args.Error(0)
 }
 
-func (r *Mock) IsImagePresent(image ImageSpec) (bool, error) {
+func (r *Mock) GetImageRef(image ImageSpec) (string, error) {
 	args := r.Called(image)
-	return args.Get(0).(bool), args.Error(1)
+	return args.Get(0).(string), args.Error(1)
 }
 
 func (r *Mock) ListImages() ([]Image, error) {
@@ -140,8 +140,8 @@ func (r *Mock) GetPodContainerID(pod *Pod) (ContainerID, error) {
 	return ContainerID{}, args.Error(0)
 }
 
-func (r *Mock) GarbageCollect(gcPolicy ContainerGCPolicy, ready bool) error {
-	args := r.Called(gcPolicy, ready)
+func (r *Mock) GarbageCollect(gcPolicy ContainerGCPolicy, ready bool, evictNonDeletedPods bool) error {
+	args := r.Called(gcPolicy, ready, evictNonDeletedPods)
 	return args.Error(0)
 }
 

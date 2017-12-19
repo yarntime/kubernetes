@@ -23,13 +23,14 @@ import (
 	"strings"
 	"sync"
 
-	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/priorities"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 
 	"github.com/golang/glog"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/volumebinder"
 )
 
 // PluginFactoryArgs are passed to all plugin factory functions.
@@ -38,16 +39,22 @@ type PluginFactoryArgs struct {
 	ServiceLister                  algorithm.ServiceLister
 	ControllerLister               algorithm.ControllerLister
 	ReplicaSetLister               algorithm.ReplicaSetLister
+	StatefulSetLister              algorithm.StatefulSetLister
 	NodeLister                     algorithm.NodeLister
 	NodeInfo                       predicates.NodeInfo
 	PVInfo                         predicates.PersistentVolumeInfo
 	PVCInfo                        predicates.PersistentVolumeClaimInfo
-	HardPodAffinitySymmetricWeight int
-	FailureDomains                 []string
+	StorageClassInfo               predicates.StorageClassInfo
+	VolumeBinder                   *volumebinder.VolumeBinder
+	HardPodAffinitySymmetricWeight int32
 }
 
 // MetadataProducerFactory produces MetadataProducer from the given args.
+// TODO: Rename this to PriorityMetadataProducerFactory.
 type MetadataProducerFactory func(PluginFactoryArgs) algorithm.MetadataProducer
+
+// PredicateMetadataProducerFactory produces PredicateMetadataProducer from the given args.
+type PredicateMetadataProducerFactory func(PluginFactoryArgs) algorithm.PredicateMetadataProducer
 
 // A FitPredicateFactory produces a FitPredicate from the given args.
 type FitPredicateFactory func(PluginFactoryArgs) algorithm.FitPredicate
@@ -69,20 +76,24 @@ type PriorityConfigFactory struct {
 	Weight            int
 }
 
+// EquivalencePodFuncFactory produces a function to get equivalence class for given pod.
+type EquivalencePodFuncFactory func(PluginFactoryArgs) algorithm.GetEquivalencePodFunc
+
 var (
 	schedulerFactoryMutex sync.Mutex
 
 	// maps that hold registered algorithm types
-	fitPredicateMap      = make(map[string]FitPredicateFactory)
-	priorityFunctionMap  = make(map[string]PriorityConfigFactory)
-	algorithmProviderMap = make(map[string]AlgorithmProviderConfig)
+	fitPredicateMap        = make(map[string]FitPredicateFactory)
+	mandatoryFitPredicates = sets.NewString()
+	priorityFunctionMap    = make(map[string]PriorityConfigFactory)
+	algorithmProviderMap   = make(map[string]AlgorithmProviderConfig)
 
 	// Registered metadata producers
 	priorityMetadataProducer  MetadataProducerFactory
-	predicateMetadataProducer MetadataProducerFactory
+	predicateMetadataProducer PredicateMetadataProducerFactory
 
 	// get equivalence pod function
-	getEquivalencePodFunc algorithm.GetEquivalencePodFunc = nil
+	getEquivalencePodFuncFactory EquivalencePodFuncFactory
 )
 
 const (
@@ -100,6 +111,78 @@ func RegisterFitPredicate(name string, predicate algorithm.FitPredicate) string 
 	return RegisterFitPredicateFactory(name, func(PluginFactoryArgs) algorithm.FitPredicate { return predicate })
 }
 
+// RemoveFitPredicate removes a fit predicate from factory.
+func RemoveFitPredicate(name string) {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+
+	validateAlgorithmNameOrDie(name)
+	delete(fitPredicateMap, name)
+	mandatoryFitPredicates.Delete(name)
+}
+
+// RemovePredicateKeyFromAlgoProvider removes a fit predicate key from algorithmProvider.
+func RemovePredicateKeyFromAlgoProvider(providerName, key string) error {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+
+	validateAlgorithmNameOrDie(providerName)
+	provider, ok := algorithmProviderMap[providerName]
+	if !ok {
+		return fmt.Errorf("plugin %v has not been registered", providerName)
+	}
+	provider.FitPredicateKeys.Delete(key)
+	return nil
+}
+
+// RemovePredicateKeyFromAlgoProvider removes a fit predicate key from all algorithmProviders which in algorithmProviderMap.
+func RemovePredicateKeyFromAlgorithmProviderMap(key string) {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+
+	for _, provider := range algorithmProviderMap {
+		provider.FitPredicateKeys.Delete(key)
+	}
+	return
+}
+
+// InsertPredicateKeyToAlgoProvider insert a fit predicate key to algorithmProvider.
+func InsertPredicateKeyToAlgoProvider(providerName, key string) error {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+
+	validateAlgorithmNameOrDie(providerName)
+	provider, ok := algorithmProviderMap[providerName]
+	if !ok {
+		return fmt.Errorf("plugin %v has not been registered", providerName)
+	}
+	provider.FitPredicateKeys.Insert(key)
+	return nil
+}
+
+// InsertPredicateKeyToAlgorithmProviderMap insert a fit predicate key to all algorithmProviders which in algorithmProviderMap.
+func InsertPredicateKeyToAlgorithmProviderMap(key string) {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+
+	for _, provider := range algorithmProviderMap {
+		provider.FitPredicateKeys.Insert(key)
+	}
+	return
+}
+
+// RegisterMandatoryFitPredicate registers a fit predicate with the algorithm registry, the predicate is used by
+// kubelet, DaemonSet; it is always included in configuration. Returns the name with which the predicate was
+// registered.
+func RegisterMandatoryFitPredicate(name string, predicate algorithm.FitPredicate) string {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+	validateAlgorithmNameOrDie(name)
+	fitPredicateMap[name] = func(PluginFactoryArgs) algorithm.FitPredicate { return predicate }
+	mandatoryFitPredicates.Insert(name)
+	return name
+}
+
 // RegisterFitPredicateFactory registers a fit predicate factory with the
 // algorithm registry. Returns the name with which the predicate was registered.
 func RegisterFitPredicateFactory(name string, predicateFactory FitPredicateFactory) string {
@@ -110,7 +193,7 @@ func RegisterFitPredicateFactory(name string, predicateFactory FitPredicateFacto
 	return name
 }
 
-// Registers a custom fit predicate with the algorithm registry.
+// RegisterCustomFitPredicate registers a custom fit predicate with the algorithm registry.
 // Returns the name, with which the predicate was registered.
 func RegisterCustomFitPredicate(policy schedulerapi.PredicatePolicy) string {
 	var predicateFactory FitPredicateFactory
@@ -130,7 +213,7 @@ func RegisterCustomFitPredicate(policy schedulerapi.PredicatePolicy) string {
 				)
 
 				// Once we generate the predicate we should also Register the Precomputation
-				predicates.RegisterPredicatePrecomputation(policy.Name, precomputationFunction)
+				predicates.RegisterPredicateMetadataProducer(policy.Name, precomputationFunction)
 				return predicate
 			}
 		} else if policy.Argument.LabelsPresence != nil {
@@ -154,7 +237,7 @@ func RegisterCustomFitPredicate(policy schedulerapi.PredicatePolicy) string {
 	return RegisterFitPredicateFactory(policy.Name, predicateFactory)
 }
 
-// This check is useful for testing providers.
+// IsFitPredicateRegistered is useful for testing providers.
 func IsFitPredicateRegistered(name string) bool {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
@@ -168,7 +251,7 @@ func RegisterPriorityMetadataProducerFactory(factory MetadataProducerFactory) {
 	priorityMetadataProducer = factory
 }
 
-func RegisterPredicateMetadataProducerFactory(factory MetadataProducerFactory) {
+func RegisterPredicateMetadataProducerFactory(factory PredicateMetadataProducerFactory) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 	predicateMetadataProducer = factory
@@ -187,7 +270,7 @@ func RegisterPriorityFunction(name string, function algorithm.PriorityFunction, 
 	})
 }
 
-// Registers a priority function with the algorithm registry. Returns the name,
+// RegisterPriorityFunction2 registers a priority function with the algorithm registry. Returns the name,
 // with which the function was registered.
 // FIXME: Rename to PriorityFunctionFactory.
 func RegisterPriorityFunction2(
@@ -211,7 +294,7 @@ func RegisterPriorityConfigFactory(name string, pcf PriorityConfigFactory) strin
 	return name
 }
 
-// Registers a custom priority function with the algorithm registry.
+// RegisterCustomPriorityFunction registers a custom priority function with the algorithm registry.
 // Returns the name, with which the priority function was registered.
 func RegisterCustomPriorityFunction(policy schedulerapi.PriorityPolicy) string {
 	var pcf *PriorityConfigFactory
@@ -242,12 +325,12 @@ func RegisterCustomPriorityFunction(policy schedulerapi.PriorityPolicy) string {
 				Weight: policy.Weight,
 			}
 		}
-	} else if existing_pcf, ok := priorityFunctionMap[policy.Name]; ok {
+	} else if existingPcf, ok := priorityFunctionMap[policy.Name]; ok {
 		glog.V(2).Infof("Priority type %s already registered, reusing.", policy.Name)
 		// set/update the weight based on the policy
 		pcf = &PriorityConfigFactory{
-			Function:          existing_pcf.Function,
-			MapReduceFunction: existing_pcf.MapReduceFunction,
+			Function:          existingPcf.Function,
+			MapReduceFunction: existingPcf.MapReduceFunction,
 			Weight:            policy.Weight,
 		}
 	}
@@ -259,11 +342,12 @@ func RegisterCustomPriorityFunction(policy schedulerapi.PriorityPolicy) string {
 	return RegisterPriorityConfigFactory(policy.Name, *pcf)
 }
 
-func RegisterGetEquivalencePodFunction(equivalenceFunc algorithm.GetEquivalencePodFunc) {
-	getEquivalencePodFunc = equivalenceFunc
+// RegisterGetEquivalencePodFunction registers equivalenceFuncFactory to produce equivalence class for given pod.
+func RegisterGetEquivalencePodFunction(equivalenceFuncFactory EquivalencePodFuncFactory) {
+	getEquivalencePodFuncFactory = equivalenceFuncFactory
 }
 
-// This check is useful for testing providers.
+// IsPriorityFunctionRegistered is useful for testing providers.
 func IsPriorityFunctionRegistered(name string) bool {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
@@ -271,7 +355,7 @@ func IsPriorityFunctionRegistered(name string) bool {
 	return ok
 }
 
-// Registers a new algorithm provider with the algorithm registry. This should
+// RegisterAlgorithmProvider registers a new algorithm provider with the algorithm registry. This should
 // be called from the init function in a provider plugin.
 func RegisterAlgorithmProvider(name string, predicateKeys, priorityKeys sets.String) string {
 	schedulerFactoryMutex.Lock()
@@ -284,12 +368,11 @@ func RegisterAlgorithmProvider(name string, predicateKeys, priorityKeys sets.Str
 	return name
 }
 
-// This function should not be used to modify providers. It is publicly visible for testing.
+// GetAlgorithmProvider should not be used to modify providers. It is publicly visible for testing.
 func GetAlgorithmProvider(name string) (*AlgorithmProviderConfig, error) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 
-	var provider AlgorithmProviderConfig
 	provider, ok := algorithmProviderMap[name]
 	if !ok {
 		return nil, fmt.Errorf("plugin %q has not been registered", name)
@@ -310,6 +393,14 @@ func getFitPredicateFunctions(names sets.String, args PluginFactoryArgs) (map[st
 		}
 		predicates[name] = factory(args)
 	}
+
+	// Always include mandatory fit predicates.
+	for name := range mandatoryFitPredicates {
+		if factory, found := fitPredicateMap[name]; found {
+			predicates[name] = factory(args)
+		}
+	}
+
 	return predicates, nil
 }
 
@@ -323,12 +414,12 @@ func getPriorityMetadataProducer(args PluginFactoryArgs) (algorithm.MetadataProd
 	return priorityMetadataProducer(args), nil
 }
 
-func getPredicateMetadataProducer(args PluginFactoryArgs) (algorithm.MetadataProducer, error) {
+func getPredicateMetadataProducer(args PluginFactoryArgs) (algorithm.PredicateMetadataProducer, error) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 
 	if predicateMetadataProducer == nil {
-		return algorithm.EmptyMetadataProducer, nil
+		return algorithm.EmptyPredicateMetadataProducer, nil
 	}
 	return predicateMetadataProducer(args), nil
 }
@@ -345,19 +436,37 @@ func getPriorityFunctionConfigs(names sets.String, args PluginFactoryArgs) ([]al
 		}
 		if factory.Function != nil {
 			configs = append(configs, algorithm.PriorityConfig{
+				Name:     name,
 				Function: factory.Function(args),
 				Weight:   factory.Weight,
 			})
 		} else {
 			mapFunction, reduceFunction := factory.MapReduceFunction(args)
 			configs = append(configs, algorithm.PriorityConfig{
+				Name:   name,
 				Map:    mapFunction,
 				Reduce: reduceFunction,
 				Weight: factory.Weight,
 			})
 		}
 	}
+	if err := validateSelectedConfigs(configs); err != nil {
+		return nil, err
+	}
 	return configs, nil
+}
+
+// validateSelectedConfigs validates the config weights to avoid the overflow.
+func validateSelectedConfigs(configs []algorithm.PriorityConfig) error {
+	var totalPriority int
+	for _, config := range configs {
+		// Checks totalPriority against MaxTotalPriority to avoid overflow
+		if config.Weight*schedulerapi.MaxPriority > schedulerapi.MaxTotalPriority-totalPriority {
+			return fmt.Errorf("Total priority of priority functions has overflown")
+		}
+		totalPriority += config.Weight * schedulerapi.MaxPriority
+	}
+	return nil
 }
 
 var validName = regexp.MustCompile("^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])$")

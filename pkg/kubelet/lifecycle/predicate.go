@@ -20,22 +20,36 @@ import (
 	"fmt"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 )
 
 type getNodeAnyWayFuncType func() (*v1.Node, error)
+
+type pluginResourceUpdateFuncType func(*schedulercache.NodeInfo, *PodAdmitAttributes) error
+
+// AdmissionFailureHandler is an interface which defines how to deal with a failure to admit a pod.
+// This allows for the graceful handling of pod admission failure.
+type AdmissionFailureHandler interface {
+	HandleAdmissionFailure(pod *v1.Pod, failureReasons []algorithm.PredicateFailureReason) (bool, []algorithm.PredicateFailureReason, error)
+}
+
 type predicateAdmitHandler struct {
-	getNodeAnyWayFunc getNodeAnyWayFuncType
+	getNodeAnyWayFunc        getNodeAnyWayFuncType
+	pluginResourceUpdateFunc pluginResourceUpdateFuncType
+	admissionFailureHandler  AdmissionFailureHandler
 }
 
 var _ PodAdmitHandler = &predicateAdmitHandler{}
 
-func NewPredicateAdmitHandler(getNodeAnyWayFunc getNodeAnyWayFuncType) *predicateAdmitHandler {
+func NewPredicateAdmitHandler(getNodeAnyWayFunc getNodeAnyWayFuncType, admissionFailureHandler AdmissionFailureHandler, pluginResourceUpdateFunc pluginResourceUpdateFuncType) *predicateAdmitHandler {
 	return &predicateAdmitHandler{
 		getNodeAnyWayFunc,
+		pluginResourceUpdateFunc,
+		admissionFailureHandler,
 	}
 }
 
@@ -53,14 +67,36 @@ func (w *predicateAdmitHandler) Admit(attrs *PodAdmitAttributes) PodAdmitResult 
 	pods := attrs.OtherPods
 	nodeInfo := schedulercache.NewNodeInfo(pods...)
 	nodeInfo.SetNode(node)
+	// ensure the node has enough plugin resources for that required in pods
+	if err = w.pluginResourceUpdateFunc(nodeInfo, attrs); err != nil {
+		message := fmt.Sprintf("Update plugin resources failed due to %v, which is unexpected.", err)
+		glog.Warningf("Failed to admit pod %v - %s", format.Pod(pod), message)
+		return PodAdmitResult{
+			Admit:   false,
+			Reason:  "UnexpectedAdmissionError",
+			Message: message,
+		}
+	}
 	fit, reasons, err := predicates.GeneralPredicates(pod, nil, nodeInfo)
 	if err != nil {
 		message := fmt.Sprintf("GeneralPredicates failed due to %v, which is unexpected.", err)
 		glog.Warningf("Failed to admit pod %v - %s", format.Pod(pod), message)
 		return PodAdmitResult{
 			Admit:   fit,
-			Reason:  "UnexpectedError",
+			Reason:  "UnexpectedAdmissionError",
 			Message: message,
+		}
+	}
+	if !fit {
+		fit, reasons, err = w.admissionFailureHandler.HandleAdmissionFailure(pod, reasons)
+		if err != nil {
+			message := fmt.Sprintf("Unexpected error while attempting to recover from admission failure: %v", err)
+			glog.Warningf("Failed to admit pod %v - %s", format.Pod(pod), message)
+			return PodAdmitResult{
+				Admit:   fit,
+				Reason:  "UnexpectedAdmissionError",
+				Message: message,
+			}
 		}
 	}
 	if !fit {

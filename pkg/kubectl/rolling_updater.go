@@ -17,29 +17,32 @@ limitations under the License.
 package kubectl
 
 import (
-	goerrors "errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/v1"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/integer"
+	"k8s.io/client-go/util/retry"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	apiv1 "k8s.io/kubernetes/pkg/apis/core/v1"
 	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
-	"k8s.io/kubernetes/pkg/client/retry"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	deploymentutil "k8s.io/kubernetes/pkg/controller/deployment/util"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/integer"
-	"k8s.io/kubernetes/pkg/util/intstr"
-	"k8s.io/kubernetes/pkg/util/wait"
+	"k8s.io/kubernetes/pkg/kubectl/util"
 )
 
 const (
+	kubectlAnnotationPrefix    = "kubectl.kubernetes.io/"
 	sourceIdAnnotation         = kubectlAnnotationPrefix + "update-source-id"
 	desiredReplicasAnnotation  = kubectlAnnotationPrefix + "desired-replicas"
 	originalReplicasAnnotation = kubectlAnnotationPrefix + "original-replicas"
@@ -193,7 +196,7 @@ func (r *RollingUpdater) Update(config *RollingUpdaterConfig) error {
 	// annotation if it doesn't yet exist.
 	_, hasOriginalAnnotation := oldRc.Annotations[originalReplicasAnnotation]
 	if !hasOriginalAnnotation {
-		existing, err := r.rcClient.ReplicationControllers(oldRc.Namespace).Get(oldRc.Name)
+		existing, err := r.rcClient.ReplicationControllers(oldRc.Namespace).Get(oldRc.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -398,7 +401,7 @@ func (r *RollingUpdater) scaleAndWaitWithScaler(rc *api.ReplicationController, r
 	if err := scaler.Scale(rc.Namespace, rc.Name, uint(rc.Spec.Replicas), &ScalePrecondition{-1, ""}, retry, wait); err != nil {
 		return nil, err
 	}
-	return r.rcClient.ReplicationControllers(rc.Namespace).Get(rc.Name)
+	return r.rcClient.ReplicationControllers(rc.Namespace).Get(rc.Name, metav1.GetOptions{})
 }
 
 // readyPods returns the old and new ready counts for their pods.
@@ -415,17 +418,21 @@ func (r *RollingUpdater) readyPods(oldRc, newRc *api.ReplicationController, minR
 	for i := range controllers {
 		controller := controllers[i]
 		selector := labels.Set(controller.Spec.Selector).AsSelector()
-		options := api.ListOptions{LabelSelector: selector}
+		options := metav1.ListOptions{LabelSelector: selector.String()}
 		pods, err := r.podClient.Pods(controller.Namespace).List(options)
 		if err != nil {
 			return 0, 0, err
 		}
 		for _, pod := range pods.Items {
 			v1Pod := &v1.Pod{}
-			if err := v1.Convert_api_Pod_To_v1_Pod(&pod, v1Pod, nil); err != nil {
+			if err := apiv1.Convert_core_Pod_To_v1_Pod(&pod, v1Pod, nil); err != nil {
 				return 0, 0, err
 			}
-			if !deploymentutil.IsPodAvailable(v1Pod, minReadySeconds, r.nowFn().Time) {
+			// Do not count deleted pods as ready
+			if v1Pod.DeletionTimestamp != nil {
+				continue
+			}
+			if !podutil.IsPodAvailable(v1Pod, minReadySeconds, r.nowFn()) {
 				continue
 			}
 			switch controller.Name {
@@ -485,7 +492,7 @@ func (r *RollingUpdater) existingController(controller *api.ReplicationControlle
 		return nil, errors.NewNotFound(api.Resource("replicationcontrollers"), controller.Name)
 	}
 	// controller name is required to get rc back
-	return r.rcClient.ReplicationControllers(controller.Namespace).Get(controller.Name)
+	return r.rcClient.ReplicationControllers(controller.Namespace).Get(controller.Name, metav1.GetOptions{})
 }
 
 // cleanupWithClients performs cleanup tasks after the rolling update. Update
@@ -494,7 +501,7 @@ func (r *RollingUpdater) existingController(controller *api.ReplicationControlle
 func (r *RollingUpdater) cleanupWithClients(oldRc, newRc *api.ReplicationController, config *RollingUpdaterConfig) error {
 	// Clean up annotations
 	var err error
-	newRc, err = r.rcClient.ReplicationControllers(r.ns).Get(newRc.Name)
+	newRc, err = r.rcClient.ReplicationControllers(r.ns).Get(newRc.Name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -509,7 +516,7 @@ func (r *RollingUpdater) cleanupWithClients(oldRc, newRc *api.ReplicationControl
 	if err = wait.Poll(config.Interval, config.Timeout, client.ControllerHasDesiredReplicas(r.rcClient, newRc)); err != nil {
 		return err
 	}
-	newRc, err = r.rcClient.ReplicationControllers(r.ns).Get(newRc.Name)
+	newRc, err = r.rcClient.ReplicationControllers(r.ns).Get(newRc.Name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -525,7 +532,7 @@ func (r *RollingUpdater) cleanupWithClients(oldRc, newRc *api.ReplicationControl
 		if err := r.rcClient.ReplicationControllers(r.ns).Delete(oldRc.Name, nil); err != nil {
 			return err
 		}
-		fmt.Fprintf(config.Out, "Renaming %s to %s\n", oldRc.Name, newRc.Name)
+		fmt.Fprintf(config.Out, "Renaming %s to %s\n", newRc.Name, oldRc.Name)
 		return Rename(r.rcClient, newRc, oldRc.Name)
 	case PreserveRollingUpdateCleanupPolicy:
 		return nil
@@ -540,12 +547,12 @@ func Rename(c coreclient.ReplicationControllersGetter, rc *api.ReplicationContro
 	rc.ResourceVersion = ""
 	// First delete the oldName RC and orphan its pods.
 	trueVar := true
-	err := c.ReplicationControllers(rc.Namespace).Delete(oldName, &api.DeleteOptions{OrphanDependents: &trueVar})
+	err := c.ReplicationControllers(rc.Namespace).Delete(oldName, &metav1.DeleteOptions{OrphanDependents: &trueVar})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
 	err = wait.Poll(5*time.Second, 60*time.Second, func() (bool, error) {
-		_, err := c.ReplicationControllers(rc.Namespace).Get(oldName)
+		_, err := c.ReplicationControllers(rc.Namespace).Get(oldName, metav1.GetOptions{})
 		if err == nil {
 			return false, nil
 		} else if errors.IsNotFound(err) {
@@ -559,17 +566,14 @@ func Rename(c coreclient.ReplicationControllersGetter, rc *api.ReplicationContro
 	}
 	// Then create the same RC with the new name.
 	_, err = c.ReplicationControllers(rc.Namespace).Create(rc)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func LoadExistingNextReplicationController(c coreclient.ReplicationControllersGetter, namespace, newName string) (*api.ReplicationController, error) {
 	if len(newName) == 0 {
 		return nil, nil
 	}
-	newRc, err := c.ReplicationControllers(namespace).Get(newName)
+	newRc, err := c.ReplicationControllers(namespace).Get(newName, metav1.GetOptions{})
 	if err != nil && errors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -588,7 +592,7 @@ type NewControllerConfig struct {
 func CreateNewControllerFromCurrentController(rcClient coreclient.ReplicationControllersGetter, codec runtime.Codec, cfg *NewControllerConfig) (*api.ReplicationController, error) {
 	containerIndex := 0
 	// load the old RC into the "new" RC
-	newRc, err := rcClient.ReplicationControllers(cfg.Namespace).Get(cfg.OldName)
+	newRc, err := rcClient.ReplicationControllers(cfg.Namespace).Get(cfg.OldName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -610,18 +614,18 @@ func CreateNewControllerFromCurrentController(rcClient coreclient.ReplicationCon
 	}
 
 	if len(newRc.Spec.Template.Spec.Containers) > 1 && len(cfg.Container) == 0 {
-		return nil, goerrors.New("Must specify container to update when updating a multi-container pod")
+		return nil, fmt.Errorf("must specify container to update when updating a multi-container pod")
 	}
 
 	if len(newRc.Spec.Template.Spec.Containers) == 0 {
-		return nil, goerrors.New(fmt.Sprintf("Pod has no containers! (%v)", newRc))
+		return nil, fmt.Errorf("pod has no containers! (%v)", newRc)
 	}
 	newRc.Spec.Template.Spec.Containers[containerIndex].Image = cfg.Image
 	if len(cfg.PullPolicy) != 0 {
 		newRc.Spec.Template.Spec.Containers[containerIndex].ImagePullPolicy = cfg.PullPolicy
 	}
 
-	newHash, err := api.HashObject(newRc, codec)
+	newHash, err := util.HashObject(newRc, codec)
 	if err != nil {
 		return nil, err
 	}
@@ -678,14 +682,14 @@ func UpdateExistingReplicationController(rcClient coreclient.ReplicationControll
 	if _, found := oldRc.Spec.Selector[deploymentKey]; !found {
 		SetNextControllerAnnotation(oldRc, newName)
 		return AddDeploymentKeyToReplicationController(oldRc, rcClient, podClient, deploymentKey, deploymentValue, namespace, out)
-	} else {
-		// If we didn't need to update the controller for the deployment key, we still need to write
-		// the "next" controller.
-		applyUpdate := func(rc *api.ReplicationController) {
-			SetNextControllerAnnotation(rc, newName)
-		}
-		return updateRcWithRetries(rcClient, namespace, oldRc, applyUpdate)
 	}
+
+	// If we didn't need to update the controller for the deployment key, we still need to write
+	// the "next" controller.
+	applyUpdate := func(rc *api.ReplicationController) {
+		SetNextControllerAnnotation(rc, newName)
+	}
+	return updateRcWithRetries(rcClient, namespace, oldRc, applyUpdate)
 }
 
 func AddDeploymentKeyToReplicationController(oldRc *api.ReplicationController, rcClient coreclient.ReplicationControllersGetter, podClient coreclient.PodsGetter, deploymentKey, deploymentValue, namespace string, out io.Writer) (*api.ReplicationController, error) {
@@ -704,7 +708,7 @@ func AddDeploymentKeyToReplicationController(oldRc *api.ReplicationController, r
 	// Update all pods managed by the rc to have the new hash label, so they are correctly adopted
 	// TODO: extract the code from the label command and re-use it here.
 	selector := labels.SelectorFromSet(oldRc.Spec.Selector)
-	options := api.ListOptions{LabelSelector: selector}
+	options := metav1.ListOptions{LabelSelector: selector.String()}
 	podList, err := podClient.Pods(namespace).List(options)
 	if err != nil {
 		return nil, err
@@ -745,8 +749,10 @@ func AddDeploymentKeyToReplicationController(oldRc *api.ReplicationController, r
 	// doesn't see the update to its pod template and creates a new pod with the old labels after
 	// we've finished re-adopting existing pods to the rc.
 	selector = labels.SelectorFromSet(selectorCopy)
-	options = api.ListOptions{LabelSelector: selector}
-	podList, err = podClient.Pods(namespace).List(options)
+	options = metav1.ListOptions{LabelSelector: selector.String()}
+	if podList, err = podClient.Pods(namespace).List(options); err != nil {
+		return nil, err
+	}
 	for ix := range podList.Items {
 		pod := &podList.Items[ix]
 		if value, found := pod.Labels[deploymentKey]; !found || value != deploymentValue {
@@ -767,12 +773,8 @@ type updateRcFunc func(controller *api.ReplicationController)
 // 3. Update the resource
 func updateRcWithRetries(rcClient coreclient.ReplicationControllersGetter, namespace string, rc *api.ReplicationController, applyUpdate updateRcFunc) (*api.ReplicationController, error) {
 	// Deep copy the rc in case we failed on Get during retry loop
-	obj, err := api.Scheme.Copy(rc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deep copy rc before updating it: %v", err)
-	}
-	oldRc := obj.(*api.ReplicationController)
-	err = retry.RetryOnConflict(retry.DefaultBackoff, func() (e error) {
+	oldRc := rc.DeepCopy()
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() (e error) {
 		// Apply the update, then attempt to push it to the apiserver.
 		applyUpdate(rc)
 		if rc, e = rcClient.ReplicationControllers(namespace).Update(rc); e == nil {
@@ -782,7 +784,7 @@ func updateRcWithRetries(rcClient coreclient.ReplicationControllersGetter, names
 		updateErr := e
 		// Update the controller with the latest resource version, if the update failed we
 		// can't trust rc so use oldRc.Name.
-		if rc, e = rcClient.ReplicationControllers(namespace).Get(oldRc.Name); e != nil {
+		if rc, e = rcClient.ReplicationControllers(namespace).Get(oldRc.Name, metav1.GetOptions{}); e != nil {
 			// The Get failed: Value in rc cannot be trusted.
 			rc = oldRc
 		}
@@ -802,19 +804,15 @@ type updatePodFunc func(controller *api.Pod)
 // 3. Update the resource
 func updatePodWithRetries(podClient coreclient.PodsGetter, namespace string, pod *api.Pod, applyUpdate updatePodFunc) (*api.Pod, error) {
 	// Deep copy the pod in case we failed on Get during retry loop
-	obj, err := api.Scheme.Copy(pod)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deep copy pod before updating it: %v", err)
-	}
-	oldPod := obj.(*api.Pod)
-	err = retry.RetryOnConflict(retry.DefaultBackoff, func() (e error) {
+	oldPod := pod.DeepCopy()
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() (e error) {
 		// Apply the update, then attempt to push it to the apiserver.
 		applyUpdate(pod)
 		if pod, e = podClient.Pods(namespace).Update(pod); e == nil {
 			return
 		}
 		updateErr := e
-		if pod, e = podClient.Pods(namespace).Get(oldPod.Name); e != nil {
+		if pod, e = podClient.Pods(namespace).Get(oldPod.Name, metav1.GetOptions{}); e != nil {
 			pod = oldPod
 		}
 		// Only return the error from update
@@ -826,7 +824,7 @@ func updatePodWithRetries(podClient coreclient.PodsGetter, namespace string, pod
 }
 
 func FindSourceController(r coreclient.ReplicationControllersGetter, namespace, name string) (*api.ReplicationController, error) {
-	list, err := r.ReplicationControllers(namespace).List(api.ListOptions{})
+	list, err := r.ReplicationControllers(namespace).List(metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

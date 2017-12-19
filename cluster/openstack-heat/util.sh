@@ -39,6 +39,8 @@ function verify-prereqs() {
   else
     echo "${client} client does not exist"
     echo "Please install ${client} client, and retry."
+    echo "Documentation for installing ${client} can be found at"
+    echo "http://docs.openstack.org/user-guide/common/cli-install-openstack-command-line-clients.html"
     exit 1
   fi
  done
@@ -106,7 +108,7 @@ function create-stack() {
 #   ROOT
 #   KUBERNETES_RELEASE_TAR
 function upload-resources() {
-  swift post kubernetes --read-acl '.r:*,.rlistings'
+  swift post ${SWIFT_OBJECT_STORE} --read-acl '.r:*,.rlistings'
 
   locations=(
     "${ROOT}/../../_output/release-tars/${KUBERNETES_RELEASE_TAR}"
@@ -117,11 +119,11 @@ function upload-resources() {
   RELEASE_TAR_PATH=$(dirname ${RELEASE_TAR_LOCATION})
 
   echo "[INFO] Uploading ${KUBERNETES_RELEASE_TAR}"
-  swift upload kubernetes ${RELEASE_TAR_PATH}/${KUBERNETES_RELEASE_TAR} \
+  swift upload ${SWIFT_OBJECT_STORE} ${RELEASE_TAR_PATH}/${KUBERNETES_RELEASE_TAR} \
     --object-name kubernetes-server.tar.gz
 
   echo "[INFO] Uploading kubernetes-salt.tar.gz"
-  swift upload kubernetes ${RELEASE_TAR_PATH}/kubernetes-salt.tar.gz \
+  swift upload ${SWIFT_OBJECT_STORE} ${RELEASE_TAR_PATH}/kubernetes-salt.tar.gz \
     --object-name kubernetes-salt.tar.gz
 }
 
@@ -186,9 +188,15 @@ function run-heat-script() {
 
   # Automatically detect swift url if it wasn't specified
   if [[ -z $SWIFT_SERVER_URL ]]; then
-    SWIFT_SERVER_URL=$(openstack catalog show object-store --format value | egrep -o "publicURL: (.+)$" | cut -d" " -f2)
+    local rgx=""
+    if [ "$OS_IDENTITY_API_VERSION" = "3" ]; then
+      rgx="public: (.+)$"
+    else
+      rgx="publicURL: (.+)$"
+    fi
+    SWIFT_SERVER_URL=$(openstack catalog show object-store --format value | egrep -o "$rgx" | cut -d" " -f2 | head -n 1)
   fi
-  local swift_repo_url="${SWIFT_SERVER_URL}/kubernetes"
+  local swift_repo_url="${SWIFT_SERVER_URL}/${SWIFT_OBJECT_STORE}"
 
   if [ $CREATE_IMAGE = true ]; then
     echo "[INFO] Retrieve new image ID"
@@ -217,13 +225,15 @@ function run-heat-script() {
       --parameter os_username=${OS_USERNAME} \
       --parameter os_password=${OS_PASSWORD} \
       --parameter os_region_name=${OS_REGION_NAME} \
-      --parameter os_tenant_id=${OS_TENANT_ID} \
+      --parameter os_tenant_name=${OS_TENANT_NAME} \
+      --parameter os_user_domain_name=${OS_USER_DOMAIN_NAME} \
       --parameter enable_proxy=${ENABLE_PROXY} \
       --parameter ftp_proxy="${FTP_PROXY}" \
       --parameter http_proxy="${HTTP_PROXY}" \
       --parameter https_proxy="${HTTPS_PROXY}" \
       --parameter socks_proxy="${SOCKS_PROXY}" \
       --parameter no_proxy="${NO_PROXY}" \
+      --parameter assign_floating_ip="${ASSIGN_FLOATING_IP}" \
       --template kubecluster.yaml \
       ${STACK_NAME}
     )

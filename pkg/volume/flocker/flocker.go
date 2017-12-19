@@ -23,14 +23,15 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/util/env"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 
 	flockerapi "github.com/clusterhq/flocker-go"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -111,6 +112,14 @@ func (p *flockerPlugin) RequiresRemount() bool {
 	return false
 }
 
+func (p *flockerPlugin) SupportsMountOption() bool {
+	return false
+}
+
+func (plugin *flockerPlugin) SupportsBulkVolumeVerification() bool {
+	return false
+}
+
 func (plugin *flockerPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
 	return []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
@@ -129,7 +138,7 @@ func (p *flockerPlugin) getFlockerVolumeSource(spec *volume.Spec) (*v1.FlockerVo
 
 func (plugin *flockerPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, _ volume.VolumeOptions) (volume.Mounter, error) {
 	// Inject real implementations here, test through the internal function.
-	return plugin.newMounterInternal(spec, pod.UID, &FlockerUtil{}, plugin.host.GetMounter())
+	return plugin.newMounterInternal(spec, pod.UID, &FlockerUtil{}, plugin.host.GetMounter(plugin.GetPluginName()))
 }
 
 func (plugin *flockerPlugin) newMounterInternal(spec *volume.Spec, podUID types.UID, manager volumeManager, mounter mount.Interface) (volume.Mounter, error) {
@@ -157,7 +166,7 @@ func (plugin *flockerPlugin) newMounterInternal(spec *volume.Spec, podUID types.
 
 func (p *flockerPlugin) NewUnmounter(volName string, podUID types.UID) (volume.Unmounter, error) {
 	// Inject real implementations here, test through the internal function.
-	return p.newUnmounterInternal(volName, podUID, &FlockerUtil{}, p.host.GetMounter())
+	return p.newUnmounterInternal(volName, podUID, &FlockerUtil{}, p.host.GetMounter(p.GetPluginName()))
 }
 
 func (p *flockerPlugin) newUnmounterInternal(volName string, podUID types.UID, manager volumeManager, mounter mount.Interface) (volume.Unmounter, error) {
@@ -421,25 +430,7 @@ func (c *flockerVolumeUnmounter) TearDown() error {
 
 // TearDownAt unmounts the bind mount
 func (c *flockerVolumeUnmounter) TearDownAt(dir string) error {
-	notMnt, err := c.mounter.IsLikelyNotMountPoint(dir)
-	if err != nil {
-		return err
-	}
-	if notMnt {
-		return os.Remove(dir)
-	}
-	if err := c.mounter.Unmount(dir); err != nil {
-		return err
-	}
-	notMnt, mntErr := c.mounter.IsLikelyNotMountPoint(dir)
-	if mntErr != nil {
-		glog.Errorf("isLikelyNotMountPoint check failed: %v", mntErr)
-		return err
-	}
-	if notMnt {
-		return os.Remove(dir)
-	}
-	return fmt.Errorf("Failed to unmount volume dir")
+	return util.UnmountPath(dir, c.mounter)
 }
 
 func (plugin *flockerPlugin) NewDeleter(spec *volume.Spec) (volume.Deleter, error) {

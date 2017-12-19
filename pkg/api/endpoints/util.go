@@ -23,22 +23,10 @@ import (
 	"hash"
 	"sort"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/apimachinery/pkg/types"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	hashutil "k8s.io/kubernetes/pkg/util/hash"
 )
-
-const (
-	// TODO: to be deleted after v1.3 is released
-	// Its value is the json representation of map[string(IP)][HostRecord]
-	// example: '{"10.245.1.6":{"HostName":"my-webserver"}}'
-	PodHostnamesAnnotation = "endpoints.beta.kubernetes.io/hostnames-map"
-)
-
-// TODO: to be deleted after v1.3 is released
-type HostRecord struct {
-	HostName string
-}
 
 // RepackSubsets takes a slice of EndpointSubset objects, expands it to the full
 // representation, and then repacks that into the canonical layout.  This
@@ -101,8 +89,7 @@ type addressKey struct {
 // any existing ready state.
 func mapAddressByPort(addr *api.EndpointAddress, port api.EndpointPort, ready bool, allAddrs map[addressKey]*api.EndpointAddress, portToAddrReadyMap map[api.EndpointPort]addressSet) *api.EndpointAddress {
 	// use addressKey to distinguish between two endpoints that are identical addresses
-	// but may have come from different hosts, for attribution. For instance, Mesos
-	// assigns pods the node IP, but the pods are distinct.
+	// but may have come from different hosts, for attribution.
 	key := addressKey{ip: addr.IP}
 	if addr.TargetRef != nil {
 		key.uid = addr.TargetRef.UID

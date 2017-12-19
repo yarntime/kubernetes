@@ -17,34 +17,30 @@ limitations under the License.
 package priorities
 
 import (
-	"encoding/json"
 	"reflect"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 )
 
 func nodeWithTaints(nodeName string, taints []v1.Taint) *v1.Node {
-	taintsData, _ := json.Marshal(taints)
 	return &v1.Node{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
-			Annotations: map[string]string{
-				v1.TaintsAnnotationKey: string(taintsData),
-			},
+		},
+		Spec: v1.NodeSpec{
+			Taints: taints,
 		},
 	}
 }
 
 func podWithTolerations(tolerations []v1.Toleration) *v1.Pod {
-	tolerationData, _ := json.Marshal(tolerations)
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			Annotations: map[string]string{
-				v1.TolerationsAnnotationKey: string(tolerationData),
-			},
+		Spec: v1.PodSpec{
+			Tolerations: tolerations,
 		},
 	}
 }
@@ -82,7 +78,7 @@ func TestTaintAndToleration(t *testing.T) {
 				}}),
 			},
 			expectedList: []schedulerapi.HostPriority{
-				{Host: "nodeA", Score: 10},
+				{Host: "nodeA", Score: schedulerapi.MaxPriority},
 				{Host: "nodeB", Score: 0},
 			},
 		},
@@ -124,9 +120,9 @@ func TestTaintAndToleration(t *testing.T) {
 				}),
 			},
 			expectedList: []schedulerapi.HostPriority{
-				{Host: "nodeA", Score: 10},
-				{Host: "nodeB", Score: 10},
-				{Host: "nodeC", Score: 10},
+				{Host: "nodeA", Score: schedulerapi.MaxPriority},
+				{Host: "nodeB", Score: schedulerapi.MaxPriority},
+				{Host: "nodeC", Score: schedulerapi.MaxPriority},
 			},
 		},
 		// the count of taints on a node that are not tolerated by pod, matters.
@@ -160,7 +156,7 @@ func TestTaintAndToleration(t *testing.T) {
 				}),
 			},
 			expectedList: []schedulerapi.HostPriority{
-				{Host: "nodeA", Score: 10},
+				{Host: "nodeA", Score: schedulerapi.MaxPriority},
 				{Host: "nodeB", Score: 5},
 				{Host: "nodeC", Score: 0},
 			},
@@ -203,15 +199,35 @@ func TestTaintAndToleration(t *testing.T) {
 				}),
 			},
 			expectedList: []schedulerapi.HostPriority{
-				{Host: "nodeA", Score: 10},
-				{Host: "nodeB", Score: 10},
+				{Host: "nodeA", Score: schedulerapi.MaxPriority},
+				{Host: "nodeB", Score: schedulerapi.MaxPriority},
 				{Host: "nodeC", Score: 0},
+			},
+		},
+		{
+			test: "Default behaviour No taints and tolerations, lands on node with no taints",
+			//pod without tolerations
+			pod: podWithTolerations([]v1.Toleration{}),
+			nodes: []*v1.Node{
+				//Node without taints
+				nodeWithTaints("nodeA", []v1.Taint{}),
+				nodeWithTaints("nodeB", []v1.Taint{
+					{
+						Key:    "cpu-type",
+						Value:  "arm64",
+						Effect: v1.TaintEffectPreferNoSchedule,
+					},
+				}),
+			},
+			expectedList: []schedulerapi.HostPriority{
+				{Host: "nodeA", Score: schedulerapi.MaxPriority},
+				{Host: "nodeB", Score: 0},
 			},
 		},
 	}
 	for _, test := range tests {
 		nodeNameToInfo := schedulercache.CreateNodeNameToInfoMap(nil, test.nodes)
-		ttp := priorityFunction(ComputeTaintTolerationPriorityMap, ComputeTaintTolerationPriorityReduce)
+		ttp := priorityFunction(ComputeTaintTolerationPriorityMap, ComputeTaintTolerationPriorityReduce, nil)
 		list, err := ttp(test.pod, nodeNameToInfo, test.nodes)
 		if err != nil {
 			t.Errorf("%s, unexpected error: %v", test.test, err)

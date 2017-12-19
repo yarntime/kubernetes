@@ -1,13 +1,9 @@
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])
-
 load(
     "@io_bazel_rules_go//go:def.bzl",
-    "go_binary",
     "go_library",
     "go_test",
-    "cgo_library",
 )
 
 go_library(
@@ -19,12 +15,12 @@ go_library(
         "plugins.go",
         "provider.go",
     ],
-    tags = ["automanaged"],
+    importpath = "k8s.io/kubernetes/pkg/credentialprovider",
     deps = [
-        "//pkg/api/v1:go_default_library",
-        "//pkg/util/sets:go_default_library",
-        "//vendor:github.com/docker/engine-api/types",
-        "//vendor:github.com/golang/glog",
+        "//vendor/github.com/docker/docker/api/types:go_default_library",
+        "//vendor/github.com/golang/glog:go_default_library",
+        "//vendor/k8s.io/api/core/v1:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/util/sets:go_default_library",
     ],
 )
 
@@ -35,7 +31,26 @@ go_test(
         "keyring_test.go",
         "provider_test.go",
     ],
-    library = "go_default_library",
+    importpath = "k8s.io/kubernetes/pkg/credentialprovider",
+    library = ":go_default_library",
+    deps = ["//vendor/github.com/docker/docker/api/types:go_default_library"],
+)
+
+filegroup(
+    name = "package-srcs",
+    srcs = glob(["**"]),
     tags = ["automanaged"],
-    deps = [],
+    visibility = ["//visibility:private"],
+)
+
+filegroup(
+    name = "all-srcs",
+    srcs = [
+        ":package-srcs",
+        "//pkg/credentialprovider/aws:all-srcs",
+        "//pkg/credentialprovider/azure:all-srcs",
+        "//pkg/credentialprovider/gcp:all-srcs",
+        "//pkg/credentialprovider/rancher:all-srcs",
+    ],
+    tags = ["automanaged"],
 )

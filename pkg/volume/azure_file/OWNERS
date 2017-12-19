@@ -1,2 +1,16 @@
-assignees:
+approvers:
+- andyzhangx
+- brendandburns
+- feiskyer
+- khenidak
 - rootfs
+reviewers:
+- andyzhangx
+- brendandburns
+- feiskyer
+- jsafrane
+- jingxu97
+- khenidak
+- msau42
+- rootfs
+- saad-ali

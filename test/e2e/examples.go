@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -26,10 +27,15 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api/v1"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/util/wait"
+	"k8s.io/api/core/v1"
+	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/authentication/serviceaccount"
+	clientset "k8s.io/client-go/kubernetes"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/generated"
 	testutils "k8s.io/kubernetes/test/utils"
@@ -48,6 +54,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 	// Reusable cluster state function.  This won't be adversly affected by lazy initialization of framework.
 	clusterState := func(selectorKey string, selectorValue string) *framework.ClusterVerification {
 		return f.NewClusterVerification(
+			f.Namespace,
 			framework.PodStateVerification{
 				Selectors:   map[string]string{selectorKey: selectorValue},
 				ValidPhases: []v1.PodPhase{v1.PodRunning},
@@ -62,6 +69,16 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 	BeforeEach(func() {
 		c = f.ClientSet
 		ns = f.Namespace.Name
+
+		// this test wants powerful permissions.  Since the namespace names are unique, we can leave this
+		// lying around so we don't have to race any caches
+		framework.BindClusterRoleInNamespace(c.RbacV1beta1(), "edit", f.Namespace.Name,
+			rbacv1beta1.Subject{Kind: rbacv1beta1.ServiceAccountKind, Namespace: f.Namespace.Name, Name: "default"})
+
+		err := framework.WaitForAuthorizationUpdate(c.AuthorizationV1beta1(),
+			serviceaccount.MakeUsername(f.Namespace.Name, "default"),
+			f.Namespace.Name, "create", schema.GroupResource{Resource: "pods"}, true)
+		framework.ExpectNoError(err)
 	})
 
 	framework.KubeDescribe("Redis", func() {
@@ -177,7 +194,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 				forEachPod(selectorKey, selectorValue, func(pod v1.Pod) {
 					_, maErr := framework.LookForStringInLog(f.Namespace.Name, pod.Name, "spark-master", "Starting Spark master at", serverStartTimeout)
 					if maErr != nil {
-						framework.Failf("Didn't find target string. error:", maErr)
+						framework.Failf("Didn't find target string. error: %v", maErr)
 					}
 				})
 			}
@@ -254,14 +271,13 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 			nsFlag := fmt.Sprintf("--namespace=%v", ns)
 
 			// have to change dns prefix because of the dynamic namespace
-			input, err := ioutil.ReadFile(mkpath("cassandra-statefulset.yaml"))
-			Expect(err).NotTo(HaveOccurred())
+			input := generated.ReadOrDie(mkpath("cassandra-statefulset.yaml"))
 
 			output := strings.Replace(string(input), "cassandra-0.cassandra.default.svc.cluster.local", "cassandra-0.cassandra."+ns+".svc.cluster.local", -1)
 
 			statefulsetYaml := "/tmp/cassandra-statefulset.yaml"
 
-			err = ioutil.WriteFile(statefulsetYaml, []byte(output), 0644)
+			err := ioutil.WriteFile(statefulsetYaml, []byte(output), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Starting the cassandra service")
@@ -282,11 +298,11 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 			label := labels.SelectorFromSet(labels.Set(map[string]string{"app": "cassandra"}))
 			err = wait.PollImmediate(statefulsetPoll, statefulsetTimeout,
 				func() (bool, error) {
-					podList, err := c.Core().Pods(ns).List(v1.ListOptions{LabelSelector: label.String()})
+					podList, err := c.CoreV1().Pods(ns).List(metav1.ListOptions{LabelSelector: label.String()})
 					if err != nil {
 						return false, fmt.Errorf("Unable to get list of pods in statefulset %s", label)
 					}
-					ExpectNoError(err)
+					framework.ExpectNoError(err)
 					if len(podList.Items) < numPets {
 						framework.Logf("Found %d pets, waiting for %d", len(podList.Items), numPets)
 						return false, nil
@@ -295,7 +311,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 						return false, fmt.Errorf("Too many pods scheduled, expected %d got %d", numPets, len(podList.Items))
 					}
 					for _, p := range podList.Items {
-						isReady := v1.IsPodReady(&p)
+						isReady := podutil.IsPodReady(&p)
 						if p.Status.Phase != v1.PodRunning || !isReady {
 							framework.Logf("Waiting for pod %v to enter %v - Ready=True, currently %v - Ready=%v", p.Name, v1.PodRunning, p.Status.Phase, isReady)
 							return false, nil
@@ -314,7 +330,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 				}
 			})
 			// using out of statefulset e2e as deleting pvc is a pain
-			deleteAllStatefulSets(c, ns)
+			framework.DeleteAllStatefulSets(c, ns)
 		})
 	})
 
@@ -380,7 +396,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 		It("liveness pods should be automatically restarted", func() {
 			mkpath := func(file string) string {
 				path := filepath.Join("test/fixtures/doc-yaml/user-guide/liveness", file)
-				ExpectNoError(createFileForGoBinData(path, path))
+				framework.ExpectNoError(createFileForGoBinData(path, path))
 				return path
 			}
 			execYaml := mkpath("exec-liveness.yaml")
@@ -397,9 +413,9 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 				err := framework.WaitForPodNameRunningInNamespace(c, podName, ns)
 				Expect(err).NotTo(HaveOccurred())
 				for t := time.Now(); time.Since(t) < timeout; time.Sleep(framework.Poll) {
-					pod, err := c.Core().Pods(ns).Get(podName)
+					pod, err := c.CoreV1().Pods(ns).Get(podName, metav1.GetOptions{})
 					framework.ExpectNoError(err, fmt.Sprintf("getting pod %s", podName))
-					stat := v1.GetExistingContainerStatus(pod.Status.ContainerStatuses, podName)
+					stat := podutil.GetExistingContainerStatus(pod.Status.ContainerStatuses, podName)
 					framework.Logf("Pod: %s, restart count:%d", stat.Name, stat.RestartCount)
 					if stat.RestartCount > 0 {
 						framework.Logf("Saw %v restart, succeeded...", podName)
@@ -432,7 +448,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 		It("should create a pod that reads a secret", func() {
 			mkpath := func(file string) string {
 				path := filepath.Join("test/fixtures/doc-yaml/user-guide/secrets", file)
-				ExpectNoError(createFileForGoBinData(path, path))
+				framework.ExpectNoError(createFileForGoBinData(path, path))
 				return path
 			}
 			secretYaml := mkpath("secret.yaml")
@@ -444,7 +460,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 			By("creating secret and pod")
 			framework.RunKubectlOrDie("create", "-f", filepath.Join(framework.TestContext.OutputDir, secretYaml), nsFlag)
 			framework.RunKubectlOrDie("create", "-f", filepath.Join(framework.TestContext.OutputDir, podYaml), nsFlag)
-			err := framework.WaitForPodNoLongerRunningInNamespace(c, podName, ns, "")
+			err := framework.WaitForPodNoLongerRunningInNamespace(c, podName, ns)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("checking if secret was read correctly")
@@ -457,7 +473,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 		It("should create a pod that prints his name and namespace", func() {
 			mkpath := func(file string) string {
 				path := filepath.Join("test/fixtures/doc-yaml/user-guide/downward-api", file)
-				ExpectNoError(createFileForGoBinData(path, path))
+				framework.ExpectNoError(createFileForGoBinData(path, path))
 				return path
 			}
 			podYaml := mkpath("dapi-pod.yaml")
@@ -466,7 +482,7 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 
 			By("creating the pod")
 			framework.RunKubectlOrDie("create", "-f", filepath.Join(framework.TestContext.OutputDir, podYaml), nsFlag)
-			err := framework.WaitForPodNoLongerRunningInNamespace(c, podName, ns, "")
+			err := framework.WaitForPodNoLongerRunningInNamespace(c, podName, ns)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("checking if name and namespace were passed correctly")
@@ -528,12 +544,12 @@ var _ = framework.KubeDescribe("[Feature:Example]", func() {
 				return filepath.Join(framework.TestContext.RepoRoot, "examples/storage/hazelcast", file)
 			}
 			serviceYaml := mkpath("hazelcast-service.yaml")
-			controllerYaml := mkpath("hazelcast-controller.yaml")
+			deploymentYaml := mkpath("hazelcast-deployment.yaml")
 			nsFlag := fmt.Sprintf("--namespace=%v", ns)
 
 			By("starting hazelcast")
 			framework.RunKubectlOrDie("create", "-f", serviceYaml, nsFlag)
-			framework.RunKubectlOrDie("create", "-f", controllerYaml, nsFlag)
+			framework.RunKubectlOrDie("create", "-f", deploymentYaml, nsFlag)
 			label := labels.SelectorFromSet(labels.Set(map[string]string{"name": "hazelcast"}))
 			err := testutils.WaitForPodsWithLabelRunning(c, ns, label)
 			Expect(err).NotTo(HaveOccurred())
@@ -561,11 +577,16 @@ func makeHttpRequestToService(c clientset.Interface, ns, service, path string, t
 	var result []byte
 	var err error
 	for t := time.Now(); time.Since(t) < timeout; time.Sleep(framework.Poll) {
-		proxyRequest, errProxy := framework.GetServicesProxyRequest(c, c.Core().RESTClient().Get())
+		proxyRequest, errProxy := framework.GetServicesProxyRequest(c, c.CoreV1().RESTClient().Get())
 		if errProxy != nil {
 			break
 		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), framework.SingleCallTimeout)
+		defer cancel()
+
 		result, err = proxyRequest.Namespace(ns).
+			Context(ctx).
 			Name(service).
 			Suffix(path).
 			Do().
@@ -575,17 +596,6 @@ func makeHttpRequestToService(c clientset.Interface, ns, service, path string, t
 		}
 	}
 	return string(result), err
-}
-
-// pass enough context with the 'old' parameter so that it replaces what your really intended.
-func prepareResourceWithReplacedString(inputFile, old, new string) string {
-	f, err := os.Open(inputFile)
-	Expect(err).NotTo(HaveOccurred())
-	defer f.Close()
-	data, err := ioutil.ReadAll(f)
-	Expect(err).NotTo(HaveOccurred())
-	podYaml := strings.Replace(string(data), old, new, 1)
-	return podYaml
 }
 
 func createFileForGoBinData(gobindataPath, outputFilename string) error {

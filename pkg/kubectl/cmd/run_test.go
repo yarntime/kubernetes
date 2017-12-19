@@ -27,16 +27,25 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/apimachinery/registered"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	"k8s.io/kubernetes/pkg/client/restclient/fake"
+
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/rest/fake"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-	"k8s.io/kubernetes/pkg/util/intstr"
+	"k8s.io/kubernetes/pkg/kubectl/scheme"
+	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
 )
+
+// This init should be removed after switching this command and its tests to user external types.
+func init() {
+	api.AddToScheme(scheme.Scheme)
+}
 
 func TestGetRestartPolicy(t *testing.T) {
 	tests := []struct {
@@ -79,7 +88,7 @@ func TestGetRestartPolicy(t *testing.T) {
 	}
 	for _, test := range tests {
 		cmd := &cobra.Command{}
-		cmd.Flags().String("restart", "", "dummy restart flag")
+		cmd.Flags().String("restart", "", i18n.T("dummy restart flag)"))
 		cmd.Flags().Lookup("restart").Value.Set(test.input)
 		policy, err := getRestartPolicy(cmd, test.interactive)
 		if test.expectErr && err == nil {
@@ -112,7 +121,13 @@ func TestGetEnv(t *testing.T) {
 }
 
 func TestRunArgsFollowDashRules(t *testing.T) {
-	_, _, rc := testData()
+	one := int32(1)
+	rc := &v1.ReplicationController{
+		ObjectMeta: metav1.ObjectMeta{Name: "rc1", Namespace: "test", ResourceVersion: "18"},
+		Spec: v1.ReplicationControllerSpec{
+			Replicas: &one,
+		},
+	}
 
 	tests := []struct {
 		args          []string
@@ -154,9 +169,16 @@ func TestRunArgsFollowDashRules(t *testing.T) {
 	for _, test := range tests {
 		f, tf, codec, ns := cmdtesting.NewAPIFactory()
 		tf.Client = &fake.RESTClient{
+			GroupVersion:         schema.GroupVersion{Version: "v1"},
 			NegotiatedSerializer: ns,
 			Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: 201, Header: defaultHeader(), Body: objBody(codec, &rc.Items[0])}, nil
+				if req.URL.Path == "/namespaces/test/replicationcontrollers" {
+					return &http.Response{StatusCode: 201, Header: defaultHeader(), Body: objBody(codec, rc)}, nil
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       ioutil.NopCloser(bytes.NewBuffer([]byte("{}"))),
+				}, nil
 			}),
 		}
 		tf.Namespace = "test"
@@ -164,7 +186,7 @@ func TestRunArgsFollowDashRules(t *testing.T) {
 		cmd := NewCmdRun(f, os.Stdin, os.Stdout, os.Stderr)
 		cmd.Flags().Set("image", "nginx")
 		cmd.Flags().Set("generator", "run/v1")
-		err := Run(f, os.Stdin, os.Stdout, os.Stderr, cmd, test.args, test.argsLenAtDash)
+		err := RunRun(f, os.Stdin, os.Stdout, os.Stderr, cmd, test.args, test.argsLenAtDash)
 		if test.expectError && err == nil {
 			t.Errorf("unexpected non-error (%s)", test.name)
 		}
@@ -196,7 +218,7 @@ func TestGenerateService(t *testing.T) {
 			expectErr: false,
 			name:      "basic",
 			service: api.Service{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: "foo",
 				},
 				Spec: api.ServiceSpec{
@@ -227,7 +249,7 @@ func TestGenerateService(t *testing.T) {
 			expectErr: false,
 			name:      "custom labels",
 			service: api.Service{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:   "foo",
 					Labels: map[string]string{"app": "bar"},
 				},
@@ -268,9 +290,10 @@ func TestGenerateService(t *testing.T) {
 	for _, test := range tests {
 		sawPOST := false
 		f, tf, codec, ns := cmdtesting.NewAPIFactory()
-		tf.ClientConfig = &restclient.Config{ContentConfig: restclient.ContentConfig{GroupVersion: &registered.GroupOrDie(api.GroupName).GroupVersion}}
+		tf.ClientConfig = defaultClientConfig()
 		tf.Printer = &testPrinter{}
 		tf.Client = &fake.RESTClient{
+			GroupVersion:         schema.GroupVersion{Version: "v1"},
 			NegotiatedSerializer: ns,
 			Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 				switch p, m := req.URL.Path, req.Method; {
@@ -279,14 +302,12 @@ func TestGenerateService(t *testing.T) {
 					body := objBody(codec, &test.service)
 					data, err := ioutil.ReadAll(req.Body)
 					if err != nil {
-						t.Errorf("unexpected error: %v", err)
-						t.FailNow()
+						t.Fatalf("unexpected error: %v", err)
 					}
 					defer req.Body.Close()
 					svc := &api.Service{}
 					if err := runtime.DecodeInto(codec, data, svc); err != nil {
-						t.Errorf("unexpected error: %v", err)
-						t.FailNow()
+						t.Fatalf("unexpected error: %v", err)
 					}
 					// Copy things that are defaulted by the system
 					test.service.Annotations = svc.Annotations
@@ -319,7 +340,7 @@ func TestGenerateService(t *testing.T) {
 		}
 
 		buff := &bytes.Buffer{}
-		err := generateService(f, cmd, test.args, test.serviceGenerator, test.params, "namespace", buff)
+		_, err := generateService(f, cmd, test.args, test.serviceGenerator, test.params, "namespace", buff)
 		if test.expectErr {
 			if err == nil {
 				t.Error("unexpected non-error")
@@ -346,6 +367,13 @@ func TestRunValidations(t *testing.T) {
 		},
 		{
 			args:        []string{"test"},
+			expectedErr: "--image is required",
+		},
+		{
+			args: []string{"test"},
+			flags: map[string]string{
+				"image": "#",
+			},
 			expectedErr: "Invalid image name",
 		},
 		{
@@ -410,7 +438,7 @@ func TestRunValidations(t *testing.T) {
 			Resp:                 &http.Response{StatusCode: 200, Header: defaultHeader(), Body: objBody(codec, cmdtesting.NewInternalType("", "", ""))},
 		}
 		tf.Namespace = "test"
-		tf.ClientConfig = &restclient.Config{ContentConfig: restclient.ContentConfig{GroupVersion: &schema.GroupVersion{Version: "v1"}}}
+		tf.ClientConfig = defaultClientConfig()
 		inBuf := bytes.NewReader([]byte{})
 		outBuf := bytes.NewBuffer([]byte{})
 		errBuf := bytes.NewBuffer([]byte{})
@@ -419,7 +447,7 @@ func TestRunValidations(t *testing.T) {
 		for flagName, flagValue := range test.flags {
 			cmd.Flags().Set(flagName, flagValue)
 		}
-		err := Run(f, inBuf, outBuf, errBuf, cmd, test.args, cmd.ArgsLenAtDash())
+		err := RunRun(f, inBuf, outBuf, errBuf, cmd, test.args, cmd.ArgsLenAtDash())
 		if err != nil && len(test.expectedErr) > 0 {
 			if !strings.Contains(err.Error(), test.expectedErr) {
 				t.Errorf("unexpected error: %v", err)

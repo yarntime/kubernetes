@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"k8s.io/kubernetes/pkg/genericapiserver/openapi/common"
+	openapi "k8s.io/kube-openapi/pkg/common"
 
 	"github.com/go-openapi/spec"
 	"github.com/google/gofuzz"
@@ -33,11 +33,11 @@ type Time struct {
 	time.Time `protobuf:"-"`
 }
 
-// DeepCopy returns a deep-copy of the Time value.  The underlying time.Time
+// DeepCopyInto creates a deep-copy of the Time value.  The underlying time.Time
 // type is effectively immutable in the time API, so it is safe to
 // copy-by-assign, despite the presence of (unexported) Pointer fields.
-func (t Time) DeepCopy() Time {
-	return t
+func (t *Time) DeepCopyInto(out *Time) {
+	*out = *t
 }
 
 // String returns the representation of the time.
@@ -141,8 +141,8 @@ func (t Time) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.UTC().Format(time.RFC3339))
 }
 
-func (_ Time) OpenAPIDefinition() common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
+func (_ Time) OpenAPIDefinition() openapi.OpenAPIDefinition {
+	return openapi.OpenAPIDefinition{
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				Type:   []string{"string"},

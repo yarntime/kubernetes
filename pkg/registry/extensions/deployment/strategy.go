@@ -17,32 +17,47 @@ limitations under the License.
 package deployment
 
 import (
-	"fmt"
-	"reflect"
-	"time"
-
-	"k8s.io/kubernetes/pkg/api"
+	appsv1beta1 "k8s.io/api/apps/v1beta1"
+	appsv1beta2 "k8s.io/api/apps/v1beta2"
+	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	"k8s.io/kubernetes/pkg/api/pod"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/apis/extensions/validation"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
-	"k8s.io/kubernetes/pkg/controller/deployment/util"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/registry/generic"
-	"k8s.io/kubernetes/pkg/runtime"
-	apistorage "k8s.io/kubernetes/pkg/storage"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 )
 
 // deploymentStrategy implements behavior for Deployments.
 type deploymentStrategy struct {
 	runtime.ObjectTyper
-	api.NameGenerator
+	names.NameGenerator
 }
 
 // Strategy is the default logic that applies when creating and updating Deployment
 // objects via the REST API.
-var Strategy = deploymentStrategy{api.Scheme, api.SimpleNameGenerator}
+var Strategy = deploymentStrategy{legacyscheme.Scheme, names.SimpleNameGenerator}
+
+// DefaultGarbageCollectionPolicy returns OrphanDependents by default. For apps/v1, returns DeleteDependents.
+func (deploymentStrategy) DefaultGarbageCollectionPolicy(ctx genericapirequest.Context) rest.GarbageCollectionPolicy {
+	if requestInfo, found := genericapirequest.RequestInfoFrom(ctx); found {
+		groupVersion := schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}
+		switch groupVersion {
+		case extensionsv1beta1.SchemeGroupVersion, appsv1beta1.SchemeGroupVersion, appsv1beta2.SchemeGroupVersion:
+			// for back compatibility
+			return rest.OrphanDependents
+		default:
+			return rest.DeleteDependents
+		}
+	}
+	return rest.OrphanDependents
+}
 
 // NamespaceScoped is true for deployment.
 func (deploymentStrategy) NamespaceScoped() bool {
@@ -50,14 +65,16 @@ func (deploymentStrategy) NamespaceScoped() bool {
 }
 
 // PrepareForCreate clears fields that are not allowed to be set by end users on creation.
-func (deploymentStrategy) PrepareForCreate(ctx api.Context, obj runtime.Object) {
+func (deploymentStrategy) PrepareForCreate(ctx genericapirequest.Context, obj runtime.Object) {
 	deployment := obj.(*extensions.Deployment)
 	deployment.Status = extensions.DeploymentStatus{}
 	deployment.Generation = 1
+
+	pod.DropDisabledAlphaFields(&deployment.Spec.Template.Spec)
 }
 
 // Validate validates a new deployment.
-func (deploymentStrategy) Validate(ctx api.Context, obj runtime.Object) field.ErrorList {
+func (deploymentStrategy) Validate(ctx genericapirequest.Context, obj runtime.Object) field.ErrorList {
 	deployment := obj.(*extensions.Deployment)
 	return validation.ValidateDeployment(deployment)
 }
@@ -72,32 +89,46 @@ func (deploymentStrategy) AllowCreateOnUpdate() bool {
 }
 
 // PrepareForUpdate clears fields that are not allowed to be set by end users on update.
-func (deploymentStrategy) PrepareForUpdate(ctx api.Context, obj, old runtime.Object) {
+func (deploymentStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, old runtime.Object) {
 	newDeployment := obj.(*extensions.Deployment)
 	oldDeployment := old.(*extensions.Deployment)
 	newDeployment.Status = oldDeployment.Status
 
+	pod.DropDisabledAlphaFields(&newDeployment.Spec.Template.Spec)
+	pod.DropDisabledAlphaFields(&oldDeployment.Spec.Template.Spec)
+
 	// Spec updates bump the generation so that we can distinguish between
 	// scaling events and template changes, annotation updates bump the generation
 	// because annotations are copied from deployments to their replica sets.
-	if !reflect.DeepEqual(newDeployment.Spec, oldDeployment.Spec) ||
-		!reflect.DeepEqual(newDeployment.Annotations, oldDeployment.Annotations) {
+	if !apiequality.Semantic.DeepEqual(newDeployment.Spec, oldDeployment.Spec) ||
+		!apiequality.Semantic.DeepEqual(newDeployment.Annotations, oldDeployment.Annotations) {
 		newDeployment.Generation = oldDeployment.Generation + 1
-	}
-
-	// Records timestamp on selector updates in annotation
-	if !reflect.DeepEqual(newDeployment.Spec.Selector, oldDeployment.Spec.Selector) {
-		if newDeployment.Annotations == nil {
-			newDeployment.Annotations = make(map[string]string)
-		}
-		now := metav1.Now()
-		newDeployment.Annotations[util.SelectorUpdateAnnotation] = now.Format(time.RFC3339)
 	}
 }
 
 // ValidateUpdate is the default update validation for an end user.
-func (deploymentStrategy) ValidateUpdate(ctx api.Context, obj, old runtime.Object) field.ErrorList {
-	return validation.ValidateDeploymentUpdate(obj.(*extensions.Deployment), old.(*extensions.Deployment))
+func (deploymentStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old runtime.Object) field.ErrorList {
+	newDeployment := obj.(*extensions.Deployment)
+	oldDeployment := old.(*extensions.Deployment)
+	allErrs := validation.ValidateDeploymentUpdate(newDeployment, oldDeployment)
+
+	// Update is not allowed to set Spec.Selector for all groups/versions except extensions/v1beta1.
+	// If RequestInfo is nil, it is better to revert to old behavior (i.e. allow update to set Spec.Selector)
+	// to prevent unintentionally breaking users who may rely on the old behavior.
+	// TODO(#50791): after apps/v1beta1 and extensions/v1beta1 are removed,
+	// move selector immutability check inside ValidateDeploymentUpdate().
+	if requestInfo, found := genericapirequest.RequestInfoFrom(ctx); found {
+		groupVersion := schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}
+		switch groupVersion {
+		case appsv1beta1.SchemeGroupVersion, extensionsv1beta1.SchemeGroupVersion:
+			// no-op for compatibility
+		default:
+			// disallow mutation of selector
+			allErrs = append(allErrs, apivalidation.ValidateImmutableField(newDeployment.Spec.Selector, oldDeployment.Spec.Selector, field.NewPath("spec").Child("selector"))...)
+		}
+	}
+
+	return allErrs
 }
 
 func (deploymentStrategy) AllowUnconditionalUpdate() bool {
@@ -111,7 +142,7 @@ type deploymentStatusStrategy struct {
 var StatusStrategy = deploymentStatusStrategy{Strategy}
 
 // PrepareForUpdate clears fields that are not allowed to be set by end users on update of status
-func (deploymentStatusStrategy) PrepareForUpdate(ctx api.Context, obj, old runtime.Object) {
+func (deploymentStatusStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, old runtime.Object) {
 	newDeployment := obj.(*extensions.Deployment)
 	oldDeployment := old.(*extensions.Deployment)
 	newDeployment.Spec = oldDeployment.Spec
@@ -119,31 +150,6 @@ func (deploymentStatusStrategy) PrepareForUpdate(ctx api.Context, obj, old runti
 }
 
 // ValidateUpdate is the default update validation for an end user updating status
-func (deploymentStatusStrategy) ValidateUpdate(ctx api.Context, obj, old runtime.Object) field.ErrorList {
+func (deploymentStatusStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old runtime.Object) field.ErrorList {
 	return validation.ValidateDeploymentStatusUpdate(obj.(*extensions.Deployment), old.(*extensions.Deployment))
-}
-
-// DeploymentToSelectableFields returns a field set that represents the object.
-func DeploymentToSelectableFields(deployment *extensions.Deployment) fields.Set {
-	return generic.ObjectMetaFieldsSet(&deployment.ObjectMeta, true)
-}
-
-// GetAttrs returns labels and fields of a given object for filtering purposes.
-func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
-	deployment, ok := obj.(*extensions.Deployment)
-	if !ok {
-		return nil, nil, fmt.Errorf("given object is not a deployment.")
-	}
-	return labels.Set(deployment.ObjectMeta.Labels), DeploymentToSelectableFields(deployment), nil
-}
-
-// MatchDeployment is the filter used by the generic etcd backend to route
-// watch events from etcd to clients of the apiserver only interested in specific
-// labels/fields.
-func MatchDeployment(label labels.Selector, field fields.Selector) apistorage.SelectionPredicate {
-	return apistorage.SelectionPredicate{
-		Label:    label,
-		Field:    field,
-		GetAttrs: GetAttrs,
-	}
 }

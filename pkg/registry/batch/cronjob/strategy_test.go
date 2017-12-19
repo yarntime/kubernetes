@@ -19,10 +19,11 @@ package cronjob
 import (
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
-	apitesting "k8s.io/kubernetes/pkg/api/testing"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/kubernetes/pkg/apis/batch"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	api "k8s.io/kubernetes/pkg/apis/core"
 )
 
 func newBool(a bool) *bool {
@@ -32,7 +33,7 @@ func newBool(a bool) *bool {
 }
 
 func TestCronJobStrategy(t *testing.T) {
-	ctx := api.NewDefaultContext()
+	ctx := genericapirequest.NewDefaultContext()
 	if !Strategy.NamespaceScoped() {
 		t.Errorf("CronJob must be namespace scoped")
 	}
@@ -44,13 +45,13 @@ func TestCronJobStrategy(t *testing.T) {
 		Spec: api.PodSpec{
 			RestartPolicy: api.RestartPolicyOnFailure,
 			DNSPolicy:     api.DNSClusterFirst,
-			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent"}},
+			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile}},
 		},
 	}
 	scheduledJob := &batch.CronJob{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mycronjob",
-			Namespace: api.NamespaceDefault,
+			Namespace: metav1.NamespaceDefault,
 		},
 		Spec: batch.CronJobSpec{
 			Schedule:          "* * * * ?",
@@ -73,7 +74,7 @@ func TestCronJobStrategy(t *testing.T) {
 	}
 	now := metav1.Now()
 	updatedCronJob := &batch.CronJob{
-		ObjectMeta: api.ObjectMeta{Name: "bar", ResourceVersion: "4"},
+		ObjectMeta: metav1.ObjectMeta{Name: "bar", ResourceVersion: "4"},
 		Spec: batch.CronJobSpec{
 			Schedule: "5 5 5 * ?",
 		},
@@ -91,10 +92,17 @@ func TestCronJobStrategy(t *testing.T) {
 	if len(errs) == 0 {
 		t.Errorf("Expected a validation error")
 	}
+
+	// Make sure we correctly implement the interface.
+	// Otherwise a typo could silently change the default.
+	var gcds rest.GarbageCollectionDeleteStrategy = Strategy
+	if got, want := gcds.DefaultGarbageCollectionPolicy(genericapirequest.NewContext()), rest.OrphanDependents; got != want {
+		t.Errorf("DefaultGarbageCollectionPolicy() = %#v, want %#v", got, want)
+	}
 }
 
 func TestCronJobStatusStrategy(t *testing.T) {
-	ctx := api.NewDefaultContext()
+	ctx := genericapirequest.NewDefaultContext()
 	if !StatusStrategy.NamespaceScoped() {
 		t.Errorf("CronJob must be namespace scoped")
 	}
@@ -105,14 +113,14 @@ func TestCronJobStatusStrategy(t *testing.T) {
 		Spec: api.PodSpec{
 			RestartPolicy: api.RestartPolicyOnFailure,
 			DNSPolicy:     api.DNSClusterFirst,
-			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent"}},
+			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile}},
 		},
 	}
 	oldSchedule := "* * * * ?"
 	oldCronJob := &batch.CronJob{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            "mycronjob",
-			Namespace:       api.NamespaceDefault,
+			Namespace:       metav1.NamespaceDefault,
 			ResourceVersion: "10",
 		},
 		Spec: batch.CronJobSpec{
@@ -127,9 +135,9 @@ func TestCronJobStatusStrategy(t *testing.T) {
 	}
 	now := metav1.Now()
 	newCronJob := &batch.CronJob{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            "mycronjob",
-			Namespace:       api.NamespaceDefault,
+			Namespace:       metav1.NamespaceDefault,
 			ResourceVersion: "9",
 		},
 		Spec: batch.CronJobSpec{
@@ -160,14 +168,4 @@ func TestCronJobStatusStrategy(t *testing.T) {
 	if newCronJob.ResourceVersion != "9" {
 		t.Errorf("Incoming resource version on update should not be mutated")
 	}
-}
-
-// FIXME: this is failing conversion.go
-func TestSelectableFieldLabelConversions(t *testing.T) {
-	apitesting.TestSelectableFieldLabelConversionsOfKind(t,
-		"batch/v2alpha1",
-		"CronJob",
-		CronJobToSelectableFields(&batch.CronJob{}),
-		nil,
-	)
 }

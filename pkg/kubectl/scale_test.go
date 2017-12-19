@@ -20,15 +20,18 @@ import (
 	"errors"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	testcore "k8s.io/client-go/testing"
+	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/apis/batch"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	appsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/apps/internalversion"
 	batchclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/batch/internalversion"
 	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 	extensionsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/extensions/internalversion"
-	testcore "k8s.io/kubernetes/pkg/client/testing/core"
 )
 
 type ErrorReplicationControllers struct {
@@ -67,7 +70,7 @@ func TestReplicationControllerScaleRetry(t *testing.T) {
 	preconditions := ScalePrecondition{-1, ""}
 	count := uint(3)
 	name := "foo-v1"
-	namespace := api.NamespaceDefault
+	namespace := metav1.NamespaceDefault
 
 	scaleFunc := ScaleCondition(&scaler, &preconditions, namespace, name, count, nil)
 	pass, err := scaleFunc()
@@ -126,7 +129,7 @@ func TestReplicationControllerScale(t *testing.T) {
 
 func TestReplicationControllerScaleFailsPreconditions(t *testing.T) {
 	fake := fake.NewSimpleClientset(&api.ReplicationController{
-		ObjectMeta: api.ObjectMeta{Namespace: api.NamespaceDefault, Name: "foo"},
+		ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: "foo"},
 		Spec: api.ReplicationControllerSpec{
 			Replicas: 10,
 		},
@@ -161,7 +164,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{-1, ""},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -174,7 +177,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{0, ""},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -187,7 +190,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{-1, "foo"},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -200,7 +203,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -213,7 +216,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -226,7 +229,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "bar",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -239,7 +242,7 @@ func TestValidateReplicationController(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			controller: api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "bar",
 				},
 				Spec: api.ReplicationControllerSpec{
@@ -256,7 +259,7 @@ func TestValidateReplicationController(t *testing.T) {
 			t.Errorf("unexpected error: %v (%s)", err, test.test)
 		}
 		if err == nil && test.expectError {
-			t.Errorf("unexpected non-error: %v (%s)", err, test.test)
+			t.Errorf("expected an error: %v (%s)", err, test.test)
 		}
 	}
 }
@@ -277,7 +280,7 @@ func (c *ErrorJobs) Update(job *batch.Job) (*batch.Job, error) {
 	return nil, errors.New("Job update failure")
 }
 
-func (c *ErrorJobs) Get(name string) (*batch.Job, error) {
+func (c *ErrorJobs) Get(name string, options metav1.GetOptions) (*batch.Job, error) {
 	zero := int32(0)
 	return &batch.Job{
 		Spec: batch.JobSpec{
@@ -320,14 +323,14 @@ func TestJobScaleRetry(t *testing.T) {
 	scaleFunc = ScaleCondition(&scaler, &preconditions, namespace, name, count, nil)
 	pass, err = scaleFunc()
 	if err == nil {
-		t.Errorf("Expected error on precondition failure")
+		t.Error("Expected error on precondition failure")
 	}
 }
 
 func job() *batch.Job {
 	return &batch.Job{
-		ObjectMeta: api.ObjectMeta{
-			Namespace: api.NamespaceDefault,
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
 			Name:      "foo",
 		},
 	}
@@ -346,7 +349,7 @@ func TestJobScale(t *testing.T) {
 		t.Errorf("unexpected actions: %v, expected 2 actions (get, update)", actions)
 	}
 	if action, ok := actions[0].(testcore.GetAction); !ok || action.GetResource().GroupResource() != batch.Resource("jobs") || action.GetName() != name {
-		t.Errorf("unexpected action: %v, expected get-replicationController %s", actions[0], name)
+		t.Errorf("unexpected action: %v, expected get-job %s", actions[0], name)
 	}
 	if action, ok := actions[1].(testcore.UpdateAction); !ok || action.GetResource().GroupResource() != batch.Resource("jobs") || *action.GetObject().(*batch.Job).Spec.Parallelism != int32(count) {
 		t.Errorf("unexpected action %v, expected update-job with parallelism = %d", actions[1], count)
@@ -375,8 +378,8 @@ func TestJobScaleInvalid(t *testing.T) {
 func TestJobScaleFailsPreconditions(t *testing.T) {
 	ten := int32(10)
 	fake := fake.NewSimpleClientset(&batch.Job{
-		ObjectMeta: api.ObjectMeta{
-			Namespace: api.NamespaceDefault,
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
 			Name:      "foo",
 		},
 		Spec: batch.JobSpec{
@@ -414,7 +417,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{-1, ""},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: batch.JobSpec{
@@ -427,7 +430,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{0, ""},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: batch.JobSpec{
@@ -440,7 +443,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{-1, "foo"},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: batch.JobSpec{
@@ -453,7 +456,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: batch.JobSpec{
@@ -466,7 +469,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: batch.JobSpec{
@@ -479,7 +482,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 			},
@@ -489,7 +492,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "bar",
 				},
 				Spec: batch.JobSpec{
@@ -502,7 +505,7 @@ func TestValidateJob(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			job: batch.Job{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "bar",
 				},
 				Spec: batch.JobSpec{
@@ -519,7 +522,7 @@ func TestValidateJob(t *testing.T) {
 			t.Errorf("unexpected error: %v (%s)", err, test.test)
 		}
 		if err == nil && test.expectError {
-			t.Errorf("unexpected non-error: %v (%s)", err, test.test)
+			t.Errorf("expected an error: %v (%s)", err, test.test)
 		}
 	}
 }
@@ -540,7 +543,7 @@ func (c *ErrorDeployments) Update(deployment *extensions.Deployment) (*extension
 	return nil, errors.New("deployment update failure")
 }
 
-func (c *ErrorDeployments) Get(name string) (*extensions.Deployment, error) {
+func (c *ErrorDeployments) Get(name string, options metav1.GetOptions) (*extensions.Deployment, error) {
 	return &extensions.Deployment{
 		Spec: extensions.DeploymentSpec{
 			Replicas: 0,
@@ -582,14 +585,14 @@ func TestDeploymentScaleRetry(t *testing.T) {
 	scaleFunc = ScaleCondition(scaler, preconditions, namespace, name, count, nil)
 	pass, err = scaleFunc()
 	if err == nil {
-		t.Errorf("Expected error on precondition failure")
+		t.Error("Expected error on precondition failure")
 	}
 }
 
 func deployment() *extensions.Deployment {
 	return &extensions.Deployment{
-		ObjectMeta: api.ObjectMeta{
-			Namespace: api.NamespaceDefault,
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
 			Name:      "foo",
 		},
 	}
@@ -608,7 +611,7 @@ func TestDeploymentScale(t *testing.T) {
 		t.Errorf("unexpected actions: %v, expected 2 actions (get, update)", actions)
 	}
 	if action, ok := actions[0].(testcore.GetAction); !ok || action.GetResource().GroupResource() != extensions.Resource("deployments") || action.GetName() != name {
-		t.Errorf("unexpected action: %v, expected get-replicationController %s", actions[0], name)
+		t.Errorf("unexpected action: %v, expected get-deployment %s", actions[0], name)
 	}
 	if action, ok := actions[1].(testcore.UpdateAction); !ok || action.GetResource().GroupResource() != extensions.Resource("deployments") || action.GetObject().(*extensions.Deployment).Spec.Replicas != int32(count) {
 		t.Errorf("unexpected action %v, expected update-deployment with replicas = %d", actions[1], count)
@@ -636,8 +639,8 @@ func TestDeploymentScaleInvalid(t *testing.T) {
 
 func TestDeploymentScaleFailsPreconditions(t *testing.T) {
 	fake := fake.NewSimpleClientset(&extensions.Deployment{
-		ObjectMeta: api.ObjectMeta{
-			Namespace: api.NamespaceDefault,
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
 			Name:      "foo",
 		},
 		Spec: extensions.DeploymentSpec{
@@ -675,7 +678,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{-1, ""},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -688,7 +691,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{0, ""},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -701,7 +704,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{-1, "foo"},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -714,7 +717,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -727,7 +730,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -740,7 +743,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "foo",
 				},
 			},
@@ -750,7 +753,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "bar",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -763,7 +766,7 @@ func TestValidateDeployment(t *testing.T) {
 		{
 			preconditions: ScalePrecondition{10, "foo"},
 			deployment: extensions.Deployment{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: "bar",
 				},
 				Spec: extensions.DeploymentSpec{
@@ -780,7 +783,530 @@ func TestValidateDeployment(t *testing.T) {
 			t.Errorf("unexpected error: %v (%s)", err, test.test)
 		}
 		if err == nil && test.expectError {
-			t.Errorf("unexpected non-error: %v (%s)", err, test.test)
+			t.Errorf("expected an error: %v (%s)", err, test.test)
+		}
+	}
+}
+
+type ErrorStatefulSets struct {
+	appsclient.StatefulSetInterface
+	conflict bool
+	invalid  bool
+}
+
+func (c *ErrorStatefulSets) Update(statefulSet *apps.StatefulSet) (*apps.StatefulSet, error) {
+	switch {
+	case c.invalid:
+		return nil, kerrors.NewInvalid(api.Kind(statefulSet.Kind), statefulSet.Name, nil)
+	case c.conflict:
+		return nil, kerrors.NewConflict(api.Resource(statefulSet.Kind), statefulSet.Name, nil)
+	}
+	return nil, errors.New("statefulSet update failure")
+}
+
+func (c *ErrorStatefulSets) Get(name string, options metav1.GetOptions) (*apps.StatefulSet, error) {
+	return &apps.StatefulSet{
+		Spec: apps.StatefulSetSpec{
+			Replicas: 0,
+		},
+	}, nil
+}
+
+type ErrorStatefulSetClient struct {
+	appsclient.StatefulSetsGetter
+	conflict bool
+	invalid  bool
+}
+
+func (c *ErrorStatefulSetClient) StatefulSets(namespace string) appsclient.StatefulSetInterface {
+	return &ErrorStatefulSets{
+		StatefulSetInterface: c.StatefulSetsGetter.StatefulSets(namespace),
+		invalid:              c.invalid,
+		conflict:             c.conflict,
+	}
+}
+
+func statefulSet() *apps.StatefulSet {
+	return &apps.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "foo",
+		},
+	}
+}
+
+func TestStatefulSetScale(t *testing.T) {
+	fake := fake.NewSimpleClientset(statefulSet())
+	scaler := StatefulSetScaler{fake.Apps()}
+	preconditions := ScalePrecondition{-1, ""}
+	count := uint(3)
+	name := "foo"
+	scaler.Scale("default", name, count, &preconditions, nil, nil)
+
+	actions := fake.Actions()
+	if len(actions) != 2 {
+		t.Errorf("unexpected actions: %v, expected 2 actions (get, update)", actions)
+	}
+
+	if action, ok := actions[0].(testcore.GetAction); !ok || action.GetResource().GroupResource() != apps.Resource("statefulsets") || action.GetName() != name {
+		t.Errorf("unexpected action: %v, expected get-statefulsets %s", actions[0], name)
+	}
+	if action, ok := actions[1].(testcore.UpdateAction); !ok || action.GetResource().GroupResource() != apps.Resource("statefulsets") || action.GetObject().(*apps.StatefulSet).Spec.Replicas != int32(count) {
+		t.Errorf("unexpected action %v, expected update-statefulset with replicas = %d", actions[1], count)
+	}
+}
+
+func TestStatefulSetScaleRetry(t *testing.T) {
+	fake := &ErrorStatefulSetClient{StatefulSetsGetter: fake.NewSimpleClientset().Apps(), conflict: true}
+	scaler := &StatefulSetScaler{fake}
+	preconditions := &ScalePrecondition{-1, ""}
+	count := uint(3)
+	name := "foo"
+	namespace := "default"
+
+	scaleFunc := ScaleCondition(scaler, preconditions, namespace, name, count, nil)
+	pass, err := scaleFunc()
+	if pass != false {
+		t.Errorf("Expected an update failure to return pass = false, got pass = %v", pass)
+	}
+	if err != nil {
+		t.Errorf("Did not expect an error on update failure, got %v", err)
+	}
+	preconditions = &ScalePrecondition{3, ""}
+	scaleFunc = ScaleCondition(scaler, preconditions, namespace, name, count, nil)
+	pass, err = scaleFunc()
+	if err == nil {
+		t.Error("Expected error on precondition failure")
+	}
+}
+
+func TestStatefulSetScaleInvalid(t *testing.T) {
+	fake := &ErrorStatefulSetClient{StatefulSetsGetter: fake.NewSimpleClientset().Apps(), invalid: true}
+	scaler := StatefulSetScaler{fake}
+	preconditions := ScalePrecondition{-1, ""}
+	count := uint(3)
+	name := "foo"
+	namespace := "default"
+
+	scaleFunc := ScaleCondition(&scaler, &preconditions, namespace, name, count, nil)
+	pass, err := scaleFunc()
+	if pass {
+		t.Errorf("Expected an update failure to return pass = false, got pass = %v", pass)
+	}
+	e, ok := err.(ScaleError)
+	if err == nil || !ok || e.FailureType != ScaleUpdateFailure {
+		t.Errorf("Expected error on invalid update failure, got %v", err)
+	}
+}
+
+func TestStatefulSetScaleFailsPreconditions(t *testing.T) {
+	fake := fake.NewSimpleClientset(&apps.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "foo",
+		},
+		Spec: apps.StatefulSetSpec{
+			Replicas: 10,
+		},
+	})
+	scaler := StatefulSetScaler{fake.Apps()}
+	preconditions := ScalePrecondition{2, ""}
+	count := uint(3)
+	name := "foo"
+	scaler.Scale("default", name, count, &preconditions, nil, nil)
+
+	actions := fake.Actions()
+	if len(actions) != 1 {
+		t.Errorf("unexpected actions: %v, expected 1 actions (get)", actions)
+	}
+	if action, ok := actions[0].(testcore.GetAction); !ok || action.GetResource().GroupResource() != apps.Resource("statefulsets") || action.GetName() != name {
+		t.Errorf("unexpected action: %v, expected get-statefulset %s", actions[0], name)
+	}
+}
+
+func TestValidateStatefulSet(t *testing.T) {
+	zero, ten, twenty := int32(0), int32(10), int32(20)
+	tests := []struct {
+		preconditions ScalePrecondition
+		statefulset   apps.StatefulSet
+		expectError   bool
+		test          string
+	}{
+		{
+			preconditions: ScalePrecondition{-1, ""},
+			expectError:   false,
+			test:          "defaults",
+		},
+		{
+			preconditions: ScalePrecondition{-1, ""},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: false,
+			test:        "defaults 2",
+		},
+		{
+			preconditions: ScalePrecondition{0, ""},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: zero,
+				},
+			},
+			expectError: false,
+			test:        "size matches",
+		},
+		{
+			preconditions: ScalePrecondition{-1, "foo"},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: false,
+			test:        "resource version matches",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: false,
+			test:        "both match",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: twenty,
+				},
+			},
+			expectError: true,
+			test:        "size different",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+			},
+			expectError: true,
+			test:        "no replicas",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "bar",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: true,
+			test:        "version different",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			statefulset: apps.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "bar",
+				},
+				Spec: apps.StatefulSetSpec{
+					Replicas: twenty,
+				},
+			},
+			expectError: true,
+			test:        "both different",
+		},
+	}
+	for _, test := range tests {
+		err := test.preconditions.ValidateStatefulSet(&test.statefulset)
+		if err != nil && !test.expectError {
+			t.Errorf("unexpected error: %v (%s)", err, test.test)
+		}
+		if err == nil && test.expectError {
+			t.Errorf("expected an error: %v (%s)", err, test.test)
+		}
+	}
+}
+
+type ErrorReplicaSets struct {
+	extensionsclient.ReplicaSetInterface
+	conflict bool
+	invalid  bool
+}
+
+func (c *ErrorReplicaSets) Update(replicaSets *extensions.ReplicaSet) (*extensions.ReplicaSet, error) {
+	switch {
+	case c.invalid:
+		return nil, kerrors.NewInvalid(api.Kind(replicaSets.Kind), replicaSets.Name, nil)
+	case c.conflict:
+		return nil, kerrors.NewConflict(api.Resource(replicaSets.Kind), replicaSets.Name, nil)
+	}
+	return nil, errors.New("replicaSets update failure")
+}
+
+func (c *ErrorReplicaSets) Get(name string, options metav1.GetOptions) (*extensions.ReplicaSet, error) {
+	return &extensions.ReplicaSet{
+		Spec: extensions.ReplicaSetSpec{
+			Replicas: 0,
+		},
+	}, nil
+}
+
+type ErrorReplicaSetClient struct {
+	extensionsclient.ReplicaSetsGetter
+	conflict bool
+	invalid  bool
+}
+
+func (c *ErrorReplicaSetClient) ReplicaSets(namespace string) extensionsclient.ReplicaSetInterface {
+	return &ErrorReplicaSets{
+		ReplicaSetInterface: c.ReplicaSetsGetter.ReplicaSets(namespace),
+		invalid:             c.invalid,
+		conflict:            c.conflict,
+	}
+}
+
+func replicaSet() *extensions.ReplicaSet {
+	return &extensions.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "foo",
+		},
+	}
+}
+
+func TestReplicaSetScale(t *testing.T) {
+	fake := fake.NewSimpleClientset(replicaSet())
+	scaler := ReplicaSetScaler{fake.Extensions()}
+	preconditions := ScalePrecondition{-1, ""}
+	count := uint(3)
+	name := "foo"
+	scaler.Scale("default", name, count, &preconditions, nil, nil)
+
+	actions := fake.Actions()
+	if len(actions) != 2 {
+		t.Errorf("unexpected actions: %v, expected 2 actions (get, update)", actions)
+	}
+	if action, ok := actions[0].(testcore.GetAction); !ok || action.GetResource().GroupResource() != extensions.Resource("replicasets") || action.GetName() != name {
+		t.Errorf("unexpected action: %v, expected get-replicationSet %s", actions[0], name)
+	}
+	if action, ok := actions[1].(testcore.UpdateAction); !ok || action.GetResource().GroupResource() != extensions.Resource("replicasets") || action.GetObject().(*extensions.ReplicaSet).Spec.Replicas != int32(count) {
+		t.Errorf("unexpected action %v, expected update-replicaSet with replicas = %d", actions[1], count)
+	}
+}
+
+func TestReplicaSetScaleRetry(t *testing.T) {
+	fake := &ErrorReplicaSetClient{ReplicaSetsGetter: fake.NewSimpleClientset().Extensions(), conflict: true}
+	scaler := &ReplicaSetScaler{fake}
+	preconditions := &ScalePrecondition{-1, ""}
+	count := uint(3)
+	name := "foo"
+	namespace := "default"
+
+	scaleFunc := ScaleCondition(scaler, preconditions, namespace, name, count, nil)
+	pass, err := scaleFunc()
+	if pass != false {
+		t.Errorf("Expected an update failure to return pass = false, got pass = %v", pass)
+	}
+	if err != nil {
+		t.Errorf("Did not expect an error on update failure, got %v", err)
+	}
+	preconditions = &ScalePrecondition{3, ""}
+	scaleFunc = ScaleCondition(scaler, preconditions, namespace, name, count, nil)
+	pass, err = scaleFunc()
+	if err == nil {
+		t.Error("Expected error on precondition failure")
+	}
+}
+
+func TestReplicaSetScaleInvalid(t *testing.T) {
+	fake := &ErrorReplicaSetClient{ReplicaSetsGetter: fake.NewSimpleClientset().Extensions(), invalid: true}
+	scaler := ReplicaSetScaler{fake}
+	preconditions := ScalePrecondition{-1, ""}
+	count := uint(3)
+	name := "foo"
+	namespace := "default"
+
+	scaleFunc := ScaleCondition(&scaler, &preconditions, namespace, name, count, nil)
+	pass, err := scaleFunc()
+	if pass {
+		t.Errorf("Expected an update failure to return pass = false, got pass = %v", pass)
+	}
+	e, ok := err.(ScaleError)
+	if err == nil || !ok || e.FailureType != ScaleUpdateFailure {
+		t.Errorf("Expected error on invalid update failure, got %v", err)
+	}
+}
+
+func TestReplicaSetsGetterFailsPreconditions(t *testing.T) {
+	fake := fake.NewSimpleClientset(&extensions.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
+			Name:      "foo",
+		},
+		Spec: extensions.ReplicaSetSpec{
+			Replicas: 10,
+		},
+	})
+	scaler := ReplicaSetScaler{fake.Extensions()}
+	preconditions := ScalePrecondition{2, ""}
+	count := uint(3)
+	name := "foo"
+	scaler.Scale("default", name, count, &preconditions, nil, nil)
+
+	actions := fake.Actions()
+	if len(actions) != 1 {
+		t.Errorf("unexpected actions: %v, expected 1 actions (get)", actions)
+	}
+	if action, ok := actions[0].(testcore.GetAction); !ok || action.GetResource().GroupResource() != extensions.Resource("replicasets") || action.GetName() != name {
+		t.Errorf("unexpected action: %v, expected get-replicaSets %s", actions[0], name)
+	}
+}
+
+func TestValidateReplicaSets(t *testing.T) {
+	zero, ten, twenty := int32(0), int32(10), int32(20)
+	tests := []struct {
+		preconditions ScalePrecondition
+		replicaSets   extensions.ReplicaSet
+		expectError   bool
+		test          string
+	}{
+		{
+			preconditions: ScalePrecondition{-1, ""},
+			expectError:   false,
+			test:          "defaults",
+		},
+		{
+			preconditions: ScalePrecondition{-1, ""},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: false,
+			test:        "defaults 2",
+		},
+		{
+			preconditions: ScalePrecondition{0, ""},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: zero,
+				},
+			},
+			expectError: false,
+			test:        "size matches",
+		},
+		{
+			preconditions: ScalePrecondition{-1, "foo"},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: false,
+			test:        "resource version matches",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: false,
+			test:        "both match",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: twenty,
+				},
+			},
+			expectError: true,
+			test:        "size different",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "foo",
+				},
+			},
+			expectError: true,
+			test:        "no replicas",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "bar",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: ten,
+				},
+			},
+			expectError: true,
+			test:        "version different",
+		},
+		{
+			preconditions: ScalePrecondition{10, "foo"},
+			replicaSets: extensions.ReplicaSet{
+				ObjectMeta: metav1.ObjectMeta{
+					ResourceVersion: "bar",
+				},
+				Spec: extensions.ReplicaSetSpec{
+					Replicas: twenty,
+				},
+			},
+			expectError: true,
+			test:        "both different",
+		},
+	}
+	for _, test := range tests {
+		err := test.preconditions.ValidateReplicaSet(&test.replicaSets)
+		if err != nil && !test.expectError {
+			t.Errorf("unexpected error: %v (%s)", err, test.test)
+		}
+		if err == nil && test.expectError {
+			t.Errorf("expected an error: %v (%s)", err, test.test)
 		}
 	}
 }

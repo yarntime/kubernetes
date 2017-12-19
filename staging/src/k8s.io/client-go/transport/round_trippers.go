@@ -19,9 +19,16 @@ package transport
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/gregjones/httpcache"
+	"github.com/gregjones/httpcache/diskcache"
+	"github.com/peterbourgon/diskv"
+
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 )
 
 // HTTPWrappersForConfig wraps a round tripper with any relevant layered
@@ -53,6 +60,9 @@ func HTTPWrappersForConfig(config *Config, rt http.RoundTripper) (http.RoundTrip
 		len(config.Impersonate.Extra) > 0 {
 		rt = NewImpersonatingRoundTripper(config.Impersonate, rt)
 	}
+	if len(config.CacheDir) > 0 {
+		rt = NewCacheRoundTripper(config.CacheDir, rt)
+	}
 	return rt, nil
 }
 
@@ -76,6 +86,95 @@ type requestCanceler interface {
 	CancelRequest(*http.Request)
 }
 
+type cacheRoundTripper struct {
+	rt *httpcache.Transport
+}
+
+// NewCacheRoundTripper creates a roundtripper that reads the ETag on
+// response headers and send the If-None-Match header on subsequent
+// corresponding requests.
+func NewCacheRoundTripper(cacheDir string, rt http.RoundTripper) http.RoundTripper {
+	d := diskv.New(diskv.Options{
+		BasePath: cacheDir,
+		TempDir:  filepath.Join(cacheDir, ".diskv-temp"),
+	})
+	t := httpcache.NewTransport(diskcache.NewWithDiskv(d))
+	t.Transport = rt
+
+	return &cacheRoundTripper{rt: t}
+}
+
+func (rt *cacheRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return rt.rt.RoundTrip(req)
+}
+
+func (rt *cacheRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt.Transport }
+
+type authProxyRoundTripper struct {
+	username string
+	groups   []string
+	extra    map[string][]string
+
+	rt http.RoundTripper
+}
+
+// NewAuthProxyRoundTripper provides a roundtripper which will add auth proxy fields to requests for
+// authentication terminating proxy cases
+// assuming you pull the user from the context:
+// username is the user.Info.GetName() of the user
+// groups is the user.Info.GetGroups() of the user
+// extra is the user.Info.GetExtra() of the user
+// extra can contain any additional information that the authenticator
+// thought was interesting, for example authorization scopes.
+// In order to faithfully round-trip through an impersonation flow, these keys
+// MUST be lowercase.
+func NewAuthProxyRoundTripper(username string, groups []string, extra map[string][]string, rt http.RoundTripper) http.RoundTripper {
+	return &authProxyRoundTripper{
+		username: username,
+		groups:   groups,
+		extra:    extra,
+		rt:       rt,
+	}
+}
+
+func (rt *authProxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = utilnet.CloneRequest(req)
+	SetAuthProxyHeaders(req, rt.username, rt.groups, rt.extra)
+
+	return rt.rt.RoundTrip(req)
+}
+
+// SetAuthProxyHeaders stomps the auth proxy header fields.  It mutates its argument.
+func SetAuthProxyHeaders(req *http.Request, username string, groups []string, extra map[string][]string) {
+	req.Header.Del("X-Remote-User")
+	req.Header.Del("X-Remote-Group")
+	for key := range req.Header {
+		if strings.HasPrefix(strings.ToLower(key), strings.ToLower("X-Remote-Extra-")) {
+			req.Header.Del(key)
+		}
+	}
+
+	req.Header.Set("X-Remote-User", username)
+	for _, group := range groups {
+		req.Header.Add("X-Remote-Group", group)
+	}
+	for key, values := range extra {
+		for _, value := range values {
+			req.Header.Add("X-Remote-Extra-"+key, value)
+		}
+	}
+}
+
+func (rt *authProxyRoundTripper) CancelRequest(req *http.Request) {
+	if canceler, ok := rt.rt.(requestCanceler); ok {
+		canceler.CancelRequest(req)
+	} else {
+		glog.Errorf("CancelRequest not implemented")
+	}
+}
+
+func (rt *authProxyRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt }
+
 type userAgentRoundTripper struct {
 	agent string
 	rt    http.RoundTripper
@@ -89,7 +188,7 @@ func (rt *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	if len(req.Header.Get("User-Agent")) != 0 {
 		return rt.rt.RoundTrip(req)
 	}
-	req = cloneRequest(req)
+	req = utilnet.CloneRequest(req)
 	req.Header.Set("User-Agent", rt.agent)
 	return rt.rt.RoundTrip(req)
 }
@@ -120,7 +219,7 @@ func (rt *basicAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	if len(req.Header.Get("Authorization")) != 0 {
 		return rt.rt.RoundTrip(req)
 	}
-	req = cloneRequest(req)
+	req = utilnet.CloneRequest(req)
 	req.SetBasicAuth(rt.username, rt.password)
 	return rt.rt.RoundTrip(req)
 }
@@ -170,7 +269,7 @@ func (rt *impersonatingRoundTripper) RoundTrip(req *http.Request) (*http.Respons
 	if len(req.Header.Get(ImpersonateUserHeader)) != 0 {
 		return rt.delegate.RoundTrip(req)
 	}
-	req = cloneRequest(req)
+	req = utilnet.CloneRequest(req)
 	req.Header.Set(ImpersonateUserHeader, rt.impersonate.UserName)
 
 	for _, group := range rt.impersonate.Groups {
@@ -211,7 +310,7 @@ func (rt *bearerAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, 
 		return rt.rt.RoundTrip(req)
 	}
 
-	req = cloneRequest(req)
+	req = utilnet.CloneRequest(req)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", rt.bearer))
 	return rt.rt.RoundTrip(req)
 }
@@ -225,20 +324,6 @@ func (rt *bearerAuthRoundTripper) CancelRequest(req *http.Request) {
 }
 
 func (rt *bearerAuthRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt }
-
-// cloneRequest returns a clone of the provided *http.Request.
-// The clone is a shallow copy of the struct and its Header map.
-func cloneRequest(r *http.Request) *http.Request {
-	// shallow copy of the struct
-	r2 := new(http.Request)
-	*r2 = *r
-	// deep copy of the Header
-	r2.Header = make(http.Header)
-	for k, s := range r.Header {
-		r2.Header[k] = s
-	}
-	return r2
-}
 
 // requestInfo keeps track of information about a request/response combination
 type requestInfo struct {

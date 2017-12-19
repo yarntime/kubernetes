@@ -19,9 +19,9 @@ package testing
 import (
 	"sync"
 
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 type FakeMirrorClient struct {

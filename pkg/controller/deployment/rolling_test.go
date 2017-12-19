@@ -19,11 +19,11 @@ package deployment
 import (
 	"testing"
 
-	extensions "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/fake"
-	"k8s.io/kubernetes/pkg/client/record"
-	"k8s.io/kubernetes/pkg/client/testing/core"
-	"k8s.io/kubernetes/pkg/util/intstr"
+	extensions "k8s.io/api/extensions/v1beta1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes/fake"
+	core "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/record"
 )
 
 func TestDeploymentController_reconcileNewReplicaSet(t *testing.T) {

@@ -1,13 +1,8 @@
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])
-
 load(
     "@io_bazel_rules_go//go:def.bzl",
-    "go_binary",
     "go_library",
-    "go_test",
-    "cgo_library",
 )
 
 go_library(
@@ -15,8 +10,31 @@ go_library(
     srcs = [
         "doc.go",
         "selinux.go",
-        "selinux_linux.go",
-    ],
+        "selinux_unsupported.go",
+    ] + select({
+        "@io_bazel_rules_go//go/platform:linux_amd64": [
+            "selinux_linux.go",
+        ],
+        "//conditions:default": [],
+    }),
+    importpath = "k8s.io/kubernetes/pkg/util/selinux",
+    deps = select({
+        "@io_bazel_rules_go//go/platform:linux_amd64": [
+            "//vendor/github.com/opencontainers/selinux/go-selinux:go_default_library",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(
+    name = "package-srcs",
+    srcs = glob(["**"]),
     tags = ["automanaged"],
-    deps = ["//vendor:github.com/opencontainers/runc/libcontainer/selinux"],
+    visibility = ["//visibility:private"],
+)
+
+filegroup(
+    name = "all-srcs",
+    srcs = [":package-srcs"],
+    tags = ["automanaged"],
 )

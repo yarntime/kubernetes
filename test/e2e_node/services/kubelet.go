@@ -28,6 +28,8 @@ import (
 
 	"github.com/golang/glog"
 
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e_node/builder"
 )
@@ -58,15 +60,36 @@ func (a *args) Set(value string) error {
 
 // kubeletArgs is the override kubelet args specified by the test runner.
 var kubeletArgs args
+var kubeletContainerized bool
+var hyperkubeImage string
 
 func init() {
 	flag.Var(&kubeletArgs, "kubelet-flags", "Kubelet flags passed to kubelet, this will override default kubelet flags in the test. Flags specified in multiple kubelet-flags will be concatenate.")
+	flag.BoolVar(&kubeletContainerized, "kubelet-containerized", false, "Run kubelet in a docker container")
+	flag.StringVar(&hyperkubeImage, "hyperkube-image", "", "Docker image with containerized kubelet")
+}
+
+// RunKubelet starts kubelet and waits for termination signal. Once receives the
+// termination signal, it will stop the kubelet gracefully.
+func RunKubelet() {
+	var err error
+	// Enable monitorParent to make sure kubelet will receive termination signal
+	// when test process exits.
+	e := NewE2EServices(true /* monitorParent */)
+	defer e.Stop()
+	e.kubelet, err = e.startKubelet()
+	if err != nil {
+		glog.Fatalf("Failed to start kubelet: %v", err)
+	}
+	// Wait until receiving a termination signal.
+	waitForTerminationSignal()
 }
 
 const (
 	// Ports of different e2e services.
-	kubeletPort         = "10250"
-	kubeletReadOnlyPort = "10255"
+	kubeletPort          = "10250"
+	kubeletReadOnlyPort  = "10255"
+	KubeletRootDirectory = "/var/lib/kubelet"
 	// Health check url of kubelet
 	kubeletHealthCheckURL = "http://127.0.0.1:" + kubeletReadOnlyPort + "/healthz"
 )
@@ -74,13 +97,31 @@ const (
 // startKubelet starts the Kubelet in a separate process or returns an error
 // if the Kubelet fails to start.
 func (e *E2EServices) startKubelet() (*server, error) {
+	if kubeletContainerized && hyperkubeImage == "" {
+		return nil, fmt.Errorf("the --hyperkube-image option must be set")
+	}
+
 	glog.Info("Starting kubelet")
+
+	// set feature gates so we can check which features are enabled and pass the appropriate flags
+	utilfeature.DefaultFeatureGate.Set(framework.TestContext.FeatureGates)
+
+	// Build kubeconfig
+	kubeconfigPath, err := createKubeconfigCWD()
+	if err != nil {
+		return nil, err
+	}
+
 	// Create pod manifest path
 	manifestPath, err := createPodManifestDirectory()
 	if err != nil {
 		return nil, err
 	}
 	e.rmDirs = append(e.rmDirs, manifestPath)
+	err = createRootDirectory(KubeletRootDirectory)
+	if err != nil {
+		return nil, err
+	}
 	var killCommand, restartCommand *exec.Cmd
 	var isSystemd bool
 	// Apply default kubelet flags.
@@ -92,15 +133,46 @@ func (e *E2EServices) startKubelet() (*server, error) {
 		// sense to test it that way
 		isSystemd = true
 		unitName := fmt.Sprintf("kubelet-%d.service", rand.Int31())
-		cmdArgs = append(cmdArgs, systemdRun, "--unit="+unitName, "--remain-after-exit", builder.GetKubeletServerBin())
+		if kubeletContainerized {
+			cmdArgs = append(cmdArgs, systemdRun, "--unit="+unitName, "--slice=runtime.slice", "--remain-after-exit",
+				"/usr/bin/docker", "run", "--name=kubelet",
+				"--rm", "--privileged", "--net=host", "--pid=host",
+				"-e HOST=/rootfs", "-e HOST_ETC=/host-etc",
+				"-v", "/etc/localtime:/etc/localtime:ro",
+				"-v", "/etc/machine-id:/etc/machine-id:ro",
+				"-v", filepath.Dir(kubeconfigPath)+":/etc/kubernetes",
+				"-v", "/:/rootfs:ro,rslave",
+				"-v", "/run:/run",
+				"-v", "/sys/fs/cgroup:/sys/fs/cgroup:rw",
+				"-v", "/sys:/sys:rw",
+				"-v", "/usr/bin/docker:/usr/bin/docker:ro",
+				"-v", "/var/lib/cni:/var/lib/cni",
+				"-v", "/var/lib/docker:/var/lib/docker",
+				"-v", "/var/lib/kubelet:/var/lib/kubelet:rw,rslave",
+				"-v", "/var/log:/var/log",
+				"-v", manifestPath+":"+manifestPath+":rw",
+				hyperkubeImage, "/hyperkube", "kubelet",
+				"--containerized",
+			)
+			kubeconfigPath = "/etc/kubernetes/kubeconfig"
+		} else {
+			cmdArgs = append(cmdArgs, systemdRun, "--unit="+unitName, "--slice=runtime.slice", "--remain-after-exit", builder.GetKubeletServerBin())
+		}
+
 		killCommand = exec.Command("systemctl", "kill", unitName)
 		restartCommand = exec.Command("systemctl", "restart", unitName)
-		e.logFiles["kubelet.log"] = logFileData{
-			journalctlCommand: []string{"-u", unitName},
+		e.logs["kubelet.log"] = LogFileData{
+			Name:              "kubelet.log",
+			JournalctlCommand: []string{"-u", unitName},
 		}
+		cmdArgs = append(cmdArgs,
+			"--kubelet-cgroups=/kubelet.slice",
+			"--cgroup-root=/",
+		)
 	} else {
 		cmdArgs = append(cmdArgs, builder.GetKubeletServerBin())
 		cmdArgs = append(cmdArgs,
+			// TODO(random-liu): Get rid of this docker specific thing.
 			"--runtime-cgroups=/docker-daemon",
 			"--kubelet-cgroups=/kubelet",
 			"--cgroup-root=/",
@@ -108,32 +180,59 @@ func (e *E2EServices) startKubelet() (*server, error) {
 		)
 	}
 	cmdArgs = append(cmdArgs,
-		"--api-servers", getAPIServerClientURL(),
+		"--kubeconfig", kubeconfigPath,
 		"--address", "0.0.0.0",
 		"--port", kubeletPort,
 		"--read-only-port", kubeletReadOnlyPort,
+		"--root-dir", KubeletRootDirectory,
 		"--volume-stats-agg-period", "10s", // Aggregate volumes frequently so tests don't need to wait as long
 		"--allow-privileged", "true",
 		"--serialize-image-pulls", "false",
-		"--config", manifestPath,
+		"--pod-manifest-path", manifestPath,
 		"--file-check-frequency", "10s", // Check file frequently so tests won't wait too long
-		"--pod-cidr", "10.180.0.0/24", // Assign a fixed CIDR to the node because there is no node controller.
+		"--docker-disable-shared-pid=false",
+		// Assign a fixed CIDR to the node because there is no node controller.
+		//
+		// Note: this MUST be in sync with with the IP in
+		// - cluster/gce/config-test.sh and
+		// - test/e2e_node/conformance/run_test.sh.
+		"--pod-cidr", "10.100.0.0/24",
 		"--eviction-pressure-transition-period", "30s",
-		// Apply test framework feature gates by default. This could also be overridden
-		// by kubelet-flags.
-		"--feature-gates", framework.TestContext.FeatureGates,
 		"--eviction-hard", "memory.available<250Mi,nodefs.available<10%,nodefs.inodesFree<5%", // The hard eviction thresholds.
 		"--eviction-minimum-reclaim", "nodefs.available=5%,nodefs.inodesFree=5%", // The minimum reclaimed resources after eviction.
 		"--v", LOG_VERBOSITY_LEVEL, "--logtostderr",
 	)
+
+	// Apply test framework feature gates by default. This could also be overridden
+	// by kubelet-flags.
+	if framework.TestContext.FeatureGates != "" {
+		cmdArgs = append(cmdArgs, "--feature-gates", framework.TestContext.FeatureGates)
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicKubeletConfig) {
+		// Enable dynamic config if the feature gate is enabled
+		dynamicConfigDir, err := getDynamicConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		cmdArgs = append(cmdArgs, "--dynamic-config-dir", dynamicConfigDir)
+	}
+
 	// Enable kubenet by default.
-	cniDir, err := getCNIDirectory()
+	cniBinDir, err := getCNIBinDirectory()
 	if err != nil {
 		return nil, err
 	}
+
+	cniConfDir, err := getCNIConfDirectory()
+	if err != nil {
+		return nil, err
+	}
+
 	cmdArgs = append(cmdArgs,
 		"--network-plugin=kubenet",
-		"--network-plugin-dir", cniDir)
+		"--cni-bin-dir", cniBinDir,
+		"--cni-conf-dir", cniConfDir)
 
 	// Keep hostname override for convenience.
 	if framework.TestContext.NodeName != "" { // If node name is specified, set hostname override.
@@ -174,14 +273,88 @@ func createPodManifestDirectory() (string, error) {
 	return path, nil
 }
 
-// getCNIDirectory returns CNI directory.
-func getCNIDirectory() (string, error) {
+// createKubeconfig creates a kubeconfig file at the fully qualified `path`. The parent dirs must exist.
+func createKubeconfig(path string) error {
+	kubeconfig := []byte(`apiVersion: v1
+kind: Config
+users:
+- name: kubelet
+clusters:
+- cluster:
+    server: ` + getAPIServerClientURL() + `
+    insecure-skip-tls-verify: true
+  name: local
+contexts:
+- context:
+    cluster: local
+    user: kubelet
+  name: local-context
+current-context: local-context`)
+
+	if err := ioutil.WriteFile(path, kubeconfig, 0666); err != nil {
+		return err
+	}
+	return nil
+}
+
+func createRootDirectory(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return os.MkdirAll(path, os.FileMode(0755))
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
+func kubeconfigCWDPath() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current working directory: %v", err)
+	}
+	return filepath.Join(cwd, "kubeconfig"), nil
+}
+
+// like createKubeconfig, but creates kubeconfig at current-working-directory/kubeconfig
+// returns a fully-qualified path to the kubeconfig file
+func createKubeconfigCWD() (string, error) {
+	kubeconfigPath, err := kubeconfigCWDPath()
+	if err != nil {
+		return "", err
+	}
+
+	if err = createKubeconfig(kubeconfigPath); err != nil {
+		return "", err
+	}
+	return kubeconfigPath, nil
+}
+
+// getCNIBinDirectory returns CNI directory.
+func getCNIBinDirectory() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	// TODO(random-liu): Make sure the cni directory name is the same with that in remote/remote.go
 	return filepath.Join(cwd, "cni", "bin"), nil
+}
+
+// getCNIConfDirectory returns CNI Configuration directory.
+func getCNIConfDirectory() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cwd, "cni", "net.d"), nil
+}
+
+// getDynamicConfigDir returns the directory for dynamic Kubelet configuration
+func getDynamicConfigDir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cwd, "dynamic-kubelet-config"), nil
 }
 
 // adjustArgsForSystemd escape special characters in kubelet arguments for systemd. Systemd

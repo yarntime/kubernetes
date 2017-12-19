@@ -22,17 +22,19 @@ package operationexecutor
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/v1"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/client/record"
-	kevents "k8s.io/kubernetes/pkg/kubelet/events"
-	"k8s.io/kubernetes/pkg/types"
+
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	expandcache "k8s.io/kubernetes/pkg/controller/volume/expand/cache"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/nestedpendingoperations"
 	volumetypes "k8s.io/kubernetes/pkg/volume/util/types"
 	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
@@ -64,12 +66,16 @@ type OperationExecutor interface {
 	// It then updates the actual state of the world to reflect that.
 	AttachVolume(volumeToAttach VolumeToAttach, actualStateOfWorld ActualStateOfWorldAttacherUpdater) error
 
-	// VerifyVolumesAreAttached verifies the given list of volumes to see whether they are still attached to the node.
+	// VerifyVolumesAreAttachedPerNode verifies the given list of volumes to see whether they are still attached to the node.
 	// If any volume is not attached right now, it will update the actual state of the world to reflect that.
 	// Note that this operation could be operated concurrently with other attach/detach operations.
 	// In theory (but very unlikely in practise), race condition among these operations might mark volume as detached
 	// even if it is attached. But reconciler can correct this in a short period of time.
-	VerifyVolumesAreAttached(AttachedVolumes []AttachedVolume, nodeName types.NodeName, actualStateOfWorld ActualStateOfWorldAttacherUpdater) error
+	VerifyVolumesAreAttachedPerNode(AttachedVolumes []AttachedVolume, nodeName types.NodeName, actualStateOfWorld ActualStateOfWorldAttacherUpdater) error
+
+	// VerifyVolumesAreAttached verifies volumes being used in entire cluster and if they are still attached to the node
+	// If any volume is not attached right now, it will update actual state of world to reflect that.
+	VerifyVolumesAreAttached(volumesToVerify map[types.NodeName][]AttachedVolume, actualStateOfWorld ActualStateOfWorldAttacherUpdater)
 
 	// DetachVolume detaches the volume from the node specified in
 	// volumeToDetach, and updates the actual state of the world to reflect
@@ -87,7 +93,10 @@ type OperationExecutor interface {
 	// * Mount the volume to the pod specific path.
 	// * Update actual state of world to reflect volume is mounted to the pod
 	//   path.
-	MountVolume(waitForAttachTimeout time.Duration, volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater) error
+	// The parameter "isRemount" is informational and used to adjust logging
+	// verbosity. An initial mount is more log-worthy than a remount, for
+	// example.
+	MountVolume(waitForAttachTimeout time.Duration, volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater, isRemount bool) error
 
 	// UnmountVolume unmounts the volume from the pod specified in
 	// volumeToUnmount and updates the actual state of the world to reflect that.
@@ -97,6 +106,28 @@ type OperationExecutor interface {
 	// attachable volumes only, freeing it for detach. It then updates the
 	// actual state of the world to reflect that.
 	UnmountDevice(deviceToDetach AttachedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater, mounter mount.Interface) error
+
+	// MapVolume is used when the volumeMode is 'Block'.
+	// This method creates a symbolic link to the volume from both the pod
+	// specified in volumeToMount and global map path.
+	// Specifically it will:
+	// * Wait for the device to finish attaching (for attachable volumes only).
+	// * Update actual state of world to reflect volume is globally mounted/mapped.
+	// * Map volume to global map path using symbolic link.
+	// * Map the volume to the pod device map path using symbolic link.
+	// * Update actual state of world to reflect volume is mounted/mapped to the pod path.
+	MapVolume(waitForAttachTimeout time.Duration, volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater) error
+
+	// UnmapVolume unmaps symbolic link to the volume from both the pod device
+	// map path in volumeToUnmount and global map path.
+	// And then, updates the actual state of the world to reflect that.
+	UnmapVolume(volumeToUnmount MountedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater) error
+
+	// UnmapDevice checks number of symbolic links under global map path.
+	// If number of reference is zero, remove global map path directory and
+	// free a volume for detach.
+	// It then updates the actual state of the world to reflect that.
+	UnmapDevice(deviceToDetach AttachedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater, mounter mount.Interface) error
 
 	// VerifyControllerAttachedVolume checks if the specified volume is present
 	// in the specified nodes AttachedVolumes Status field. It uses kubeClient
@@ -113,22 +144,18 @@ type OperationExecutor interface {
 	// IsOperationPending returns true if an operation for the given volumeName and podName is pending,
 	// otherwise it returns false
 	IsOperationPending(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) bool
+	// Expand Volume will grow size available to PVC
+	ExpandVolume(*expandcache.PVCWithResizeRequest, expandcache.VolumeResizeMap) error
 }
 
 // NewOperationExecutor returns a new instance of OperationExecutor.
 func NewOperationExecutor(
-	kubeClient clientset.Interface,
-	volumePluginMgr *volume.VolumePluginMgr,
-	recorder record.EventRecorder,
-	checkNodeCapabilitiesBeforeMount bool) OperationExecutor {
+	operationGenerator OperationGenerator) OperationExecutor {
 
 	return &operationExecutor{
-		kubeClient:      kubeClient,
-		volumePluginMgr: volumePluginMgr,
 		pendingOperations: nestedpendingoperations.NewNestedPendingOperations(
 			true /* exponentialBackOffOnError */),
-		recorder: recorder,
-		checkNodeCapabilitiesBeforeMount: checkNodeCapabilitiesBeforeMount,
+		operationGenerator: operationGenerator,
 	}
 }
 
@@ -136,7 +163,7 @@ func NewOperationExecutor(
 // state of the world cache after successful mount/unmount.
 type ActualStateOfWorldMounterUpdater interface {
 	// Marks the specified volume as mounted to the specified pod
-	MarkVolumeAsMounted(podName volumetypes.UniquePodName, podUID types.UID, volumeName v1.UniqueVolumeName, mounter volume.Mounter, outerVolumeSpecName string, volumeGidValue string) error
+	MarkVolumeAsMounted(podName volumetypes.UniquePodName, podUID types.UID, volumeName v1.UniqueVolumeName, mounter volume.Mounter, blockVolumeMapper volume.BlockVolumeMapper, outerVolumeSpecName string, volumeGidValue string) error
 
 	// Marks the specified volume as unmounted from the specified pod
 	MarkVolumeAsUnmounted(podName volumetypes.UniquePodName, volumeName v1.UniqueVolumeName) error
@@ -164,16 +191,61 @@ type ActualStateOfWorldAttacherUpdater interface {
 	MarkVolumeAsDetached(volumeName v1.UniqueVolumeName, nodeName types.NodeName)
 
 	// Marks desire to detach the specified volume (remove the volume from the node's
-	// volumesToReportedAsAttached list)
+	// volumesToReportAsAttached list)
 	RemoveVolumeFromReportAsAttached(volumeName v1.UniqueVolumeName, nodeName types.NodeName) error
 
 	// Unmarks the desire to detach for the specified volume (add the volume back to
-	// the node's volumesToReportedAsAttached list)
+	// the node's volumesToReportAsAttached list)
 	AddVolumeToReportAsAttached(volumeName v1.UniqueVolumeName, nodeName types.NodeName)
+}
+
+// VolumeLogger defines a set of operations for generating volume-related logging and error msgs
+type VolumeLogger interface {
+	// Creates a detailed msg that can be used in logs
+	// The msg format follows the pattern "<prefixMsg> <volume details> <suffixMsg>",
+	// where each implementation provides the volume details
+	GenerateMsgDetailed(prefixMsg, suffixMsg string) (detailedMsg string)
+
+	// Creates a detailed error that can be used in logs.
+	// The msg format follows the pattern "<prefixMsg> <volume details>: <err> ",
+	GenerateErrorDetailed(prefixMsg string, err error) (detailedErr error)
+
+	// Creates a simple msg that is user friendly and a detailed msg that can be used in logs
+	// The msg format follows the pattern "<prefixMsg> <volume details> <suffixMsg>",
+	// where each implementation provides the volume details
+	GenerateMsg(prefixMsg, suffixMsg string) (simpleMsg, detailedMsg string)
+
+	// Creates a simple error that is user friendly and a detailed error that can be used in logs.
+	// The msg format follows the pattern "<prefixMsg> <volume details>: <err> ",
+	GenerateError(prefixMsg string, err error) (simpleErr, detailedErr error)
+}
+
+// Generates an error string with the format ": <err>" if err exists
+func errSuffix(err error) string {
+	errStr := ""
+	if err != nil {
+		errStr = fmt.Sprintf(": %v", err)
+	}
+	return errStr
+}
+
+// Generate a detailed error msg for logs
+func generateVolumeMsgDetailed(prefixMsg, suffixMsg, volumeName, details string) (detailedMsg string) {
+	return fmt.Sprintf("%v for volume %q %v %v", prefixMsg, volumeName, details, suffixMsg)
+}
+
+// Generate a simplified error msg for events and a detailed error msg for logs
+func generateVolumeMsg(prefixMsg, suffixMsg, volumeName, details string) (simpleMsg, detailedMsg string) {
+	simpleMsg = fmt.Sprintf("%v for volume %q %v", prefixMsg, volumeName, suffixMsg)
+	return simpleMsg, generateVolumeMsgDetailed(prefixMsg, suffixMsg, volumeName, details)
 }
 
 // VolumeToAttach represents a volume that should be attached to a node.
 type VolumeToAttach struct {
+	// MultiAttachErrorReported indicates whether the multi-attach error has been reported for the given volume.
+	// It is used to to prevent reporting the error from being reported more than once for a given volume.
+	MultiAttachErrorReported bool
+
 	// VolumeName is the unique identifier for the volume that should be
 	// attached.
 	VolumeName v1.UniqueVolumeName
@@ -191,6 +263,37 @@ type VolumeToAttach struct {
 	// the name of the pod and the value is a pod object containing more
 	// information about the pod.
 	ScheduledPods []*v1.Pod
+}
+
+// GenerateMsgDetailed returns detailed msgs for volumes to attach
+func (volume *VolumeToAttach) GenerateMsgDetailed(prefixMsg, suffixMsg string) (detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) from node %q", volume.VolumeName, volume.NodeName)
+	volumeSpecName := "nil"
+	if volume.VolumeSpec != nil {
+		volumeSpecName = volume.VolumeSpec.Name()
+	}
+	return generateVolumeMsgDetailed(prefixMsg, suffixMsg, volumeSpecName, detailedStr)
+}
+
+// GenerateMsg returns simple and detailed msgs for volumes to attach
+func (volume *VolumeToAttach) GenerateMsg(prefixMsg, suffixMsg string) (simpleMsg, detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) from node %q", volume.VolumeName, volume.NodeName)
+	volumeSpecName := "nil"
+	if volume.VolumeSpec != nil {
+		volumeSpecName = volume.VolumeSpec.Name()
+	}
+	return generateVolumeMsg(prefixMsg, suffixMsg, volumeSpecName, detailedStr)
+}
+
+// GenerateErrorDetailed returns detailed errors for volumes to attach
+func (volume *VolumeToAttach) GenerateErrorDetailed(prefixMsg string, err error) (detailedErr error) {
+	return fmt.Errorf(volume.GenerateMsgDetailed(prefixMsg, errSuffix(err)))
+}
+
+// GenerateError returns simple and detailed errors for volumes to attach
+func (volume *VolumeToAttach) GenerateError(prefixMsg string, err error) (simpleErr, detailedErr error) {
+	simpleMsg, detailedMsg := volume.GenerateMsg(prefixMsg, errSuffix(err))
+	return fmt.Errorf(simpleMsg), fmt.Errorf(detailedMsg)
 }
 
 // VolumeToMount represents a volume that should be attached to this node and
@@ -233,6 +336,37 @@ type VolumeToMount struct {
 	ReportedInUse bool
 }
 
+// GenerateMsgDetailed returns detailed msgs for volumes to mount
+func (volume *VolumeToMount) GenerateMsgDetailed(prefixMsg, suffixMsg string) (detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) pod %q (UID: %q)", volume.VolumeName, volume.Pod.Name, volume.Pod.UID)
+	volumeSpecName := "nil"
+	if volume.VolumeSpec != nil {
+		volumeSpecName = volume.VolumeSpec.Name()
+	}
+	return generateVolumeMsgDetailed(prefixMsg, suffixMsg, volumeSpecName, detailedStr)
+}
+
+// GenerateMsg returns simple and detailed msgs for volumes to mount
+func (volume *VolumeToMount) GenerateMsg(prefixMsg, suffixMsg string) (simpleMsg, detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) pod %q (UID: %q)", volume.VolumeName, volume.Pod.Name, volume.Pod.UID)
+	volumeSpecName := "nil"
+	if volume.VolumeSpec != nil {
+		volumeSpecName = volume.VolumeSpec.Name()
+	}
+	return generateVolumeMsg(prefixMsg, suffixMsg, volumeSpecName, detailedStr)
+}
+
+// GenerateErrorDetailed returns detailed errors for volumes to mount
+func (volume *VolumeToMount) GenerateErrorDetailed(prefixMsg string, err error) (detailedErr error) {
+	return fmt.Errorf(volume.GenerateMsgDetailed(prefixMsg, errSuffix(err)))
+}
+
+// GenerateError returns simple and detailed errors for volumes to mount
+func (volume *VolumeToMount) GenerateError(prefixMsg string, err error) (simpleErr, detailedErr error) {
+	simpleMsg, detailedMsg := volume.GenerateMsg(prefixMsg, errSuffix(err))
+	return fmt.Errorf(simpleMsg), fmt.Errorf(detailedMsg)
+}
+
 // AttachedVolume represents a volume that is attached to a node.
 type AttachedVolume struct {
 	// VolumeName is the unique identifier for the volume that is attached.
@@ -252,6 +386,37 @@ type AttachedVolume struct {
 	// DevicePath contains the path on the node where the volume is attached.
 	// For non-attachable volumes this is empty.
 	DevicePath string
+}
+
+// GenerateMsgDetailed returns detailed msgs for attached volumes
+func (volume *AttachedVolume) GenerateMsgDetailed(prefixMsg, suffixMsg string) (detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) on node %q", volume.VolumeName, volume.NodeName)
+	volumeSpecName := "nil"
+	if volume.VolumeSpec != nil {
+		volumeSpecName = volume.VolumeSpec.Name()
+	}
+	return generateVolumeMsgDetailed(prefixMsg, suffixMsg, volumeSpecName, detailedStr)
+}
+
+// GenerateMsg returns simple and detailed msgs for attached volumes
+func (volume *AttachedVolume) GenerateMsg(prefixMsg, suffixMsg string) (simpleMsg, detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) on node %q", volume.VolumeName, volume.NodeName)
+	volumeSpecName := "nil"
+	if volume.VolumeSpec != nil {
+		volumeSpecName = volume.VolumeSpec.Name()
+	}
+	return generateVolumeMsg(prefixMsg, suffixMsg, volumeSpecName, detailedStr)
+}
+
+// GenerateErrorDetailed returns detailed errors for attached volumes
+func (volume *AttachedVolume) GenerateErrorDetailed(prefixMsg string, err error) (detailedErr error) {
+	return fmt.Errorf(volume.GenerateMsgDetailed(prefixMsg, errSuffix(err)))
+}
+
+// GenerateError returns simple and detailed errors for attached volumes
+func (volume *AttachedVolume) GenerateError(prefixMsg string, err error) (simpleErr, detailedErr error) {
+	simpleMsg, detailedMsg := volume.GenerateMsg(prefixMsg, errSuffix(err))
+	return fmt.Errorf(simpleMsg), fmt.Errorf(detailedMsg)
 }
 
 // MountedVolume represents a volume that has successfully been mounted to a pod.
@@ -288,7 +453,7 @@ type MountedVolume struct {
 	//     name: test-pd
 	//   spec:
 	//     containers:
-	//     - image: gcr.io/google_containers/test-webserver
+	//     - image: k8s.gcr.io/test-webserver
 	//     	 name: test-container
 	//     	 volumeMounts:
 	//     	 - mountPath: /test-pd
@@ -326,7 +491,7 @@ type MountedVolume struct {
 	//     name: test-pd
 	//   spec:
 	//     containers:
-	//     - image: gcr.io/google_containers/test-webserver
+	//     - image: k8s.gcr.io/test-webserver
 	//     	 name: test-container
 	//     	 volumeMounts:
 	//     	 - mountPath: /test-pd
@@ -354,30 +519,49 @@ type MountedVolume struct {
 	// by kubelet to create container.VolumeMap.
 	Mounter volume.Mounter
 
+	// BlockVolumeMapper is the volume mapper used to map this volume. It is required
+	// by kubelet to create container.VolumeMap.
+	BlockVolumeMapper volume.BlockVolumeMapper
+
 	// VolumeGidValue contains the value of the GID annotation, if present.
 	VolumeGidValue string
+
+	// VolumeSpec is a volume spec containing the specification for the volume
+	// that should be mounted.
+	VolumeSpec *volume.Spec
+}
+
+// GenerateMsgDetailed returns detailed msgs for mounted volumes
+func (volume *MountedVolume) GenerateMsgDetailed(prefixMsg, suffixMsg string) (detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) pod %q (UID: %q)", volume.VolumeName, volume.PodName, volume.PodUID)
+	return generateVolumeMsgDetailed(prefixMsg, suffixMsg, volume.OuterVolumeSpecName, detailedStr)
+}
+
+// GenerateMsg returns simple and detailed msgs for mounted volumes
+func (volume *MountedVolume) GenerateMsg(prefixMsg, suffixMsg string) (simpleMsg, detailedMsg string) {
+	detailedStr := fmt.Sprintf("(UniqueName: %q) pod %q (UID: %q)", volume.VolumeName, volume.PodName, volume.PodUID)
+	return generateVolumeMsg(prefixMsg, suffixMsg, volume.OuterVolumeSpecName, detailedStr)
+}
+
+// GenerateErrorDetailed returns simple and detailed errors for mounted volumes
+func (volume *MountedVolume) GenerateErrorDetailed(prefixMsg string, err error) (detailedErr error) {
+	return fmt.Errorf(volume.GenerateMsgDetailed(prefixMsg, errSuffix(err)))
+}
+
+// GenerateError returns simple and detailed errors for mounted volumes
+func (volume *MountedVolume) GenerateError(prefixMsg string, err error) (simpleErr, detailedErr error) {
+	simpleMsg, detailedMsg := volume.GenerateMsg(prefixMsg, errSuffix(err))
+	return fmt.Errorf(simpleMsg), fmt.Errorf(detailedMsg)
 }
 
 type operationExecutor struct {
-	// Used to fetch objects from the API server like Node in the
-	// VerifyControllerAttachedVolume operation.
-	kubeClient clientset.Interface
-
-	// volumePluginMgr is the volume plugin manager used to create volume
-	// plugin objects.
-	volumePluginMgr *volume.VolumePluginMgr
-
 	// pendingOperations keeps track of pending attach and detach operations so
 	// multiple operations are not started on the same volume
 	pendingOperations nestedpendingoperations.NestedPendingOperations
 
-	// recorder is used to record events in the API server
-	recorder record.EventRecorder
-
-	// checkNodeCapabilitiesBeforeMount, if set, enables the CanMount check,
-	// which verifies that the components (binaries, etc.) required to mount
-	// the volume are available on the underlying node before attempting mount.
-	checkNodeCapabilitiesBeforeMount bool
+	// operationGenerator is an interface that provides implementations for
+	// generating volume function
+	operationGenerator OperationGenerator
 }
 
 func (oe *operationExecutor) IsOperationPending(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) bool {
@@ -387,54 +571,138 @@ func (oe *operationExecutor) IsOperationPending(volumeName v1.UniqueVolumeName, 
 func (oe *operationExecutor) AttachVolume(
 	volumeToAttach VolumeToAttach,
 	actualStateOfWorld ActualStateOfWorldAttacherUpdater) error {
-	attachFunc, err :=
-		oe.generateAttachVolumeFunc(volumeToAttach, actualStateOfWorld)
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateAttachVolumeFunc(volumeToAttach, actualStateOfWorld)
 	if err != nil {
 		return err
 	}
 
 	return oe.pendingOperations.Run(
-		volumeToAttach.VolumeName, "" /* podName */, attachFunc)
+		volumeToAttach.VolumeName, "" /* podName */, generatedOperations)
 }
 
 func (oe *operationExecutor) DetachVolume(
 	volumeToDetach AttachedVolume,
 	verifySafeToDetach bool,
 	actualStateOfWorld ActualStateOfWorldAttacherUpdater) error {
-	detachFunc, err :=
-		oe.generateDetachVolumeFunc(volumeToDetach, verifySafeToDetach, actualStateOfWorld)
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateDetachVolumeFunc(volumeToDetach, verifySafeToDetach, actualStateOfWorld)
 	if err != nil {
 		return err
 	}
 
 	return oe.pendingOperations.Run(
-		volumeToDetach.VolumeName, "" /* podName */, detachFunc)
+		volumeToDetach.VolumeName, "" /* podName */, generatedOperations)
 }
 
 func (oe *operationExecutor) VerifyVolumesAreAttached(
+	attachedVolumes map[types.NodeName][]AttachedVolume,
+	actualStateOfWorld ActualStateOfWorldAttacherUpdater) {
+
+	// A map of plugin names and nodes on which they exist with volumes they manage
+	bulkVerifyPluginsByNode := make(map[string]map[types.NodeName][]*volume.Spec)
+	volumeSpecMapByPlugin := make(map[string]map[*volume.Spec]v1.UniqueVolumeName)
+
+	for node, nodeAttachedVolumes := range attachedVolumes {
+		for _, volumeAttached := range nodeAttachedVolumes {
+			if volumeAttached.VolumeSpec == nil {
+				glog.Errorf("VerifyVolumesAreAttached: nil spec for volume %s", volumeAttached.VolumeName)
+				continue
+			}
+			volumePlugin, err :=
+				oe.operationGenerator.GetVolumePluginMgr().FindPluginBySpec(volumeAttached.VolumeSpec)
+
+			if err != nil || volumePlugin == nil {
+				glog.Errorf(
+					"VolumesAreAttached.FindPluginBySpec failed for volume %q (spec.Name: %q) on node %q with error: %v",
+					volumeAttached.VolumeName,
+					volumeAttached.VolumeSpec.Name(),
+					volumeAttached.NodeName,
+					err)
+				continue
+			}
+
+			pluginName := volumePlugin.GetPluginName()
+
+			if volumePlugin.SupportsBulkVolumeVerification() {
+				pluginNodes, pluginNodesExist := bulkVerifyPluginsByNode[pluginName]
+
+				if !pluginNodesExist {
+					pluginNodes = make(map[types.NodeName][]*volume.Spec)
+				}
+
+				volumeSpecList, nodeExists := pluginNodes[node]
+				if !nodeExists {
+					volumeSpecList = []*volume.Spec{}
+				}
+				volumeSpecList = append(volumeSpecList, volumeAttached.VolumeSpec)
+				pluginNodes[node] = volumeSpecList
+
+				bulkVerifyPluginsByNode[pluginName] = pluginNodes
+				volumeSpecMap, mapExists := volumeSpecMapByPlugin[pluginName]
+
+				if !mapExists {
+					volumeSpecMap = make(map[*volume.Spec]v1.UniqueVolumeName)
+				}
+				volumeSpecMap[volumeAttached.VolumeSpec] = volumeAttached.VolumeName
+				volumeSpecMapByPlugin[pluginName] = volumeSpecMap
+				continue
+			}
+
+			// If node doesn't support Bulk volume polling it is best to poll individually
+			nodeError := oe.VerifyVolumesAreAttachedPerNode(nodeAttachedVolumes, node, actualStateOfWorld)
+			if nodeError != nil {
+				glog.Errorf("BulkVerifyVolumes.VerifyVolumesAreAttached verifying volumes on node %q with %v", node, nodeError)
+			}
+			break
+		}
+	}
+
+	for pluginName, pluginNodeVolumes := range bulkVerifyPluginsByNode {
+		generatedOperations, err := oe.operationGenerator.GenerateBulkVolumeVerifyFunc(
+			pluginNodeVolumes,
+			pluginName,
+			volumeSpecMapByPlugin[pluginName],
+			actualStateOfWorld)
+		if err != nil {
+			glog.Errorf("BulkVerifyVolumes.GenerateBulkVolumeVerifyFunc error bulk verifying volumes for plugin %q with  %v", pluginName, err)
+		}
+
+		// Ugly hack to ensure - we don't do parallel bulk polling of same volume plugin
+		uniquePluginName := v1.UniqueVolumeName(pluginName)
+		err = oe.pendingOperations.Run(uniquePluginName, "" /* Pod Name */, generatedOperations)
+		if err != nil {
+			glog.Errorf("BulkVerifyVolumes.Run Error bulk volume verification for plugin %q  with %v", pluginName, err)
+		}
+	}
+}
+
+func (oe *operationExecutor) VerifyVolumesAreAttachedPerNode(
 	attachedVolumes []AttachedVolume,
 	nodeName types.NodeName,
 	actualStateOfWorld ActualStateOfWorldAttacherUpdater) error {
-	volumesAreAttachedFunc, err :=
-		oe.generateVolumesAreAttachedFunc(attachedVolumes, nodeName, actualStateOfWorld)
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateVolumesAreAttachedFunc(attachedVolumes, nodeName, actualStateOfWorld)
 	if err != nil {
 		return err
 	}
+
 	// Give an empty UniqueVolumeName so that this operation could be executed concurrently.
-	return oe.pendingOperations.Run("" /* volumeName */, "" /* podName */, volumesAreAttachedFunc)
+	return oe.pendingOperations.Run("" /* volumeName */, "" /* podName */, generatedOperations)
 }
 
 func (oe *operationExecutor) MountVolume(
 	waitForAttachTimeout time.Duration,
 	volumeToMount VolumeToMount,
-	actualStateOfWorld ActualStateOfWorldMounterUpdater) error {
-	mountFunc, err := oe.generateMountVolumeFunc(
-		waitForAttachTimeout, volumeToMount, actualStateOfWorld)
+	actualStateOfWorld ActualStateOfWorldMounterUpdater,
+	isRemount bool) error {
+	generatedOperations, err := oe.operationGenerator.GenerateMountVolumeFunc(
+		waitForAttachTimeout, volumeToMount, actualStateOfWorld, isRemount)
 	if err != nil {
 		return err
 	}
 
-	podName := volumetypes.UniquePodName("")
+	podName := nestedpendingoperations.EmptyUniquePodName
 	// TODO: remove this -- not necessary
 	if !volumeToMount.PluginIsAttachable {
 		// Non-attachable volume plugins can execute mount for multiple pods
@@ -442,16 +710,17 @@ func (oe *operationExecutor) MountVolume(
 		podName = volumehelper.GetUniquePodName(volumeToMount.Pod)
 	}
 
+	// TODO mount_device
 	return oe.pendingOperations.Run(
-		volumeToMount.VolumeName, podName, mountFunc)
+		volumeToMount.VolumeName, podName, generatedOperations)
 }
 
 func (oe *operationExecutor) UnmountVolume(
 	volumeToUnmount MountedVolume,
 	actualStateOfWorld ActualStateOfWorldMounterUpdater) error {
 
-	unmountFunc, err :=
-		oe.generateUnmountVolumeFunc(volumeToUnmount, actualStateOfWorld)
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateUnmountVolumeFunc(volumeToUnmount, actualStateOfWorld)
 	if err != nil {
 		return err
 	}
@@ -461,762 +730,315 @@ func (oe *operationExecutor) UnmountVolume(
 	podName := volumetypes.UniquePodName(volumeToUnmount.PodUID)
 
 	return oe.pendingOperations.Run(
-		volumeToUnmount.VolumeName, podName, unmountFunc)
+		volumeToUnmount.VolumeName, podName, generatedOperations)
 }
 
 func (oe *operationExecutor) UnmountDevice(
 	deviceToDetach AttachedVolume,
 	actualStateOfWorld ActualStateOfWorldMounterUpdater,
 	mounter mount.Interface) error {
-	unmountDeviceFunc, err :=
-		oe.generateUnmountDeviceFunc(deviceToDetach, actualStateOfWorld, mounter)
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateUnmountDeviceFunc(deviceToDetach, actualStateOfWorld, mounter)
 	if err != nil {
 		return err
 	}
 
 	return oe.pendingOperations.Run(
-		deviceToDetach.VolumeName, "" /* podName */, unmountDeviceFunc)
+		deviceToDetach.VolumeName, "" /* podName */, generatedOperations)
+}
+
+func (oe *operationExecutor) ExpandVolume(pvcWithResizeRequest *expandcache.PVCWithResizeRequest, resizeMap expandcache.VolumeResizeMap) error {
+	generatedOperations, err := oe.operationGenerator.GenerateExpandVolumeFunc(pvcWithResizeRequest, resizeMap)
+
+	if err != nil {
+		return err
+	}
+	uniqueVolumeKey := v1.UniqueVolumeName(pvcWithResizeRequest.UniquePVCKey())
+
+	return oe.pendingOperations.Run(uniqueVolumeKey, "", generatedOperations)
+}
+
+func (oe *operationExecutor) MapVolume(
+	waitForAttachTimeout time.Duration,
+	volumeToMount VolumeToMount,
+	actualStateOfWorld ActualStateOfWorldMounterUpdater) error {
+	generatedOperations, err := oe.operationGenerator.GenerateMapVolumeFunc(
+		waitForAttachTimeout, volumeToMount, actualStateOfWorld)
+	if err != nil {
+		return err
+	}
+
+	// Avoid executing map from multiple pods referencing the
+	// same volume in parallel
+	podName := nestedpendingoperations.EmptyUniquePodName
+	// TODO: remove this -- not necessary
+	if !volumeToMount.PluginIsAttachable {
+		// Non-attachable volume plugins can execute mount for multiple pods
+		// referencing the same volume in parallel
+		podName = volumehelper.GetUniquePodName(volumeToMount.Pod)
+	}
+
+	return oe.pendingOperations.Run(
+		volumeToMount.VolumeName, podName, generatedOperations)
+}
+
+func (oe *operationExecutor) UnmapVolume(
+	volumeToUnmount MountedVolume,
+	actualStateOfWorld ActualStateOfWorldMounterUpdater) error {
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateUnmapVolumeFunc(volumeToUnmount, actualStateOfWorld)
+	if err != nil {
+		return err
+	}
+
+	// All volume plugins can execute unmap for multiple pods referencing the
+	// same volume in parallel
+	podName := volumetypes.UniquePodName(volumeToUnmount.PodUID)
+
+	return oe.pendingOperations.Run(
+		volumeToUnmount.VolumeName, podName, generatedOperations)
+}
+
+func (oe *operationExecutor) UnmapDevice(
+	deviceToDetach AttachedVolume,
+	actualStateOfWorld ActualStateOfWorldMounterUpdater,
+	mounter mount.Interface) error {
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateUnmapDeviceFunc(deviceToDetach, actualStateOfWorld, mounter)
+	if err != nil {
+		return err
+	}
+
+	// Avoid executing unmap device from multiple pods referencing
+	// the same volume in parallel
+	podName := nestedpendingoperations.EmptyUniquePodName
+
+	return oe.pendingOperations.Run(
+		deviceToDetach.VolumeName, podName, generatedOperations)
 }
 
 func (oe *operationExecutor) VerifyControllerAttachedVolume(
 	volumeToMount VolumeToMount,
 	nodeName types.NodeName,
 	actualStateOfWorld ActualStateOfWorldAttacherUpdater) error {
-	verifyControllerAttachedVolumeFunc, err :=
-		oe.generateVerifyControllerAttachedVolumeFunc(volumeToMount, nodeName, actualStateOfWorld)
+	generatedOperations, err :=
+		oe.operationGenerator.GenerateVerifyControllerAttachedVolumeFunc(volumeToMount, nodeName, actualStateOfWorld)
 	if err != nil {
 		return err
 	}
 
 	return oe.pendingOperations.Run(
-		volumeToMount.VolumeName, "" /* podName */, verifyControllerAttachedVolumeFunc)
+		volumeToMount.VolumeName, "" /* podName */, generatedOperations)
 }
 
-func (oe *operationExecutor) generateVolumesAreAttachedFunc(
-	attachedVolumes []AttachedVolume,
-	nodeName types.NodeName,
-	actualStateOfWorld ActualStateOfWorldAttacherUpdater) (func() error, error) {
-
-	// volumesPerPlugin maps from a volume plugin to a list of volume specs which belong
-	// to this type of plugin
-	volumesPerPlugin := make(map[string][]*volume.Spec)
-	// volumeSpecMap maps from a volume spec to its unique volumeName which will be used
-	// when calling MarkVolumeAsDetached
-	volumeSpecMap := make(map[*volume.Spec]v1.UniqueVolumeName)
-	// Iterate each volume spec and put them into a map index by the pluginName
-	for _, volumeAttached := range attachedVolumes {
-		volumePlugin, err :=
-			oe.volumePluginMgr.FindPluginBySpec(volumeAttached.VolumeSpec)
-		if err != nil || volumePlugin == nil {
-			glog.Errorf(
-				"VolumesAreAttached.FindPluginBySpec failed for volume %q (spec.Name: %q) on node %q with error: %v",
-				volumeAttached.VolumeName,
-				volumeAttached.VolumeSpec.Name(),
-				volumeAttached.NodeName,
-				err)
-		}
-		volumeSpecList, pluginExists := volumesPerPlugin[volumePlugin.GetPluginName()]
-		if !pluginExists {
-			volumeSpecList = []*volume.Spec{}
-		}
-		volumeSpecList = append(volumeSpecList, volumeAttached.VolumeSpec)
-		volumesPerPlugin[volumePlugin.GetPluginName()] = volumeSpecList
-		volumeSpecMap[volumeAttached.VolumeSpec] = volumeAttached.VolumeName
-	}
-
-	return func() error {
-
-		// For each volume plugin, pass the list of volume specs to VolumesAreAttached to check
-		// whether the volumes are still attached.
-		for pluginName, volumesSpecs := range volumesPerPlugin {
-			attachableVolumePlugin, err :=
-				oe.volumePluginMgr.FindAttachablePluginByName(pluginName)
-			if err != nil || attachableVolumePlugin == nil {
-				glog.Errorf(
-					"VolumeAreAttached.FindAttachablePluginBySpec failed for plugin %q with: %v",
-					pluginName,
-					err)
-				continue
-			}
-
-			volumeAttacher, newAttacherErr := attachableVolumePlugin.NewAttacher()
-			if newAttacherErr != nil {
-				glog.Errorf(
-					"VolumesAreAttached failed for getting plugin %q with: %v",
-					pluginName,
-					newAttacherErr)
-				continue
-			}
-
-			attached, areAttachedErr := volumeAttacher.VolumesAreAttached(volumesSpecs, nodeName)
-			if areAttachedErr != nil {
-				glog.Errorf(
-					"VolumesAreAttached failed for checking on node %q with: %v",
-					nodeName,
-					areAttachedErr)
-				continue
-			}
-
-			for spec, check := range attached {
-				if !check {
-					actualStateOfWorld.MarkVolumeAsDetached(volumeSpecMap[spec], nodeName)
-					glog.V(1).Infof("VerifyVolumesAreAttached determined volume %q (spec.Name: %q) is no longer attached to node %q, therefore it was marked as detached.",
-						volumeSpecMap[spec], spec.Name(), nodeName)
-				}
-			}
-		}
-		return nil
-	}, nil
+// VolumeStateHandler defines a set of operations for handling mount/unmount/detach/reconstruct volume-related operations
+type VolumeStateHandler interface {
+	// Volume is attached, mount/map it
+	MountVolumeHandler(waitForAttachTimeout time.Duration, volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater, isRemount bool, remountingLogStr string) error
+	// Volume is mounted/mapped, unmount/unmap it
+	UnmountVolumeHandler(mountedVolume MountedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater) error
+	// Volume is not referenced from pod, unmount/unmap and detach it
+	UnmountDeviceHandler(attachedVolume AttachedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater, mounter mount.Interface) error
+	// Reconstruct volume from mount path
+	ReconstructVolumeHandler(plugin volume.VolumePlugin, mapperPlugin volume.BlockVolumePlugin, uid types.UID, podName volumetypes.UniquePodName, volumeSpecName string, mountPath string, pluginName string) (*volume.Spec, error)
+	// check mount path if volume still exists
+	CheckVolumeExistence(mountPath, volumeName string, mounter mount.Interface, uniqueVolumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName, podUID types.UID, attachable volume.AttachableVolumePlugin) (bool, error)
 }
 
-func (oe *operationExecutor) generateAttachVolumeFunc(
-	volumeToAttach VolumeToAttach,
-	actualStateOfWorld ActualStateOfWorldAttacherUpdater) (func() error, error) {
-	// Get attacher plugin
-	attachableVolumePlugin, err :=
-		oe.volumePluginMgr.FindAttachablePluginBySpec(volumeToAttach.VolumeSpec)
-	if err != nil || attachableVolumePlugin == nil {
-		return nil, fmt.Errorf(
-			"AttachVolume.FindAttachablePluginBySpec failed for volume %q (spec.Name: %q) from node %q with: %v",
-			volumeToAttach.VolumeName,
-			volumeToAttach.VolumeSpec.Name(),
-			volumeToAttach.NodeName,
-			err)
-	}
+// NewVolumeHandler return a new instance of volumeHandler depens on a volumeMode
+func NewVolumeHandler(volumeSpec *volume.Spec, oe OperationExecutor) (VolumeStateHandler, error) {
 
-	volumeAttacher, newAttacherErr := attachableVolumePlugin.NewAttacher()
-	if newAttacherErr != nil {
-		return nil, fmt.Errorf(
-			"AttachVolume.NewAttacher failed for volume %q (spec.Name: %q) from node %q with: %v",
-			volumeToAttach.VolumeName,
-			volumeToAttach.VolumeSpec.Name(),
-			volumeToAttach.NodeName,
-			newAttacherErr)
-	}
-
-	return func() error {
-		// Execute attach
-		devicePath, attachErr := volumeAttacher.Attach(
-			volumeToAttach.VolumeSpec, volumeToAttach.NodeName)
-
-		if attachErr != nil {
-			// On failure, return error. Caller will log and retry.
-			err := fmt.Errorf(
-				"Failed to attach volume %q on node %q with: %v",
-				volumeToAttach.VolumeSpec.Name(),
-				volumeToAttach.NodeName,
-				attachErr)
-			for _, pod := range volumeToAttach.ScheduledPods {
-				oe.recorder.Eventf(pod, v1.EventTypeWarning, kevents.FailedMountVolume, err.Error())
-			}
-			return err
-		}
-
-		glog.Infof(
-			"AttachVolume.Attach succeeded for volume %q (spec.Name: %q) from node %q.",
-			volumeToAttach.VolumeName,
-			volumeToAttach.VolumeSpec.Name(),
-			volumeToAttach.NodeName)
-
-		// Update actual state of world
-		addVolumeNodeErr := actualStateOfWorld.MarkVolumeAsAttached(
-			v1.UniqueVolumeName(""), volumeToAttach.VolumeSpec, volumeToAttach.NodeName, devicePath)
-		if addVolumeNodeErr != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"AttachVolume.MarkVolumeAsAttached failed for volume %q (spec.Name: %q) from node %q with: %v",
-				volumeToAttach.VolumeName,
-				volumeToAttach.VolumeSpec.Name(),
-				volumeToAttach.NodeName,
-				addVolumeNodeErr)
-		}
-
-		return nil
-	}, nil
-}
-
-func (oe *operationExecutor) generateDetachVolumeFunc(
-	volumeToDetach AttachedVolume,
-	verifySafeToDetach bool,
-	actualStateOfWorld ActualStateOfWorldAttacherUpdater) (func() error, error) {
-	// Get attacher plugin
-	attachableVolumePlugin, err :=
-		oe.volumePluginMgr.FindAttachablePluginBySpec(volumeToDetach.VolumeSpec)
-	if err != nil || attachableVolumePlugin == nil {
-		return nil, fmt.Errorf(
-			"DetachVolume.FindAttachablePluginBySpec failed for volume %q (spec.Name: %q) from node %q with: %v",
-			volumeToDetach.VolumeName,
-			volumeToDetach.VolumeSpec.Name(),
-			volumeToDetach.NodeName,
-			err)
-	}
-
-	volumeName, err :=
-		attachableVolumePlugin.GetVolumeName(volumeToDetach.VolumeSpec)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"DetachVolume.GetVolumeName failed for volume %q (spec.Name: %q) from node %q with: %v",
-			volumeToDetach.VolumeName,
-			volumeToDetach.VolumeSpec.Name(),
-			volumeToDetach.NodeName,
-			err)
-	}
-
-	volumeDetacher, err := attachableVolumePlugin.NewDetacher()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"DetachVolume.NewDetacher failed for volume %q (spec.Name: %q) from node %q with: %v",
-			volumeToDetach.VolumeName,
-			volumeToDetach.VolumeSpec.Name(),
-			volumeToDetach.NodeName,
-			err)
-	}
-
-	return func() error {
-		var err error
-		if verifySafeToDetach {
-			err = oe.verifyVolumeIsSafeToDetach(volumeToDetach)
-		}
-		if err == nil {
-			err = volumeDetacher.Detach(volumeName, volumeToDetach.NodeName)
-		}
+	// TODO: remove feature gate check after no longer needed
+	var volumeHandler VolumeStateHandler
+	if utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) {
+		volumeMode, err := volumehelper.GetVolumeMode(volumeSpec)
 		if err != nil {
-			// On failure, add volume back to ReportAsAttached list
-			actualStateOfWorld.AddVolumeToReportAsAttached(
-				volumeToDetach.VolumeName, volumeToDetach.NodeName)
-			return fmt.Errorf(
-				"DetachVolume.Detach failed for volume %q (spec.Name: %q) from node %q with: %v",
-				volumeToDetach.VolumeName,
-				volumeToDetach.VolumeSpec.Name(),
-				volumeToDetach.NodeName,
-				err)
+			return nil, err
 		}
-
-		glog.Infof(
-			"DetachVolume.Detach succeeded for volume %q (spec.Name: %q) from node %q.",
-			volumeToDetach.VolumeName,
-			volumeToDetach.VolumeSpec.Name(),
-			volumeToDetach.NodeName)
-
-		// Update actual state of world
-		actualStateOfWorld.MarkVolumeAsDetached(
-			volumeToDetach.VolumeName, volumeToDetach.NodeName)
-
-		return nil
-	}, nil
-}
-
-func (oe *operationExecutor) verifyVolumeIsSafeToDetach(
-	volumeToDetach AttachedVolume) error {
-	// Fetch current node object
-	node, fetchErr := oe.kubeClient.Core().Nodes().Get(string(volumeToDetach.NodeName))
-	if fetchErr != nil {
-		if errors.IsNotFound(fetchErr) {
-			glog.Warningf("Node %q not found on API server. DetachVolume will skip safe to detach check.",
-				volumeToDetach.NodeName,
-				volumeToDetach.VolumeName,
-				volumeToDetach.VolumeSpec.Name())
-			return nil
-		}
-
-		// On failure, return error. Caller will log and retry.
-		return fmt.Errorf(
-			"DetachVolume failed fetching node from API server for volume %q (spec.Name: %q) from node %q with: %v",
-			volumeToDetach.VolumeName,
-			volumeToDetach.VolumeSpec.Name(),
-			volumeToDetach.NodeName,
-			fetchErr)
-	}
-
-	if node == nil {
-		// On failure, return error. Caller will log and retry.
-		return fmt.Errorf(
-			"DetachVolume failed fetching node from API server for volume %q (spec.Name: %q) from node %q. Error: node object retrieved from API server is nil",
-			volumeToDetach.VolumeName,
-			volumeToDetach.VolumeSpec.Name(),
-			volumeToDetach.NodeName)
-	}
-
-	for _, inUseVolume := range node.Status.VolumesInUse {
-		if inUseVolume == volumeToDetach.VolumeName {
-			return fmt.Errorf("DetachVolume failed for volume %q (spec.Name: %q) from node %q. Error: volume is still in use by node, according to Node status",
-				volumeToDetach.VolumeName,
-				volumeToDetach.VolumeSpec.Name(),
-				volumeToDetach.NodeName)
-		}
-	}
-
-	// Volume is not marked as in use by node
-	glog.Infof("Verified volume is safe to detach for volume %q (spec.Name: %q) from node %q.",
-		volumeToDetach.VolumeName,
-		volumeToDetach.VolumeSpec.Name(),
-		volumeToDetach.NodeName)
-	return nil
-}
-
-func (oe *operationExecutor) generateMountVolumeFunc(
-	waitForAttachTimeout time.Duration,
-	volumeToMount VolumeToMount,
-	actualStateOfWorld ActualStateOfWorldMounterUpdater) (func() error, error) {
-	// Get mounter plugin
-	volumePlugin, err :=
-		oe.volumePluginMgr.FindPluginBySpec(volumeToMount.VolumeSpec)
-	if err != nil || volumePlugin == nil {
-		return nil, fmt.Errorf(
-			"MountVolume.FindPluginBySpec failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-			volumeToMount.VolumeName,
-			volumeToMount.VolumeSpec.Name(),
-			volumeToMount.PodName,
-			volumeToMount.Pod.UID,
-			err)
-	}
-
-	volumeMounter, newMounterErr := volumePlugin.NewMounter(
-		volumeToMount.VolumeSpec,
-		volumeToMount.Pod,
-		volume.VolumeOptions{})
-	if newMounterErr != nil {
-		return nil, fmt.Errorf(
-			"MountVolume.NewMounter failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-			volumeToMount.VolumeName,
-			volumeToMount.VolumeSpec.Name(),
-			volumeToMount.PodName,
-			volumeToMount.Pod.UID,
-			newMounterErr)
-	}
-
-	// Get attacher, if possible
-	attachableVolumePlugin, _ :=
-		oe.volumePluginMgr.FindAttachablePluginBySpec(volumeToMount.VolumeSpec)
-	var volumeAttacher volume.Attacher
-	if attachableVolumePlugin != nil {
-		volumeAttacher, _ = attachableVolumePlugin.NewAttacher()
-	}
-
-	var fsGroup *int64
-	if volumeToMount.Pod.Spec.SecurityContext != nil &&
-		volumeToMount.Pod.Spec.SecurityContext.FSGroup != nil {
-		fsGroup = volumeToMount.Pod.Spec.SecurityContext.FSGroup
-	}
-
-	return func() error {
-		if volumeAttacher != nil {
-			// Wait for attachable volumes to finish attaching
-			glog.Infof(
-				"Entering MountVolume.WaitForAttach for volume %q (spec.Name: %q) pod %q (UID: %q) DevicePath: %q",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID,
-				volumeToMount.DevicePath)
-
-			devicePath, err := volumeAttacher.WaitForAttach(
-				volumeToMount.VolumeSpec, volumeToMount.DevicePath, waitForAttachTimeout)
-			if err != nil {
-				// On failure, return error. Caller will log and retry.
-				return fmt.Errorf(
-					"MountVolume.WaitForAttach failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-					volumeToMount.VolumeName,
-					volumeToMount.VolumeSpec.Name(),
-					volumeToMount.PodName,
-					volumeToMount.Pod.UID,
-					err)
-			}
-
-			glog.Infof(
-				"MountVolume.WaitForAttach succeeded for volume %q (spec.Name: %q) pod %q (UID: %q).",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID)
-
-			deviceMountPath, err :=
-				volumeAttacher.GetDeviceMountPath(volumeToMount.VolumeSpec)
-			if err != nil {
-				// On failure, return error. Caller will log and retry.
-				return fmt.Errorf(
-					"MountVolume.GetDeviceMountPath failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-					volumeToMount.VolumeName,
-					volumeToMount.VolumeSpec.Name(),
-					volumeToMount.PodName,
-					volumeToMount.Pod.UID,
-					err)
-			}
-
-			// Mount device to global mount path
-			err = volumeAttacher.MountDevice(
-				volumeToMount.VolumeSpec,
-				devicePath,
-				deviceMountPath)
-			if err != nil {
-				// On failure, return error. Caller will log and retry.
-				err := fmt.Errorf(
-					"MountVolume.MountDevice failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-					volumeToMount.VolumeName,
-					volumeToMount.VolumeSpec.Name(),
-					volumeToMount.PodName,
-					volumeToMount.Pod.UID,
-					err)
-				oe.recorder.Eventf(volumeToMount.Pod, v1.EventTypeWarning, kevents.FailedMountVolume, err.Error())
-				return err
-			}
-
-			glog.Infof(
-				"MountVolume.MountDevice succeeded for volume %q (spec.Name: %q) pod %q (UID: %q) device mount path %q",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID,
-				deviceMountPath)
-
-			// Update actual state of world to reflect volume is globally mounted
-			markDeviceMountedErr := actualStateOfWorld.MarkDeviceAsMounted(
-				volumeToMount.VolumeName)
-			if markDeviceMountedErr != nil {
-				// On failure, return error. Caller will log and retry.
-				return fmt.Errorf(
-					"MountVolume.MarkDeviceAsMounted failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-					volumeToMount.VolumeName,
-					volumeToMount.VolumeSpec.Name(),
-					volumeToMount.PodName,
-					volumeToMount.Pod.UID,
-					markDeviceMountedErr)
-			}
-		}
-
-		if oe.checkNodeCapabilitiesBeforeMount {
-			if canMountErr := volumeMounter.CanMount(); canMountErr != nil {
-				errMsg := fmt.Sprintf("Unable to mount volume %v (spec.Name: %v) on pod %v (UID: %v). Verify that your node machine has the required components before attempting to mount this volume type. %s", volumeToMount.VolumeName, volumeToMount.VolumeSpec.Name(), volumeToMount.Pod.Name, volumeToMount.Pod.UID, canMountErr.Error())
-				oe.recorder.Eventf(volumeToMount.Pod, v1.EventTypeWarning, kevents.FailedMountVolume, errMsg)
-				glog.Errorf(errMsg)
-				return fmt.Errorf(errMsg)
-			}
-		}
-
-		// Execute mount
-		mountErr := volumeMounter.SetUp(fsGroup)
-		if mountErr != nil {
-			// On failure, return error. Caller will log and retry.
-			err := fmt.Errorf(
-				"MountVolume.SetUp failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID,
-				mountErr)
-			oe.recorder.Eventf(volumeToMount.Pod, v1.EventTypeWarning, kevents.FailedMountVolume, err.Error())
-			return err
-		}
-
-		glog.Infof(
-			"MountVolume.SetUp succeeded for volume %q (spec.Name: %q) pod %q (UID: %q).",
-			volumeToMount.VolumeName,
-			volumeToMount.VolumeSpec.Name(),
-			volumeToMount.PodName,
-			volumeToMount.Pod.UID)
-
-		// Update actual state of world
-		markVolMountedErr := actualStateOfWorld.MarkVolumeAsMounted(
-			volumeToMount.PodName,
-			volumeToMount.Pod.UID,
-			volumeToMount.VolumeName,
-			volumeMounter,
-			volumeToMount.OuterVolumeSpecName,
-			volumeToMount.VolumeGidValue)
-		if markVolMountedErr != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"MountVolume.MarkVolumeAsMounted failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID,
-				markVolMountedErr)
-		}
-
-		return nil
-	}, nil
-}
-
-func (oe *operationExecutor) generateUnmountVolumeFunc(
-	volumeToUnmount MountedVolume,
-	actualStateOfWorld ActualStateOfWorldMounterUpdater) (func() error, error) {
-	// Get mountable plugin
-	volumePlugin, err :=
-		oe.volumePluginMgr.FindPluginByName(volumeToUnmount.PluginName)
-	if err != nil || volumePlugin == nil {
-		return nil, fmt.Errorf(
-			"UnmountVolume.FindPluginByName failed for volume %q (volume.spec.Name: %q) pod %q (UID: %q) err=%v",
-			volumeToUnmount.VolumeName,
-			volumeToUnmount.OuterVolumeSpecName,
-			volumeToUnmount.PodName,
-			volumeToUnmount.PodUID,
-			err)
-	}
-
-	volumeUnmounter, newUnmounterErr := volumePlugin.NewUnmounter(
-		volumeToUnmount.InnerVolumeSpecName, volumeToUnmount.PodUID)
-	if newUnmounterErr != nil {
-		return nil, fmt.Errorf(
-			"UnmountVolume.NewUnmounter failed for volume %q (volume.spec.Name: %q) pod %q (UID: %q) err=%v",
-			volumeToUnmount.VolumeName,
-			volumeToUnmount.OuterVolumeSpecName,
-			volumeToUnmount.PodName,
-			volumeToUnmount.PodUID,
-			newUnmounterErr)
-	}
-
-	return func() error {
-		// Execute unmount
-		unmountErr := volumeUnmounter.TearDown()
-		if unmountErr != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"UnmountVolume.TearDown failed for volume %q (volume.spec.Name: %q) pod %q (UID: %q) with: %v",
-				volumeToUnmount.VolumeName,
-				volumeToUnmount.OuterVolumeSpecName,
-				volumeToUnmount.PodName,
-				volumeToUnmount.PodUID,
-				unmountErr)
-		}
-
-		glog.Infof(
-			"UnmountVolume.TearDown succeeded for volume %q (OuterVolumeSpecName: %q) pod %q (UID: %q). InnerVolumeSpecName %q. PluginName %q, VolumeGidValue %q",
-			volumeToUnmount.VolumeName,
-			volumeToUnmount.OuterVolumeSpecName,
-			volumeToUnmount.PodName,
-			volumeToUnmount.PodUID,
-			volumeToUnmount.InnerVolumeSpecName,
-			volumeToUnmount.PluginName,
-			volumeToUnmount.VolumeGidValue)
-
-		// Update actual state of world
-		markVolMountedErr := actualStateOfWorld.MarkVolumeAsUnmounted(
-			volumeToUnmount.PodName, volumeToUnmount.VolumeName)
-		if markVolMountedErr != nil {
-			// On failure, just log and exit
-			glog.Errorf(
-				"UnmountVolume.MarkVolumeAsUnmounted failed for volume %q (volume.spec.Name: %q) pod %q (UID: %q) with: %v",
-				volumeToUnmount.VolumeName,
-				volumeToUnmount.OuterVolumeSpecName,
-				volumeToUnmount.PodName,
-				volumeToUnmount.PodUID,
-				unmountErr)
-		}
-
-		return nil
-	}, nil
-}
-
-func (oe *operationExecutor) generateUnmountDeviceFunc(
-	deviceToDetach AttachedVolume,
-	actualStateOfWorld ActualStateOfWorldMounterUpdater,
-	mounter mount.Interface) (func() error, error) {
-	// Get attacher plugin
-	attachableVolumePlugin, err :=
-		oe.volumePluginMgr.FindAttachablePluginBySpec(deviceToDetach.VolumeSpec)
-	if err != nil || attachableVolumePlugin == nil {
-		return nil, fmt.Errorf(
-			"UnmountDevice.FindAttachablePluginBySpec failed for volume %q (spec.Name: %q) with: %v",
-			deviceToDetach.VolumeName,
-			deviceToDetach.VolumeSpec.Name(),
-			err)
-	}
-
-	volumeDetacher, err := attachableVolumePlugin.NewDetacher()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"UnmountDevice.NewDetacher failed for volume %q (spec.Name: %q) with: %v",
-			deviceToDetach.VolumeName,
-			deviceToDetach.VolumeSpec.Name(),
-			err)
-	}
-
-	volumeAttacher, err := attachableVolumePlugin.NewAttacher()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"UnmountDevice.NewAttacher failed for volume %q (spec.Name: %q) with: %v",
-			deviceToDetach.VolumeName,
-			deviceToDetach.VolumeSpec.Name(),
-			err)
-	}
-
-	return func() error {
-		deviceMountPath, err :=
-			volumeAttacher.GetDeviceMountPath(deviceToDetach.VolumeSpec)
-		if err != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"GetDeviceMountPath failed for volume %q (spec.Name: %q) with: %v",
-				deviceToDetach.VolumeName,
-				deviceToDetach.VolumeSpec.Name(),
-				err)
-		}
-		refs, err := attachableVolumePlugin.GetDeviceMountRefs(deviceMountPath)
-		if err != nil || len(refs) > 0 {
-			if err == nil {
-				err = fmt.Errorf("The device mount path %q is still mounted by other references %v", deviceMountPath, refs)
-			}
-			return fmt.Errorf(
-				"GetDeviceMountRefs check failed for volume %q (spec.Name: %q) with: %v",
-				deviceToDetach.VolumeName,
-				deviceToDetach.VolumeSpec.Name(),
-				err)
-		}
-		// Execute unmount
-		unmountDeviceErr := volumeDetacher.UnmountDevice(deviceMountPath)
-		if unmountDeviceErr != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"UnmountDevice failed for volume %q (spec.Name: %q) with: %v",
-				deviceToDetach.VolumeName,
-				deviceToDetach.VolumeSpec.Name(),
-				unmountDeviceErr)
-		}
-		// Before logging that UnmountDevice succeeded and moving on,
-		// use mounter.PathIsDevice to check if the path is a device,
-		// if so use mounter.DeviceOpened to check if the device is in use anywhere
-		// else on the system. Retry if it returns true.
-		isDevicePath, devicePathErr := mounter.PathIsDevice(deviceToDetach.DevicePath)
-		var deviceOpened bool
-		var deviceOpenedErr error
-		if !isDevicePath && devicePathErr == nil {
-			// not a device path or path doesn't exist
-			//TODO: refer to #36092
-			glog.V(3).Infof("Not checking device path %s", deviceToDetach.DevicePath)
-			deviceOpened = false
+		if volumeMode == v1.PersistentVolumeFilesystem {
+			volumeHandler = NewFilesystemVolumeHandler(oe)
 		} else {
-			deviceOpened, deviceOpenedErr = mounter.DeviceOpened(deviceToDetach.DevicePath)
-			if deviceOpenedErr != nil {
-				return fmt.Errorf(
-					"UnmountDevice.DeviceOpened failed for volume %q (spec.Name: %q) with: %v",
-					deviceToDetach.VolumeName,
-					deviceToDetach.VolumeSpec.Name(),
-					deviceOpenedErr)
-			}
+			volumeHandler = NewBlockVolumeHandler(oe)
 		}
-		// The device is still in use elsewhere. Caller will log and retry.
-		if deviceOpened {
-			return fmt.Errorf(
-				"UnmountDevice failed for volume %q (spec.Name: %q) because the device is in use when it was no longer expected to be in use",
-				deviceToDetach.VolumeName,
-				deviceToDetach.VolumeSpec.Name())
-		}
-
-		glog.Infof(
-			"UnmountDevice succeeded for volume %q (spec.Name: %q).",
-			deviceToDetach.VolumeName,
-			deviceToDetach.VolumeSpec.Name())
-
-		// Update actual state of world
-		markDeviceUnmountedErr := actualStateOfWorld.MarkDeviceAsUnmounted(
-			deviceToDetach.VolumeName)
-		if markDeviceUnmountedErr != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"MarkDeviceAsUnmounted failed for device %q (spec.Name: %q) with: %v",
-				deviceToDetach.VolumeName,
-				deviceToDetach.VolumeSpec.Name(),
-				markDeviceUnmountedErr)
-		}
-
-		return nil
-	}, nil
+	} else {
+		volumeHandler = NewFilesystemVolumeHandler(oe)
+	}
+	return volumeHandler, nil
 }
 
-func (oe *operationExecutor) generateVerifyControllerAttachedVolumeFunc(
-	volumeToMount VolumeToMount,
-	nodeName types.NodeName,
-	actualStateOfWorld ActualStateOfWorldAttacherUpdater) (func() error, error) {
-	return func() error {
-		if !volumeToMount.PluginIsAttachable {
-			// If the volume does not implement the attacher interface, it is
-			// assumed to be attached and the actual state of the world is
-			// updated accordingly.
+// NewFilesystemVolumeHandler returns a new instance of FilesystemVolumeHandler.
+func NewFilesystemVolumeHandler(operationExecutor OperationExecutor) FilesystemVolumeHandler {
+	return FilesystemVolumeHandler{
+		oe: operationExecutor}
+}
 
-			addVolumeNodeErr := actualStateOfWorld.MarkVolumeAsAttached(
-				volumeToMount.VolumeName, volumeToMount.VolumeSpec, nodeName, "" /* devicePath */)
-			if addVolumeNodeErr != nil {
-				// On failure, return error. Caller will log and retry.
-				return fmt.Errorf(
-					"VerifyControllerAttachedVolume.MarkVolumeAsAttachedByUniqueVolumeName failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-					volumeToMount.VolumeName,
-					volumeToMount.VolumeSpec.Name(),
-					volumeToMount.PodName,
-					volumeToMount.Pod.UID,
-					addVolumeNodeErr)
-			}
+// NewBlockVolumeHandler returns a new instance of BlockVolumeHandler.
+func NewBlockVolumeHandler(operationExecutor OperationExecutor) BlockVolumeHandler {
+	return BlockVolumeHandler{
+		oe: operationExecutor}
+}
 
-			return nil
+// FilesystemVolumeHandler is VolumeHandler for Filesystem volume
+type FilesystemVolumeHandler struct {
+	oe OperationExecutor
+}
+
+// BlockVolumeHandler is VolumeHandler for Block volume
+type BlockVolumeHandler struct {
+	oe OperationExecutor
+}
+
+// MountVolumeHandler mount/remount a volume when a volume is attached
+// This method is handler for filesystem volume
+func (f FilesystemVolumeHandler) MountVolumeHandler(waitForAttachTimeout time.Duration, volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater, isRemount bool, remountingLogStr string) error {
+	glog.V(12).Infof(volumeToMount.GenerateMsgDetailed("Starting operationExecutor.MountVolume", remountingLogStr))
+	err := f.oe.MountVolume(
+		waitForAttachTimeout,
+		volumeToMount,
+		actualStateOfWorld,
+		isRemount)
+	return err
+}
+
+// UnmountVolumeHandler unmount a volume if a volume is mounted
+// This method is handler for filesystem volume
+func (f FilesystemVolumeHandler) UnmountVolumeHandler(mountedVolume MountedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater) error {
+	glog.V(12).Infof(mountedVolume.GenerateMsgDetailed("Starting operationExecutor.UnmountVolume", ""))
+	err := f.oe.UnmountVolume(
+		mountedVolume,
+		actualStateOfWorld)
+	return err
+}
+
+// UnmountDeviceHandler unmount and detach a device if a volume isn't referenced
+// This method is handler for filesystem volume
+func (f FilesystemVolumeHandler) UnmountDeviceHandler(attachedVolume AttachedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater, mounter mount.Interface) error {
+	glog.V(12).Infof(attachedVolume.GenerateMsgDetailed("Starting operationExecutor.UnmountDevice", ""))
+	err := f.oe.UnmountDevice(
+		attachedVolume,
+		actualStateOfWorld,
+		mounter)
+	return err
+}
+
+// ReconstructVolumeHandler create volumeSpec from mount path
+// This method is handler for filesystem volume
+func (f FilesystemVolumeHandler) ReconstructVolumeHandler(plugin volume.VolumePlugin, _ volume.BlockVolumePlugin, _ types.UID, _ volumetypes.UniquePodName, volumeSpecName string, mountPath string, _ string) (*volume.Spec, error) {
+	glog.V(12).Infof("Starting operationExecutor.ReconstructVolumepodName")
+	volumeSpec, err := plugin.ConstructVolumeSpec(volumeSpecName, mountPath)
+	if err != nil {
+		return nil, err
+	}
+	return volumeSpec, nil
+}
+
+// CheckVolumeExistence checks mount path directory if volume still exists, return true if volume is there
+// Also return true for non-attachable volume case without mount point check
+// This method is handler for filesystem volume
+func (f FilesystemVolumeHandler) CheckVolumeExistence(mountPath, volumeName string, mounter mount.Interface, uniqueVolumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName, podUID types.UID, attachable volume.AttachableVolumePlugin) (bool, error) {
+	if attachable != nil {
+		var isNotMount bool
+		var mountCheckErr error
+		if isNotMount, mountCheckErr = mounter.IsLikelyNotMountPoint(mountPath); mountCheckErr != nil {
+			return false, fmt.Errorf("Could not check whether the volume %q (spec.Name: %q) pod %q (UID: %q) is mounted with: %v",
+				uniqueVolumeName,
+				volumeName,
+				podName,
+				podUID,
+				mountCheckErr)
 		}
+		return !isNotMount, nil
+	}
+	return true, nil
+}
 
-		if !volumeToMount.ReportedInUse {
-			// If the given volume has not yet been added to the list of
-			// VolumesInUse in the node's volume status, do not proceed, return
-			// error. Caller will log and retry. The node status is updated
-			// periodically by kubelet, so it may take as much as 10 seconds
-			// before this clears.
-			// Issue #28141 to enable on demand status updates.
-			return fmt.Errorf("Volume %q (spec.Name: %q) pod %q (UID: %q) has not yet been added to the list of VolumesInUse in the node's volume status",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID)
+// MountVolumeHandler creates a map to device if a volume is attached
+// This method is handler for block volume
+func (b BlockVolumeHandler) MountVolumeHandler(waitForAttachTimeout time.Duration, volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater, _ bool, _ string) error {
+	glog.V(12).Infof(volumeToMount.GenerateMsgDetailed("Starting operationExecutor.MapVolume", ""))
+	err := b.oe.MapVolume(
+		waitForAttachTimeout,
+		volumeToMount,
+		actualStateOfWorld)
+	return err
+}
+
+// UnmountVolumeHandler unmap a volume if a volume is mapped
+// This method is handler for block volume
+func (b BlockVolumeHandler) UnmountVolumeHandler(mountedVolume MountedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater) error {
+	glog.V(12).Infof(mountedVolume.GenerateMsgDetailed("Starting operationExecutor.UnmapVolume", ""))
+	err := b.oe.UnmapVolume(
+		mountedVolume,
+		actualStateOfWorld)
+	return err
+}
+
+// UnmountDeviceHandler detach a device and remove loopback if a volume isn't referenced
+// This method is handler for block volume
+func (b BlockVolumeHandler) UnmountDeviceHandler(attachedVolume AttachedVolume, actualStateOfWorld ActualStateOfWorldMounterUpdater, mounter mount.Interface) error {
+	glog.V(12).Infof(attachedVolume.GenerateMsgDetailed("Starting operationExecutor.UnmapDevice", ""))
+	err := b.oe.UnmapDevice(
+		attachedVolume,
+		actualStateOfWorld,
+		mounter)
+	return err
+}
+
+// ReconstructVolumeHandler create volumeSpec from mount path
+// This method is handler for block volume
+func (b BlockVolumeHandler) ReconstructVolumeHandler(_ volume.VolumePlugin, mapperPlugin volume.BlockVolumePlugin, uid types.UID, podName volumetypes.UniquePodName, volumeSpecName string, mountPath string, pluginName string) (*volume.Spec, error) {
+	glog.V(12).Infof("Starting operationExecutor.ReconstructVolume")
+	if mapperPlugin == nil {
+		return nil, fmt.Errorf("Could not find block volume plugin %q (spec.Name: %q) pod %q (UID: %q)",
+			pluginName,
+			volumeSpecName,
+			podName,
+			uid)
+	}
+	// mountPath contains volumeName on the path. In the case of block volume, {volumeName} is symbolic link
+	// corresponding to raw block device.
+	// ex. mountPath: pods/{podUid}}/{DefaultKubeletVolumeDevicesDirName}/{escapeQualifiedPluginName}/{volumeName}
+	volumeSpec, err := mapperPlugin.ConstructBlockVolumeSpec(uid, volumeSpecName, mountPath)
+	if err != nil {
+		return nil, err
+	}
+	return volumeSpec, nil
+}
+
+// CheckVolumeExistence checks mount path directory if volume still exists, then return
+// true if volume is there. Either plugin is attachable or non-attachable, the plugin
+// should have symbolic link associated to raw block device under pod device map
+// if volume exists.
+// This method is handler for block volume
+func (b BlockVolumeHandler) CheckVolumeExistence(mountPath, volumeName string, mounter mount.Interface, uniqueVolumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName, podUID types.UID, _ volume.AttachableVolumePlugin) (bool, error) {
+	blkutil := util.NewBlockVolumePathHandler()
+	var islinkExist bool
+	var checkErr error
+	if islinkExist, checkErr = blkutil.IsSymlinkExist(mountPath); checkErr != nil {
+		return false, fmt.Errorf("Could not check whether the block volume %q (spec.Name: %q) pod %q (UID: %q) is mapped to: %v",
+			uniqueVolumeName,
+			volumeName,
+			podName,
+			podUID,
+			checkErr)
+	}
+	return islinkExist, nil
+}
+
+// TODO: this is a workaround for the unmount device issue caused by gci mounter.
+// In GCI cluster, if gci mounter is used for mounting, the container started by mounter
+// script will cause additional mounts created in the container. Since these mounts are
+// irrelavant to the original mounts, they should be not considered when checking the
+// mount references. Current solution is to filter out those mount paths that contain
+// the string of original mount path.
+// Plan to work on better approach to solve this issue.
+
+func hasMountRefs(mountPath string, mountRefs []string) bool {
+	count := 0
+	for _, ref := range mountRefs {
+		if !strings.Contains(ref, mountPath) {
+			count = count + 1
 		}
-
-		// Fetch current node object
-		node, fetchErr := oe.kubeClient.Core().Nodes().Get(string(nodeName))
-		if fetchErr != nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"VerifyControllerAttachedVolume failed fetching node from API server. Volume %q (spec.Name: %q) pod %q (UID: %q). Error: %v",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID,
-				fetchErr)
-		}
-
-		if node == nil {
-			// On failure, return error. Caller will log and retry.
-			return fmt.Errorf(
-				"VerifyControllerAttachedVolume failed. Volume %q (spec.Name: %q) pod %q (UID: %q). Error: node object retrieved from API server is nil",
-				volumeToMount.VolumeName,
-				volumeToMount.VolumeSpec.Name(),
-				volumeToMount.PodName,
-				volumeToMount.Pod.UID)
-		}
-
-		for _, attachedVolume := range node.Status.VolumesAttached {
-			if attachedVolume.Name == volumeToMount.VolumeName {
-				addVolumeNodeErr := actualStateOfWorld.MarkVolumeAsAttached(
-					v1.UniqueVolumeName(""), volumeToMount.VolumeSpec, nodeName, attachedVolume.DevicePath)
-				glog.Infof("Controller successfully attached volume %q (spec.Name: %q) pod %q (UID: %q) devicePath: %q",
-					volumeToMount.VolumeName,
-					volumeToMount.VolumeSpec.Name(),
-					volumeToMount.PodName,
-					volumeToMount.Pod.UID,
-					attachedVolume.DevicePath)
-
-				if addVolumeNodeErr != nil {
-					// On failure, return error. Caller will log and retry.
-					return fmt.Errorf(
-						"VerifyControllerAttachedVolume.MarkVolumeAsAttached failed for volume %q (spec.Name: %q) pod %q (UID: %q) with: %v",
-						volumeToMount.VolumeName,
-						volumeToMount.VolumeSpec.Name(),
-						volumeToMount.PodName,
-						volumeToMount.Pod.UID,
-						addVolumeNodeErr)
-				}
-				return nil
-			}
-		}
-
-		// Volume not attached, return error. Caller will log and retry.
-		return fmt.Errorf("Volume %q (spec.Name: %q) pod %q (UID: %q) is not yet attached according to node status",
-			volumeToMount.VolumeName,
-			volumeToMount.VolumeSpec.Name(),
-			volumeToMount.PodName,
-			volumeToMount.Pod.UID)
-	}, nil
+	}
+	return count > 0
 }

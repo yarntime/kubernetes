@@ -17,14 +17,15 @@ limitations under the License.
 package serviceaccount_test
 
 import (
-	"io/ioutil"
-	"os"
 	"reflect"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api/v1"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/fake"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
+	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	certutil "k8s.io/client-go/util/cert"
 	serviceaccountcontroller "k8s.io/kubernetes/pkg/controller/serviceaccount"
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
@@ -79,6 +80,17 @@ X024wzbiw1q07jFCyfQmODzURAx1VNT7QVUMdz/N8vy47/H40AZJ
 -----END RSA PRIVATE KEY-----
 `
 
+// openssl ecparam -name prime256v1 -genkey -out ecdsa256params.pem
+const ecdsaPrivateKeyWithParams = `-----BEGIN EC PARAMETERS-----
+BggqhkjOPQMBBw==
+-----END EC PARAMETERS-----
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIJ9LWDj3ZWe9CksPV7mZjD2dYXG9icfzxadCRwd3vr1toAoGCCqGSM49
+AwEHoUQDQgAEaLNEpzbaaNTCkKjBVj7sxpfJ1ifJQGNvcck4nrzcwFRuujwVDDJh
+95iIGwKCQeSg+yhdN6Q/p2XaxNIZlYmUhg==
+-----END EC PRIVATE KEY-----
+`
+
 // openssl ecparam -name prime256v1 -genkey -noout -out ecdsa256.pem
 const ecdsaPrivateKey = `-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIEZmTmUhuanLjPA2CLquXivuwBDHTt5XYwgIr/kA1LtRoAoGCCqGSM49
@@ -93,92 +105,34 @@ X2i8uIp/C/ASqiIGUeeKQtX0/IR3qCXyThP/dbCiHrF3v1cuhBOHY8CLVg==
 -----END PUBLIC KEY-----`
 
 func getPrivateKey(data string) interface{} {
-	key, _ := serviceaccount.ReadPrivateKeyFromPEM([]byte(data))
+	key, _ := certutil.ParsePrivateKeyPEM([]byte(data))
 	return key
 }
 
 func getPublicKey(data string) interface{} {
-	keys, _ := serviceaccount.ReadPublicKeysFromPEM([]byte(data))
+	keys, _ := certutil.ParsePublicKeysPEM([]byte(data))
 	return keys[0]
 }
-func TestReadPrivateKey(t *testing.T) {
-	f, err := ioutil.TempFile("", "")
-	if err != nil {
-		t.Fatalf("error creating tmpfile: %v", err)
-	}
-	defer os.Remove(f.Name())
-
-	if err := ioutil.WriteFile(f.Name(), []byte(rsaPrivateKey), os.FileMode(0600)); err != nil {
-		t.Fatalf("error writing private key to tmpfile: %v", err)
-	}
-	if _, err := serviceaccount.ReadPrivateKey(f.Name()); err != nil {
-		t.Fatalf("error reading private RSA key: %v", err)
-	}
-
-	if err := ioutil.WriteFile(f.Name(), []byte(ecdsaPrivateKey), os.FileMode(0600)); err != nil {
-		t.Fatalf("error writing private key to tmpfile: %v", err)
-	}
-	if _, err := serviceaccount.ReadPrivateKey(f.Name()); err != nil {
-		t.Fatalf("error reading private ECDSA key: %v", err)
-	}
-}
-
-func TestReadPublicKeys(t *testing.T) {
-	f, err := ioutil.TempFile("", "")
-	if err != nil {
-		t.Fatalf("error creating tmpfile: %v", err)
-	}
-	defer os.Remove(f.Name())
-
-	if err := ioutil.WriteFile(f.Name(), []byte(rsaPublicKey), os.FileMode(0600)); err != nil {
-		t.Fatalf("error writing public key to tmpfile: %v", err)
-	}
-	if keys, err := serviceaccount.ReadPublicKeys(f.Name()); err != nil {
-		t.Fatalf("error reading RSA public key: %v", err)
-	} else if len(keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(keys))
-	}
-
-	if err := ioutil.WriteFile(f.Name(), []byte(ecdsaPublicKey), os.FileMode(0600)); err != nil {
-		t.Fatalf("error writing public key to tmpfile: %v", err)
-	}
-	if keys, err := serviceaccount.ReadPublicKeys(f.Name()); err != nil {
-		t.Fatalf("error reading ECDSA public key: %v", err)
-	} else if len(keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(keys))
-	}
-
-	if err := ioutil.WriteFile(f.Name(), []byte(rsaPublicKey+"\n"+ecdsaPublicKey), os.FileMode(0600)); err != nil {
-		t.Fatalf("error writing public key to tmpfile: %v", err)
-	}
-	if keys, err := serviceaccount.ReadPublicKeys(f.Name()); err != nil {
-		t.Fatalf("error reading combined RSA/ECDSA public key file: %v", err)
-	} else if len(keys) != 2 {
-		t.Fatalf("expected 2 keys, got %d", len(keys))
-	}
-
-}
-
 func TestTokenGenerateAndValidate(t *testing.T) {
 	expectedUserName := "system:serviceaccount:test:my-service-account"
 	expectedUserUID := "12345"
 
 	// Related API objects
 	serviceAccount := &v1.ServiceAccount{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-service-account",
 			UID:       "12345",
 			Namespace: "test",
 		},
 	}
 	rsaSecret := &v1.Secret{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-rsa-secret",
 			Namespace: "test",
 		},
 	}
 	ecdsaSecret := &v1.Secret{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-ecdsa-secret",
 			Namespace: "test",
 		},
@@ -349,8 +303,8 @@ func TestTokenGenerateAndValidate(t *testing.T) {
 }
 
 func TestMakeSplitUsername(t *testing.T) {
-	username := serviceaccount.MakeUsername("ns", "name")
-	ns, name, err := serviceaccount.SplitUsername(username)
+	username := apiserverserviceaccount.MakeUsername("ns", "name")
+	ns, name, err := apiserverserviceaccount.SplitUsername(username)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
 	}
@@ -360,7 +314,7 @@ func TestMakeSplitUsername(t *testing.T) {
 
 	invalid := []string{"test", "system:serviceaccount", "system:serviceaccount:", "system:serviceaccount:ns", "system:serviceaccount:ns:name:extra"}
 	for _, n := range invalid {
-		_, _, err := serviceaccount.SplitUsername("test")
+		_, _, err := apiserverserviceaccount.SplitUsername("test")
 		if err == nil {
 			t.Errorf("Expected error for %s", n)
 		}

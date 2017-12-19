@@ -41,8 +41,15 @@ import (
 	"github.com/golang/glog"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/record"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubetypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/kubernetes/pkg/credentialprovider"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/events"
@@ -55,15 +62,10 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
 	"k8s.io/kubernetes/pkg/securitycontext"
-	kubetypes "k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/errors"
-	utilexec "k8s.io/kubernetes/pkg/util/exec"
-	"k8s.io/kubernetes/pkg/util/flowcontrol"
 	"k8s.io/kubernetes/pkg/util/selinux"
 	utilstrings "k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/util/term"
-	"k8s.io/kubernetes/pkg/util/uuid"
-	utilwait "k8s.io/kubernetes/pkg/util/wait"
+	utilexec "k8s.io/utils/exec"
 )
 
 const (
@@ -79,18 +81,21 @@ const (
 	rktDataDir        = "/var/lib/rkt"
 	rktLocalConfigDir = "/etc/rkt"
 
-	kubernetesUnitPrefix  = "k8s_"
-	unitKubernetesSection = "X-Kubernetes"
-	unitPodUID            = "PodUID"
-	unitPodName           = "PodName"
-	unitPodNamespace      = "PodNamespace"
-	unitPodHostNetwork    = "PodHostNetwork"
+	kubernetesUnitPrefix    = "k8s_"
+	unitKubernetesSection   = "X-Kubernetes"
+	unitPodUID              = "PodUID"
+	unitPodName             = "PodName"
+	unitPodNamespace        = "PodNamespace"
+	unitPodHostNetwork      = "PodHostNetwork"
+	unitPodNetworkNamespace = "PodNetworkNamespace"
 
 	k8sRktKubeletAnno                = "rkt.kubernetes.io/managed-by-kubelet"
 	k8sRktKubeletAnnoValue           = "true"
 	k8sRktContainerHashAnno          = "rkt.kubernetes.io/container-hash"
 	k8sRktRestartCountAnno           = "rkt.kubernetes.io/restart-count"
 	k8sRktTerminationMessagePathAnno = "rkt.kubernetes.io/termination-message-path"
+
+	k8sRktLimitNoFileAnno = "systemd-unit-option.rkt.kubernetes.io/LimitNOFILE"
 
 	// TODO(euank): This has significant security concerns as a stage1 image is
 	// effectively root.
@@ -133,7 +138,9 @@ const (
 	defaultNetworkName = "rkt.kubernetes.io"
 
 	// defaultRequestTimeout is the default timeout of rkt requests.
-	defaultRequestTimeout = 2 * time.Minute
+	// Value is slightly offset from 2 minutes to make timeouts due to this
+	// constant recognizable.
+	defaultRequestTimeout = 2*time.Minute - 1*time.Second
 
 	etcHostsPath      = "/etc/hosts"
 	etcResolvConfPath = "/etc/resolv.conf"
@@ -153,7 +160,7 @@ type Runtime struct {
 	dockerKeyring credentialprovider.DockerKeyring
 
 	containerRefManager *kubecontainer.RefManager
-	podGetter           podGetter
+	podDeletionProvider podDeletionProvider
 	runtimeHelper       kubecontainer.RuntimeHelper
 	recorder            record.EventRecorder
 	livenessManager     proberesults.Manager
@@ -162,8 +169,8 @@ type Runtime struct {
 	execer              utilexec.Interface
 	os                  kubecontainer.OSInterface
 
-	// Network plugin.
-	networkPlugin network.NetworkPlugin
+	// Network plugin manager.
+	network *network.PluginManager
 
 	// If true, the "hairpin mode" flag is set on container interfaces.
 	// A false value means the kubelet just backs off from setting it,
@@ -178,14 +185,25 @@ type Runtime struct {
 
 	// requestTimeout is the timeout of rkt requests.
 	requestTimeout time.Duration
+
+	unitGetter unitServiceGetter
+}
+
+// Field of the X-Kubernetes directive of a systemd service file
+type podServiceDirective struct {
+	id               string
+	name             string
+	namespace        string
+	hostNetwork      bool
+	networkNamespace kubecontainer.ContainerID
 }
 
 var _ kubecontainer.Runtime = &Runtime{}
 var _ kubecontainer.DirectStreamingRuntime = &Runtime{}
 
-// TODO(yifan): This duplicates the podGetter in dockertools.
-type podGetter interface {
-	GetPodByUID(kubetypes.UID) (*v1.Pod, bool)
+// podDeletionProvider can determine if a pod is deleted
+type podDeletionProvider interface {
+	IsPodDeleted(kubetypes.UID) bool
 }
 
 // cliInterface wrapps the command line calls for testing purpose.
@@ -193,6 +211,12 @@ type cliInterface interface {
 	// RunCommand creates rkt commands and runs it with the given config.
 	// If the config is nil, it will use the one inferred from rkt API service.
 	RunCommand(config *Config, args ...string) (result []string, err error)
+}
+
+// unitServiceGetter wrapps the systemd open files for testing purpose
+type unitServiceGetter interface {
+	getKubernetesDirective(string) (podServiceDirective, error)
+	getNetworkNamespace(kubetypes.UID, *rktapi.Pod) (kubecontainer.ContainerID, error)
 }
 
 // New creates the rkt container runtime which implements the container runtime interface.
@@ -204,7 +228,7 @@ func New(
 	runtimeHelper kubecontainer.RuntimeHelper,
 	recorder record.EventRecorder,
 	containerRefManager *kubecontainer.RefManager,
-	podGetter podGetter,
+	podDeletionProvider podDeletionProvider,
 	livenessManager proberesults.Manager,
 	httpClient types.HttpGetter,
 	networkPlugin network.NetworkPlugin,
@@ -261,11 +285,11 @@ func New(
 		config:              config,
 		dockerKeyring:       credentialprovider.NewDockerKeyring(),
 		containerRefManager: containerRefManager,
-		podGetter:           podGetter,
+		podDeletionProvider: podDeletionProvider,
 		runtimeHelper:       runtimeHelper,
 		recorder:            recorder,
 		livenessManager:     livenessManager,
-		networkPlugin:       networkPlugin,
+		network:             network.NewPluginManager(networkPlugin),
 		execer:              execer,
 		touchPath:           touchPath,
 		nsenterPath:         nsenterPath,
@@ -287,6 +311,7 @@ func New(
 	}
 
 	rkt.cli = rkt
+	rkt.unitGetter = rkt
 
 	return rkt, nil
 }
@@ -346,7 +371,7 @@ func setIsolators(app *appctypes.App, c *v1.Container, ctx *v1.SecurityContext) 
 		var addCaps, dropCaps []string
 
 		if ctx.Capabilities != nil {
-			addCaps, dropCaps = securitycontext.MakeCapabilities(ctx.Capabilities.Add, ctx.Capabilities.Drop)
+			addCaps, dropCaps = kubecontainer.MakeCapabilities(ctx.Capabilities.Add, ctx.Capabilities.Drop)
 		}
 		if ctx.Privileged != nil && *ctx.Privileged {
 			addCaps, dropCaps = allCapabilities(), []string{}
@@ -356,14 +381,22 @@ func setIsolators(app *appctypes.App, c *v1.Container, ctx *v1.SecurityContext) 
 			if err != nil {
 				return err
 			}
-			isolators = append(isolators, set.AsIsolator())
+			isolator, err := set.AsIsolator()
+			if err != nil {
+				return err
+			}
+			isolators = append(isolators, *isolator)
 		}
 		if len(dropCaps) > 0 {
 			set, err := appctypes.NewLinuxCapabilitiesRevokeSet(dropCaps...)
 			if err != nil {
 				return err
 			}
-			isolators = append(isolators, set.AsIsolator())
+			isolator, err := set.AsIsolator()
+			if err != nil {
+				return err
+			}
+			isolators = append(isolators, *isolator)
 		}
 	}
 
@@ -404,6 +437,14 @@ func setIsolators(app *appctypes.App, c *v1.Container, ctx *v1.SecurityContext) 
 		default:
 			return fmt.Errorf("resource type not supported: %v", name)
 		}
+	}
+
+	if ok := securitycontext.AddNoNewPrivileges(ctx); ok {
+		isolator, err := newNoNewPrivilegesIsolator(true)
+		if err != nil {
+			return err
+		}
+		isolators = append(isolators, *isolator)
 	}
 
 	mergeIsolators(app, isolators)
@@ -771,7 +812,7 @@ func (r *Runtime) newAppcRuntimeApp(pod *v1.Pod, podIP string, c v1.Container, r
 	var annotations appctypes.Annotations = []appctypes.Annotation{
 		{
 			Name:  *appctypes.MustACIdentifier(k8sRktContainerHashAnno),
-			Value: strconv.FormatUint(kubecontainer.HashContainer(&c), 10),
+			Value: strconv.FormatUint(kubecontainer.HashContainerLegacy(&c), 10),
 		},
 		{
 			Name:  *appctypes.MustACIdentifier(types.KubernetesContainerNameLabel),
@@ -782,8 +823,9 @@ func (r *Runtime) newAppcRuntimeApp(pod *v1.Pod, podIP string, c v1.Container, r
 	if requiresPrivileged && !securitycontext.HasPrivilegedRequest(&c) {
 		return fmt.Errorf("cannot make %q: running a custom stage1 requires a privileged security context", format.Pod(pod))
 	}
-	if err, _ := r.imagePuller.EnsureImageExists(pod, &c, pullSecrets); err != nil {
-		return nil
+	imageRef, _, err := r.imagePuller.EnsureImageExists(pod, &c, pullSecrets)
+	if err != nil {
+		return err
 	}
 	imgManifest, err := r.getImageManifest(c.Image)
 	if err != nil {
@@ -794,11 +836,7 @@ func (r *Runtime) newAppcRuntimeApp(pod *v1.Pod, podIP string, c v1.Container, r
 		imgManifest.App = new(appctypes.App)
 	}
 
-	imageID, err := r.getImageID(c.Image)
-	if err != nil {
-		return err
-	}
-	hash, err := appctypes.NewHash(imageID)
+	hash, err := appctypes.NewHash(imageRef)
 	if err != nil {
 		return err
 	}
@@ -809,7 +847,7 @@ func (r *Runtime) newAppcRuntimeApp(pod *v1.Pod, podIP string, c v1.Container, r
 		return err
 	}
 
-	// Create additional mount for termintation message path.
+	// Create additional mount for termination message path.
 	mount, err := r.makeContainerLogMount(opts, &c)
 	if err != nil {
 		return err
@@ -925,7 +963,7 @@ func apiPodToruntimePod(uuid string, pod *v1.Pod) *kubecontainer.Pod {
 			ID:    buildContainerID(&containerID{uuid, c.Name}),
 			Name:  c.Name,
 			Image: c.Image,
-			Hash:  kubecontainer.HashContainer(c),
+			Hash:  kubecontainer.HashContainerLegacy(c),
 		})
 	}
 	return p
@@ -940,7 +978,7 @@ func serviceFilePath(serviceName string) string {
 // The pod does not run in host network. And
 // The pod runs inside a netns created outside of rkt.
 func (r *Runtime) shouldCreateNetns(pod *v1.Pod) bool {
-	return !kubecontainer.IsHostNetworkPod(pod) && r.networkPlugin.Name() != network.DefaultPluginName
+	return !kubecontainer.IsHostNetworkPod(pod) && r.network.PluginName() != network.DefaultPluginName
 }
 
 // usesRktHostNetwork returns true if:
@@ -951,7 +989,7 @@ func (r *Runtime) usesRktHostNetwork(pod *v1.Pod) bool {
 }
 
 // generateRunCommand crafts a 'rkt run-prepared' command with necessary parameters.
-func (r *Runtime) generateRunCommand(pod *v1.Pod, uuid, netnsName string) (string, error) {
+func (r *Runtime) generateRunCommand(pod *v1.Pod, uuid, networkNamespaceID string) (string, error) {
 	config := *r.config
 	privileged := true
 
@@ -1003,17 +1041,17 @@ func (r *Runtime) generateRunCommand(pod *v1.Pod, uuid, netnsName string) (strin
 		}
 	} else {
 		// Setup DNS.
-		dnsServers, dnsSearches, err := r.runtimeHelper.GetClusterDNS(pod)
+		dnsConfig, err := r.runtimeHelper.GetPodDNS(pod)
 		if err != nil {
 			return "", err
 		}
-		for _, server := range dnsServers {
+		for _, server := range dnsConfig.Servers {
 			runPrepared = append(runPrepared, fmt.Sprintf("--dns=%s", server))
 		}
-		for _, search := range dnsSearches {
+		for _, search := range dnsConfig.Searches {
 			runPrepared = append(runPrepared, fmt.Sprintf("--dns-search=%s", search))
 		}
-		if len(dnsServers) > 0 || len(dnsSearches) > 0 {
+		if len(dnsConfig.Servers) > 0 || len(dnsConfig.Searches) > 0 {
 			runPrepared = append(runPrepared, fmt.Sprintf("--dns-opt=%s", defaultDNSOption))
 		}
 
@@ -1033,29 +1071,26 @@ func (r *Runtime) generateRunCommand(pod *v1.Pod, uuid, netnsName string) (strin
 		// TODO: switch to 'ip netns exec' once we can depend on a new
 		// enough version that doesn't have bugs like
 		// https://bugzilla.redhat.com/show_bug.cgi?id=882047
-		nsenterExec := []string{r.nsenterPath, "--net=" + netnsPathFromName(netnsName), "--"}
+		nsenterExec := []string{r.nsenterPath, "--net=" + netnsPathFromName(networkNamespaceID), "--"}
 		runPrepared = append(nsenterExec, runPrepared...)
 	}
 
 	return strings.Join(runPrepared, " "), nil
 }
 
-func (r *Runtime) cleanupPodNetwork(pod *v1.Pod) error {
-	glog.V(3).Infof("Calling network plugin %s to tear down pod for %s", r.networkPlugin.Name(), format.Pod(pod))
-
+func (r *Runtime) cleanupPodNetwork(pod *v1.Pod, networkNamespace kubecontainer.ContainerID) error {
 	// No-op if the pod is not running in a created netns.
 	if !r.shouldCreateNetns(pod) {
 		return nil
 	}
 
-	var teardownErr error
-	containerID := kubecontainer.ContainerID{ID: string(pod.UID)}
-	if err := r.networkPlugin.TearDownPod(pod.Namespace, pod.Name, containerID); err != nil {
-		teardownErr = fmt.Errorf("rkt: failed to tear down network for pod %s: %v", format.Pod(pod), err)
-		glog.Errorf("%v", teardownErr)
+	glog.V(3).Infof("Calling network plugin %s to tear down pod for %s", r.network.PluginName(), format.Pod(pod))
+	teardownErr := r.network.TearDownPod(pod.Namespace, pod.Name, networkNamespace)
+	if teardownErr != nil {
+		glog.Error(teardownErr)
 	}
 
-	if _, err := r.execer.Command("ip", "netns", "del", makePodNetnsName(pod.UID)).Output(); err != nil {
+	if _, err := r.execer.Command("ip", "netns", "del", networkNamespace.ID).Output(); err != nil {
 		return fmt.Errorf("rkt: Failed to remove network namespace for pod %s: %v", format.Pod(pod), err)
 	}
 
@@ -1111,6 +1146,35 @@ func (r *Runtime) getSelinuxContext(opt *v1.SELinuxOptions) (string, error) {
 	return strings.Join(ctx, ":"), nil
 }
 
+// From the generateName or the podName return a basename for improving the logging with the Journal
+// journalctl -t podBaseName
+func constructSyslogIdentifier(generateName string, podName string) string {
+	if len(generateName) > 1 && generateName[len(generateName)-1] == '-' {
+		return generateName[0 : len(generateName)-1]
+	}
+	if len(generateName) > 0 {
+		return generateName
+	}
+	return podName
+}
+
+// Setup additional systemd field specified in the Pod Annotation
+func setupSystemdCustomFields(annotations map[string]string, unitOptionArray []*unit.UnitOption) ([]*unit.UnitOption, error) {
+	// LimitNOFILE
+	if strSize := annotations[k8sRktLimitNoFileAnno]; strSize != "" {
+		size, err := strconv.Atoi(strSize)
+		if err != nil {
+			return unitOptionArray, err
+		}
+		if size < 1 {
+			return unitOptionArray, fmt.Errorf("invalid value for %s: %s", k8sRktLimitNoFileAnno, strSize)
+		}
+		unitOptionArray = append(unitOptionArray, newUnitOption("Service", "LimitNOFILE", strSize))
+	}
+
+	return unitOptionArray, nil
+}
+
 // preparePod will:
 //
 // 1. Invoke 'rkt prepare' to prepare the pod, and get the rkt pod uuid.
@@ -1118,7 +1182,7 @@ func (r *Runtime) getSelinuxContext(opt *v1.SELinuxOptions) (string, error) {
 //
 // On success, it will return a string that represents name of the unit file
 // and the runtime pod.
-func (r *Runtime) preparePod(pod *v1.Pod, podIP string, pullSecrets []v1.Secret, netnsName string) (string, *kubecontainer.Pod, error) {
+func (r *Runtime) preparePod(pod *v1.Pod, podIP string, pullSecrets []v1.Secret, networkNamespaceID string) (string, *kubecontainer.Pod, error) {
 	// Generate the appc pod manifest from the k8s pod spec.
 	manifest, err := r.makePodManifest(pod, podIP, pullSecrets)
 	if err != nil {
@@ -1159,7 +1223,7 @@ func (r *Runtime) preparePod(pod *v1.Pod, podIP string, pullSecrets []v1.Secret,
 	glog.V(4).Infof("'rkt prepare' returns %q", uuid)
 
 	// Create systemd service file for the rkt pod.
-	runPrepared, err := r.generateRunCommand(pod, uuid, netnsName)
+	runPrepared, err := r.generateRunCommand(pod, uuid, networkNamespaceID)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to generate 'rkt run-prepared' command: %v", err)
 	}
@@ -1177,11 +1241,15 @@ func (r *Runtime) preparePod(pod *v1.Pod, podIP string, pullSecrets []v1.Secret,
 		// This enables graceful stop.
 		newUnitOption("Service", "KillMode", "mixed"),
 		newUnitOption("Service", "TimeoutStopSec", fmt.Sprintf("%ds", getPodTerminationGracePeriodInSecond(pod))),
+		// Ops helpers
+		newUnitOption("Unit", "Description", pod.Name),
+		newUnitOption("Service", "SyslogIdentifier", constructSyslogIdentifier(pod.GenerateName, pod.Name)),
 		// Track pod info for garbage collection
 		newUnitOption(unitKubernetesSection, unitPodUID, string(pod.UID)),
 		newUnitOption(unitKubernetesSection, unitPodName, pod.Name),
 		newUnitOption(unitKubernetesSection, unitPodNamespace, pod.Namespace),
 		newUnitOption(unitKubernetesSection, unitPodHostNetwork, fmt.Sprintf("%v", hostNetwork)),
+		newUnitOption(unitKubernetesSection, unitPodNetworkNamespace, networkNamespaceID),
 	}
 
 	if pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.SELinuxOptions != nil {
@@ -1192,6 +1260,11 @@ func (r *Runtime) preparePod(pod *v1.Pod, podIP string, pullSecrets []v1.Secret,
 			return "", nil, err
 		}
 		units = append(units, newUnitOption("Service", "SELinuxContext", selinuxContext))
+	}
+
+	units, err = setupSystemdCustomFields(pod.Annotations, units)
+	if err != nil {
+		glog.Warningf("fail to add custom systemd fields provided by pod Annotations: %q", err)
 	}
 
 	serviceName := makePodServiceFileName(uuid)
@@ -1244,8 +1317,10 @@ func (r *Runtime) generateEvents(runtimePod *kubecontainer.Pod, reason string, f
 	return
 }
 
-func makePodNetnsName(podID kubetypes.UID) string {
-	return fmt.Sprintf("%s%s", kubernetesUnitPrefix, string(podID))
+// Generate a Network Namespace based on a New UUID
+// to run the Pod and all of its containers inside a dedicated unique namespace
+func generateNetworkNamespaceUUID() kubecontainer.ContainerID {
+	return kubecontainer.ContainerID{ID: fmt.Sprintf("%s%s", kubernetesUnitPrefix, uuid.NewUUID())}
 }
 
 func netnsPathFromName(netnsName string) string {
@@ -1258,42 +1333,59 @@ func netnsPathFromName(netnsName string) string {
 // one occurred.
 //
 // If the pod is running in host network or is running using the no-op plugin, then nothing will be done.
-func (r *Runtime) setupPodNetwork(pod *v1.Pod) (string, string, error) {
-	glog.V(3).Infof("Calling network plugin %s to set up pod for %s", r.networkPlugin.Name(), format.Pod(pod))
+func (r *Runtime) setupPodNetwork(pod *v1.Pod) (kubecontainer.ContainerID, string, error) {
+	glog.V(3).Infof("Calling network plugin %s to set up pod for %s", r.network.PluginName(), format.Pod(pod))
+
+	var networkNamespace kubecontainer.ContainerID
 
 	// No-op if the pod is not running in a created netns.
 	if !r.shouldCreateNetns(pod) {
-		return "", "", nil
+		return networkNamespace, "", nil
 	}
 
-	netnsName := makePodNetnsName(pod.UID)
+	networkNamespace = generateNetworkNamespaceUUID()
+	glog.V(5).Infof("New network namespace %q generated for pod %s", networkNamespace.ID, format.Pod(pod))
 
-	// Create a new network namespace for the pod
-	r.execer.Command("ip", "netns", "del", netnsName).Output()
-	_, err := r.execer.Command("ip", "netns", "add", netnsName).Output()
+	// Create the network namespace for the pod
+	_, err := r.execer.Command("ip", "netns", "add", networkNamespace.ID).Output()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create pod network namespace: %v", err)
+		return networkNamespace, "", fmt.Errorf("failed to create pod network namespace: %v", err)
 	}
 
 	// Set up networking with the network plugin
-	glog.V(3).Infof("Calling network plugin %s to setup pod for %s", r.networkPlugin.Name(), format.Pod(pod))
-	containerID := kubecontainer.ContainerID{ID: string(pod.UID)}
-	err = r.networkPlugin.SetUpPod(pod.Namespace, pod.Name, containerID)
+	err = r.network.SetUpPod(pod.Namespace, pod.Name, networkNamespace, pod.Annotations)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to set up pod network: %v", err)
+		return networkNamespace, "", err
 	}
-	status, err := r.networkPlugin.GetPodNetworkStatus(pod.Namespace, pod.Name, containerID)
+	status, err := r.network.GetPodNetworkStatus(pod.Namespace, pod.Name, networkNamespace)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get status of pod network: %v", err)
+		return networkNamespace, "", err
 	}
 
 	if r.configureHairpinMode {
-		if err = hairpin.SetUpContainerPath(netnsPathFromName(netnsName), network.DefaultInterfaceName); err != nil {
+		if err = hairpin.SetUpContainerPath(netnsPathFromName(networkNamespace.ID), network.DefaultInterfaceName); err != nil {
 			glog.Warningf("Hairpin setup failed for pod %q: %v", format.Pod(pod), err)
 		}
 	}
 
-	return netnsName, status.IP.String(), nil
+	return networkNamespace, status.IP.String(), nil
+}
+
+// For a hostPath volume: rkt doesn't create any missing volume on the node/host so we need to create it
+func createHostPathVolumes(pod *v1.Pod) (err error) {
+	for _, v := range pod.Spec.Volumes {
+		if v.VolumeSource.HostPath != nil {
+			_, err = os.Stat(v.HostPath.Path)
+			if os.IsNotExist(err) {
+				if err = os.MkdirAll(v.HostPath.Path, os.ModePerm); err != nil {
+					glog.Errorf("Create volume HostPath %q for Pod %q failed: %q", v.HostPath.Path, format.Pod(pod), err.Error())
+					return err
+				}
+				glog.V(4).Infof("Created volume HostPath %q for Pod %q", v.HostPath.Path, format.Pod(pod))
+			}
+		}
+	}
+	return nil
 }
 
 // RunPod first creates the unit file for a pod, and then
@@ -1302,15 +1394,21 @@ func (r *Runtime) RunPod(pod *v1.Pod, pullSecrets []v1.Secret) error {
 	glog.V(4).Infof("Rkt starts to run pod: name %q.", format.Pod(pod))
 
 	var err error
-	var netnsName string
+	var networkNamespace kubecontainer.ContainerID
 	var podIP string
-	netnsName, podIP, err = r.setupPodNetwork(pod)
+
+	err = createHostPathVolumes(pod)
 	if err != nil {
-		r.cleanupPodNetwork(pod)
 		return err
 	}
 
-	name, runtimePod, prepareErr := r.preparePod(pod, podIP, pullSecrets, netnsName)
+	networkNamespace, podIP, err = r.setupPodNetwork(pod)
+	if err != nil {
+		r.cleanupPodNetwork(pod, networkNamespace)
+		return err
+	}
+
+	name, runtimePod, prepareErr := r.preparePod(pod, podIP, pullSecrets, networkNamespace.ID)
 
 	// Set container references and generate events.
 	// If preparedPod fails, then send out 'failed' events for each container.
@@ -1330,7 +1428,7 @@ func (r *Runtime) RunPod(pod *v1.Pod, pullSecrets []v1.Secret) error {
 	}
 
 	if prepareErr != nil {
-		r.cleanupPodNetwork(pod)
+		r.cleanupPodNetwork(pod, networkNamespace)
 		return prepareErr
 	}
 
@@ -1342,7 +1440,7 @@ func (r *Runtime) RunPod(pod *v1.Pod, pullSecrets []v1.Secret) error {
 	_, err = r.systemd.RestartUnit(name, "replace", reschan)
 	if err != nil {
 		r.generateEvents(runtimePod, "Failed", err)
-		r.cleanupPodNetwork(pod)
+		r.cleanupPodNetwork(pod, networkNamespace)
 		return err
 	}
 
@@ -1350,7 +1448,7 @@ func (r *Runtime) RunPod(pod *v1.Pod, pullSecrets []v1.Secret) error {
 	if res != "done" {
 		err := fmt.Errorf("Failed to restart unit %q: %s", name, res)
 		r.generateEvents(runtimePod, "Failed", err)
-		r.cleanupPodNetwork(pod)
+		r.cleanupPodNetwork(pod, networkNamespace)
 		return err
 	}
 
@@ -1362,7 +1460,7 @@ func (r *Runtime) RunPod(pod *v1.Pod, pullSecrets []v1.Secret) error {
 		if errKill := r.KillPod(pod, *runtimePod, nil); errKill != nil {
 			return errors.NewAggregate([]error{err, errKill})
 		}
-		r.cleanupPodNetwork(pod)
+		r.cleanupPodNetwork(pod, networkNamespace)
 		return err
 	}
 
@@ -1723,7 +1821,7 @@ func (r *Runtime) SyncPod(pod *v1.Pod, _ v1.PodStatus, podStatus *kubecontainer.
 
 	restartPod := false
 	for _, container := range pod.Spec.Containers {
-		expectedHash := kubecontainer.HashContainer(&container)
+		expectedHash := kubecontainer.HashContainerLegacy(&container)
 
 		c := runningPod.FindContainerByName(container.Name)
 		if c == nil {
@@ -1805,60 +1903,82 @@ func podIsActive(pod *rktapi.Pod) bool {
 
 // GetNetNS returns the network namespace path for the given container
 func (r *Runtime) GetNetNS(containerID kubecontainer.ContainerID) (string, error) {
-	// This is a slight hack, kubenet shouldn't be asking us about a container id
-	// but a pod id. This is because it knows too much about the infra container.
-	// We pretend the pod.UID is an infra container ID.
-	// This deception is only possible because we played the same trick in
+	// Currently the containerID is a UUID for a network namespace
+	// This hack is a way to create an unique network namespace for each new starting/restarting Pod
+	// We can do this because we played the same trick in
 	// `networkPlugin.SetUpPod` and `networkPlugin.TearDownPod`.
-	return netnsPathFromName(makePodNetnsName(kubetypes.UID(containerID.ID))), nil
+	// See https://github.com/kubernetes/kubernetes/issues/45149
+	return netnsPathFromName(containerID.ID), nil
 }
 
 func (r *Runtime) GetPodContainerID(pod *kubecontainer.Pod) (kubecontainer.ContainerID, error) {
 	return kubecontainer.ContainerID{ID: string(pod.ID)}, nil
 }
 
-func podDetailsFromServiceFile(serviceFilePath string) (string, string, string, bool, error) {
+func (r *Runtime) getKubernetesDirective(serviceFilePath string) (podService podServiceDirective, err error) {
 	f, err := os.Open(serviceFilePath)
 	if err != nil {
-		return "", "", "", false, err
+		return podService, err
 	}
 	defer f.Close()
 
 	opts, err := unit.Deserialize(f)
 	if err != nil {
-		return "", "", "", false, err
+		return podService, err
 	}
 
-	var id, name, namespace, hostnetwork string
+	var hostnetwork, networkNamespace string
 	for _, o := range opts {
 		if o.Section != unitKubernetesSection {
 			continue
 		}
 		switch o.Name {
 		case unitPodUID:
-			id = o.Value
+			podService.id = o.Value
 		case unitPodName:
-			name = o.Value
+			podService.name = o.Value
 		case unitPodNamespace:
-			namespace = o.Value
+			podService.namespace = o.Value
 		case unitPodHostNetwork:
 			hostnetwork = o.Value
+		case unitPodNetworkNamespace:
+			networkNamespace = o.Value
 		}
 
-		if id != "" && name != "" && namespace != "" && hostnetwork != "" {
-			podHostNetwork, err := strconv.ParseBool(hostnetwork)
+		if podService.id != "" && podService.name != "" && podService.namespace != "" && hostnetwork != "" && networkNamespace != "" {
+			podService.hostNetwork, err = strconv.ParseBool(hostnetwork)
+			podService.networkNamespace = kubecontainer.ContainerID{ID: networkNamespace}
 			if err != nil {
-				return "", "", "", false, err
+				return podService, err
 			}
-			return id, name, namespace, podHostNetwork, nil
+			return podService, nil
 		}
 	}
 
-	return "", "", "", false, fmt.Errorf("failed to parse pod from file %s", serviceFilePath)
+	return podService, fmt.Errorf("failed to parse pod from file %s", serviceFilePath)
 }
 
 func (r *Runtime) DeleteContainer(containerID kubecontainer.ContainerID) error {
 	return fmt.Errorf("unimplemented")
+}
+
+// Collects all the systemd units for k8s Pods
+func (r *Runtime) getPodSystemdServiceFiles() ([]os.FileInfo, error) {
+	// Get all the current units
+	files, err := r.os.ReadDir(systemdServiceDir)
+	if err != nil {
+		glog.Errorf("rkt: Failed to read the systemd service directory: %v", err)
+		return files, err
+	}
+
+	// Keep only k8s unit files
+	k8sSystemdServiceFiles := files[:0]
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), kubernetesUnitPrefix) {
+			k8sSystemdServiceFiles = append(k8sSystemdServiceFiles, f)
+		}
+	}
+	return k8sSystemdServiceFiles, err
 }
 
 // GarbageCollect collects the pods/containers.
@@ -1867,7 +1987,7 @@ func (r *Runtime) DeleteContainer(containerID kubecontainer.ContainerID) error {
 // - If the number of containers exceeds gcPolicy.MaxContainers,
 //   then containers whose ages are older than gcPolicy.minAge will
 //   be removed.
-func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSourcesReady bool) error {
+func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSourcesReady bool, _ bool) error {
 	var errlist []error
 	var totalInactiveContainers int
 	var inactivePods []*rktapi.Pod
@@ -1877,9 +1997,8 @@ func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSo
 	glog.V(4).Infof("rkt: Garbage collecting triggered with policy %v", gcPolicy)
 
 	// GC all inactive systemd service files and pods.
-	files, err := r.os.ReadDir(systemdServiceDir)
+	files, err := r.getPodSystemdServiceFiles()
 	if err != nil {
-		glog.Errorf("rkt: Failed to read the systemd service directory: %v", err)
 		return err
 	}
 
@@ -1901,8 +2020,7 @@ func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSo
 				removeCandidates = append(removeCandidates, pod)
 				continue
 			}
-			_, found := r.podGetter.GetPodByUID(uid)
-			if !found && allSourcesReady {
+			if r.podDeletionProvider.IsPodDeleted(uid) && allSourcesReady {
 				removeCandidates = append(removeCandidates, pod)
 				continue
 			}
@@ -1915,23 +2033,12 @@ func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSo
 	// Remove any orphan service files.
 	for _, f := range files {
 		serviceName := f.Name()
-		if strings.HasPrefix(serviceName, kubernetesUnitPrefix) {
-			rktUUID := getRktUUIDFromServiceFileName(serviceName)
-			if _, ok := allPods[rktUUID]; !ok {
-				glog.V(4).Infof("rkt: No rkt pod found for service file %q, will remove it", serviceName)
+		rktUUID := getRktUUIDFromServiceFileName(serviceName)
+		if _, ok := allPods[rktUUID]; !ok {
+			glog.V(4).Infof("rkt: No rkt pod found for service file %q, will remove it", serviceName)
 
-				if err := r.systemd.ResetFailedUnit(serviceName); err != nil {
-					glog.Warningf("rkt: Failed to reset the failed systemd service %q: %v", serviceName, err)
-				}
-				serviceFile := serviceFilePath(serviceName)
-
-				// Network may not be around anymore so errors are ignored
-				if err := r.cleanupPodNetworkFromServiceFile(serviceFile); err != nil {
-					glog.Warningf("rkt: Failed to clean up pod network from service %q: %v, the network may not be around already", serviceName, err)
-				}
-				if err := r.os.Remove(serviceFile); err != nil {
-					errlist = append(errlist, fmt.Errorf("rkt: Failed to remove service file %q: %v", serviceFile, err))
-				}
+			if err := r.cleanupByPodId(rktUUID); err != nil {
+				errlist = append(errlist, fmt.Errorf("rkt: Failed to clean up rkt pod %q: %v", rktUUID, err))
 			}
 		}
 	}
@@ -1952,9 +2059,9 @@ func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSo
 		}
 	}
 
-	// Remove pods and their servie files.
+	// Remove pods and their service files.
 	for _, pod := range removeCandidates {
-		if err := r.removePod(pod.Id); err != nil {
+		if err := r.removePod(pod); err != nil {
 			errlist = append(errlist, fmt.Errorf("rkt: Failed to clean up rkt pod %q: %v", pod.Id, err))
 		}
 	}
@@ -1962,49 +2069,90 @@ func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy, allSo
 	return errors.NewAggregate(errlist)
 }
 
-// Read kubernetes pod UUID, namespace, and name from systemd service file and
+// Read kubernetes pod UUID, namespace, netns and name from systemd service file and
 // use that to clean up any pod network that may still exist.
 func (r *Runtime) cleanupPodNetworkFromServiceFile(serviceFilePath string) error {
-	id, name, namespace, hostnetwork, err := podDetailsFromServiceFile(serviceFilePath)
+	podService, err := r.unitGetter.getKubernetesDirective(serviceFilePath)
 	if err != nil {
 		return err
 	}
 	return r.cleanupPodNetwork(&v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			UID:       kubetypes.UID(id),
-			Name:      name,
-			Namespace: namespace,
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       kubetypes.UID(podService.id),
+			Name:      podService.name,
+			Namespace: podService.namespace,
 		},
 		Spec: v1.PodSpec{
-			HostNetwork: hostnetwork,
+			HostNetwork: podService.hostNetwork,
 		},
-	})
+	}, podService.networkNamespace)
 }
 
-// removePod calls 'rkt rm $UUID' to delete a rkt pod, it also remove the systemd service file
-// related to the pod.
-func (r *Runtime) removePod(uuid string) error {
-	var errlist []error
-	glog.V(4).Infof("rkt: GC is removing pod %q", uuid)
+// Remove the touched file created by ExecStartPost in the systemd service file
+func (r *Runtime) removeFinishedMarkerFile(serviceName string) error {
+	serviceFile := serviceFilePath(serviceName)
+	podDetail, err := r.unitGetter.getKubernetesDirective(serviceFile)
+	if err != nil {
+		return err
+	}
+	podDir := r.runtimeHelper.GetPodDir(kubetypes.UID(podDetail.id))
+	finishedFile := podFinishedMarkerPath(podDir, getRktUUIDFromServiceFileName(serviceName))
+	return r.os.Remove(finishedFile)
+}
 
-	serviceName := makePodServiceFileName(uuid)
+// Iter over each container in the pod to delete its termination log file
+func (r *Runtime) removeTerminationFiles(pod *rktapi.Pod) (errlist []error) {
+	// container == app
+	for _, app := range pod.Apps {
+		for _, annotation := range app.Annotations {
+			if annotation.GetKey() == k8sRktTerminationMessagePathAnno {
+				if err := r.os.Remove(annotation.GetValue()); err != nil {
+					errlist = append(errlist, fmt.Errorf("rkt: Failed to remove for pod %q container file %v", pod.Id, err))
+				}
+			}
+		}
+	}
+	return errlist
+}
+
+func (r *Runtime) cleanupByPodId(podID string) (errlist []error) {
+	serviceName := makePodServiceFileName(podID)
 	serviceFile := serviceFilePath(serviceName)
 
-	// Network may not be around anymore so errors are ignored
 	if err := r.cleanupPodNetworkFromServiceFile(serviceFile); err != nil {
-		glog.Warningf("rkt: Failed to clean up pod network from service %q: %v, the network may not be around already", serviceName, err)
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to clean up pod network from service %q: %v, the network may not be around already", serviceName, err))
 	}
 
-	if _, err := r.cli.RunCommand(nil, "rm", uuid); err != nil {
-		errlist = append(errlist, fmt.Errorf("rkt: Failed to remove pod %q: %v", uuid, err))
-	}
-
-	// GC systemd service files as well.
+	// GC finished marker, termination-log file, systemd service files as well.
 	if err := r.systemd.ResetFailedUnit(serviceName); err != nil {
-		glog.Warningf("rkt: Failed to reset the failed systemd service %q: %v", serviceName, err)
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to reset the failed systemd service %q: %v", serviceName, err))
+	}
+	if err := r.removeFinishedMarkerFile(serviceName); err != nil {
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to remove finished file %q for unit %q: %v", serviceName, podID, err))
 	}
 	if err := r.os.Remove(serviceFile); err != nil {
-		errlist = append(errlist, fmt.Errorf("rkt: Failed to remove service file %q for pod %q: %v", serviceFile, uuid, err))
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to remove service file %q for pod %q: %v", serviceFile, podID, err))
+	}
+	return errlist
+}
+
+// removePod calls 'rkt rm $UUID' to delete a rkt pod,
+// it also remove the systemd service file,
+// the finished-* marker and the termination-log files
+// related to the pod.
+func (r *Runtime) removePod(pod *rktapi.Pod) error {
+	var errlist []error
+	glog.V(4).Infof("rkt: GC is removing pod %q", pod)
+
+	if err := r.cleanupByPodId(pod.Id); err != nil {
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to remove pod %q: %v", pod.Id, err))
+	}
+	if err := r.removeTerminationFiles(pod); err != nil {
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to clean up pod TerminationMessageFile %q: %v", pod.Id, err))
+	}
+
+	if _, err := r.cli.RunCommand(nil, "rm", pod.Id); err != nil {
+		errlist = append(errlist, fmt.Errorf("rkt: Failed to remove pod %q: %v", pod.Id, err))
 	}
 
 	return errors.NewAggregate(errlist)
@@ -2029,14 +2177,14 @@ func newRktExitError(e error) error {
 	return e
 }
 
-func (r *Runtime) AttachContainer(containerID kubecontainer.ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan term.Size) error {
+func (r *Runtime) AttachContainer(containerID kubecontainer.ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
 	return fmt.Errorf("unimplemented")
 }
 
 // Note: In rkt, the container ID is in the form of "UUID:appName", where UUID is
 // the rkt UUID, and appName is the container name.
 // TODO(yifan): If the rkt is using lkvm as the stage1 image, then this function will fail.
-func (r *Runtime) ExecInContainer(containerID kubecontainer.ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan term.Size, timeout time.Duration) error {
+func (r *Runtime) ExecInContainer(containerID kubecontainer.ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize, timeout time.Duration) error {
 	glog.V(4).Infof("Rkt execing in container.")
 
 	id, err := parseContainerID(containerID)
@@ -2057,7 +2205,7 @@ func (r *Runtime) ExecInContainer(containerID kubecontainer.ContainerID, cmd []s
 		// make sure to close the stdout stream
 		defer stdout.Close()
 
-		kubecontainer.HandleResizing(resize, func(size term.Size) {
+		kubecontainer.HandleResizing(resize, func(size remotecommand.TerminalSize) {
 			term.SetSize(p.Fd(), size)
 		})
 
@@ -2101,7 +2249,7 @@ func (r *Runtime) ExecInContainer(containerID kubecontainer.ContainerID, cmd []s
 //  - should we support nsenter + socat in a container, running with elevated privs and --pid=host?
 //
 // TODO(yifan): Merge with the same function in dockertools.
-func (r *Runtime) PortForward(pod *kubecontainer.Pod, port uint16, stream io.ReadWriteCloser) error {
+func (r *Runtime) PortForward(pod *kubecontainer.Pod, port int32, stream io.ReadWriteCloser) error {
 	glog.V(4).Infof("Rkt port forwarding in container.")
 
 	ctx, cancel := context.WithTimeout(context.Background(), r.requestTimeout)
@@ -2269,6 +2417,28 @@ func populateContainerStatus(pod rktapi.Pod, app rktapi.App, runtimeApp appcsche
 	}, nil
 }
 
+// from a running systemd unit, return the network namespace of a Pod
+// this field is inside the X-Kubernetes directive
+func (r *Runtime) getNetworkNamespace(uid kubetypes.UID, latestPod *rktapi.Pod) (networkNamespace kubecontainer.ContainerID, err error) {
+	serviceFiles, err := r.getPodSystemdServiceFiles()
+	if err != nil {
+		return networkNamespace, err
+	}
+
+	for _, f := range serviceFiles {
+		fileName := f.Name()
+		if latestPod.Id == getRktUUIDFromServiceFileName(fileName) {
+			podService, err := r.unitGetter.getKubernetesDirective(serviceFilePath(fileName))
+			if err != nil {
+				return networkNamespace, err
+			}
+			return podService.networkNamespace, nil
+		}
+	}
+
+	return networkNamespace, fmt.Errorf("Pod %q containing rktPod %q haven't find a corresponding NetworkNamespace in %d systemd units", uid, latestPod.Id, len(serviceFiles))
+}
+
 // GetPodStatus returns the status for a pod specified by a given UID, name,
 // and namespace.  It will attempt to find pod's information via a request to
 // the rkt api server.
@@ -2322,26 +2492,33 @@ func (r *Runtime) GetPodStatus(uid kubetypes.UID, name, namespace string) (*kube
 		}
 	}
 
+	if latestPod == nil {
+		glog.Warningf("No latestPod: rkt api-svc returns [%d]rktPods, cannot fill podStatus.IP", len(listResp.Pods))
+		return podStatus, nil
+	}
+
 	// If we are running no-op network plugin, then get the pod IP from the rkt pod status.
-	if r.networkPlugin.Name() == network.DefaultPluginName {
-		if latestPod != nil {
-			for _, n := range latestPod.Networks {
-				if n.Name == defaultNetworkName {
-					podStatus.IP = n.Ipv4
-					break
-				}
+	if r.network.PluginName() == network.DefaultPluginName {
+		for _, n := range latestPod.Networks {
+			if n.Name == defaultNetworkName {
+				podStatus.IP = n.Ipv4
+				break
 			}
 		}
-	} else {
-		containerID := kubecontainer.ContainerID{ID: string(uid)}
-		status, err := r.networkPlugin.GetPodNetworkStatus(namespace, name, containerID)
-		if err != nil {
-			glog.Warningf("rkt: Failed to get pod network status for pod (UID %q, name %q, namespace %q): %v", uid, name, namespace, err)
-		} else if status != nil {
-			// status can be nil when the pod is running on the host network, in which case the pod IP
-			// will be populated by the upper layer.
-			podStatus.IP = status.IP.String()
-		}
+		return podStatus, nil
+	}
+
+	networkNamespace, err := r.unitGetter.getNetworkNamespace(uid, latestPod)
+	if err != nil {
+		glog.Warningf("networkNamespace: %v", err)
+	}
+	status, err := r.network.GetPodNetworkStatus(namespace, name, networkNamespace)
+	if err != nil {
+		glog.Warningf("rkt: %v", err)
+	} else if status != nil {
+		// status can be nil when the pod is running on the host network,
+		// in which case the pod IP will be populated by the upper layer.
+		podStatus.IP = status.IP.String()
 	}
 
 	return podStatus, nil
@@ -2450,4 +2627,17 @@ func convertKubePortMappings(portMappings []kubecontainer.PortMapping) ([]appcty
 	}
 
 	return containerPorts, hostPorts
+}
+
+func newNoNewPrivilegesIsolator(v bool) (*appctypes.Isolator, error) {
+	b := fmt.Sprintf(`{"name": "%s", "value": %t}`, appctypes.LinuxNoNewPrivilegesName, v)
+
+	i := &appctypes.Isolator{
+		Name: appctypes.LinuxNoNewPrivilegesName,
+	}
+	if err := i.UnmarshalJSON([]byte(b)); err != nil {
+		return nil, err
+	}
+
+	return i, nil
 }

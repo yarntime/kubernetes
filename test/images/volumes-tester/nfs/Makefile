@@ -13,14 +13,14 @@
 # limitations under the License.
 
 TAG = 0.8
-PREFIX = gcr.io/google_containers
+PREFIX = k8s.gcr.io
 
 all: push
 
 container: image
 
 image:
-	docker build -t $(PREFIX)/volume-nfs . # Build new image and automatically tag it as latest
+	docker build --pull -t $(PREFIX)/volume-nfs . # Build new image and automatically tag it as latest
 	docker tag $(PREFIX)/volume-nfs $(PREFIX)/volume-nfs:$(TAG) # Add the version tag to the latest image
 
 push: image

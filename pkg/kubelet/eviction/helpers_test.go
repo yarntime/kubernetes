@@ -22,13 +22,17 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/v1"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
-	statsapi "k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/stats"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/features"
+	statsapi "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
+	evictionapi "k8s.io/kubernetes/pkg/kubelet/eviction/api"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/quota"
-	"k8s.io/kubernetes/pkg/types"
 )
 
 func quantityMustParse(value string) *resource.Quantity {
@@ -39,317 +43,326 @@ func quantityMustParse(value string) *resource.Quantity {
 func TestParseThresholdConfig(t *testing.T) {
 	gracePeriod, _ := time.ParseDuration("30s")
 	testCases := map[string]struct {
-		evictionHard            string
-		evictionSoft            string
-		evictionSoftGracePeriod string
-		evictionMinReclaim      string
+		allocatableConfig       []string
+		evictionHard            map[string]string
+		evictionSoft            map[string]string
+		evictionSoftGracePeriod map[string]string
+		evictionMinReclaim      map[string]string
 		expectErr               bool
-		expectThresholds        []Threshold
+		expectThresholds        []evictionapi.Threshold
 	}{
 		"no values": {
-			evictionHard:            "",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{},
+			evictionSoft:            map[string]string{},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               false,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
-		"all flag values": {
-			evictionHard:            "memory.available<150Mi",
-			evictionSoft:            "memory.available<300Mi",
-			evictionSoftGracePeriod: "memory.available=30s",
-			evictionMinReclaim:      "memory.available=0",
+		"all memory eviction values": {
+			allocatableConfig:       []string{kubetypes.NodeAllocatableEnforcementKey},
+			evictionHard:            map[string]string{"memory.available": "150Mi"},
+			evictionSoft:            map[string]string{"memory.available": "300Mi"},
+			evictionSoftGracePeriod: map[string]string{"memory.available": "30s"},
+			evictionMinReclaim:      map[string]string{"memory.available": "0"},
 			expectErr:               false,
-			expectThresholds: []Threshold{
+			expectThresholds: []evictionapi.Threshold{
 				{
-					Signal:   SignalMemoryAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
-						Quantity: quantityMustParse("150Mi"),
+					Signal:   evictionapi.SignalAllocatableMemoryAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
+						Quantity: quantityMustParse("0"),
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("0"),
 					},
 				},
 				{
-					Signal:   SignalMemoryAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalMemoryAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
+						Quantity: quantityMustParse("150Mi"),
+					},
+					MinReclaim: &evictionapi.ThresholdValue{
+						Quantity: quantityMustParse("0"),
+					},
+				},
+				{
+					Signal:   evictionapi.SignalMemoryAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("300Mi"),
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("0"),
 					},
 				},
 			},
 		},
-		"all flag values in percentages": {
-			evictionHard:            "memory.available<10%",
-			evictionSoft:            "memory.available<30%",
-			evictionSoftGracePeriod: "memory.available=30s",
-			evictionMinReclaim:      "memory.available=5%",
+		"all memory eviction values in percentages": {
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"memory.available": "10%"},
+			evictionSoft:            map[string]string{"memory.available": "30%"},
+			evictionSoftGracePeriod: map[string]string{"memory.available": "30s"},
+			evictionMinReclaim:      map[string]string{"memory.available": "5%"},
 			expectErr:               false,
-			expectThresholds: []Threshold{
+			expectThresholds: []evictionapi.Threshold{
 				{
-					Signal:   SignalMemoryAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalMemoryAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Percentage: 0.1,
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Percentage: 0.05,
 					},
 				},
 				{
-					Signal:   SignalMemoryAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalMemoryAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Percentage: 0.3,
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Percentage: 0.05,
 					},
 				},
 			},
 		},
-		"disk flag values": {
-			evictionHard:            "imagefs.available<150Mi,nodefs.available<100Mi",
-			evictionSoft:            "imagefs.available<300Mi,nodefs.available<200Mi",
-			evictionSoftGracePeriod: "imagefs.available=30s,nodefs.available=30s",
-			evictionMinReclaim:      "imagefs.available=2Gi,nodefs.available=1Gi",
+		"disk eviction values": {
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"imagefs.available": "150Mi", "nodefs.available": "100Mi"},
+			evictionSoft:            map[string]string{"imagefs.available": "300Mi", "nodefs.available": "200Mi"},
+			evictionSoftGracePeriod: map[string]string{"imagefs.available": "30s", "nodefs.available": "30s"},
+			evictionMinReclaim:      map[string]string{"imagefs.available": "2Gi", "nodefs.available": "1Gi"},
 			expectErr:               false,
-			expectThresholds: []Threshold{
+			expectThresholds: []evictionapi.Threshold{
 				{
-					Signal:   SignalImageFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalImageFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("150Mi"),
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("2Gi"),
 					},
 				},
 				{
-					Signal:   SignalNodeFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalNodeFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("100Mi"),
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("1Gi"),
 					},
 				},
 				{
-					Signal:   SignalImageFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalImageFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("300Mi"),
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("2Gi"),
 					},
 				},
 				{
-					Signal:   SignalNodeFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalNodeFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("200Mi"),
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("1Gi"),
 					},
 				},
 			},
 		},
-		"disk flag values in percentages": {
-			evictionHard:            "imagefs.available<15%,nodefs.available<10.5%",
-			evictionSoft:            "imagefs.available<30%,nodefs.available<20.5%",
-			evictionSoftGracePeriod: "imagefs.available=30s,nodefs.available=30s",
-			evictionMinReclaim:      "imagefs.available=10%,nodefs.available=5%",
+		"disk eviction values in percentages": {
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"imagefs.available": "15%", "nodefs.available": "10.5%"},
+			evictionSoft:            map[string]string{"imagefs.available": "30%", "nodefs.available": "20.5%"},
+			evictionSoftGracePeriod: map[string]string{"imagefs.available": "30s", "nodefs.available": "30s"},
+			evictionMinReclaim:      map[string]string{"imagefs.available": "10%", "nodefs.available": "5%"},
 			expectErr:               false,
-			expectThresholds: []Threshold{
+			expectThresholds: []evictionapi.Threshold{
 				{
-					Signal:   SignalImageFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalImageFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Percentage: 0.15,
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Percentage: 0.1,
 					},
 				},
 				{
-					Signal:   SignalNodeFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalNodeFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Percentage: 0.105,
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Percentage: 0.05,
 					},
 				},
 				{
-					Signal:   SignalImageFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalImageFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Percentage: 0.3,
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Percentage: 0.1,
 					},
 				},
 				{
-					Signal:   SignalNodeFsAvailable,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalNodeFsAvailable,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Percentage: 0.205,
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Percentage: 0.05,
 					},
 				},
 			},
 		},
-		"inode flag values": {
-			evictionHard:            "imagefs.inodesFree<150Mi,nodefs.inodesFree<100Mi",
-			evictionSoft:            "imagefs.inodesFree<300Mi,nodefs.inodesFree<200Mi",
-			evictionSoftGracePeriod: "imagefs.inodesFree=30s,nodefs.inodesFree=30s",
-			evictionMinReclaim:      "imagefs.inodesFree=2Gi,nodefs.inodesFree=1Gi",
+		"inode eviction values": {
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"imagefs.inodesFree": "150Mi", "nodefs.inodesFree": "100Mi"},
+			evictionSoft:            map[string]string{"imagefs.inodesFree": "300Mi", "nodefs.inodesFree": "200Mi"},
+			evictionSoftGracePeriod: map[string]string{"imagefs.inodesFree": "30s", "nodefs.inodesFree": "30s"},
+			evictionMinReclaim:      map[string]string{"imagefs.inodesFree": "2Gi", "nodefs.inodesFree": "1Gi"},
 			expectErr:               false,
-			expectThresholds: []Threshold{
+			expectThresholds: []evictionapi.Threshold{
 				{
-					Signal:   SignalImageFsInodesFree,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalImageFsInodesFree,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("150Mi"),
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("2Gi"),
 					},
 				},
 				{
-					Signal:   SignalNodeFsInodesFree,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalNodeFsInodesFree,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("100Mi"),
 					},
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("1Gi"),
 					},
 				},
 				{
-					Signal:   SignalImageFsInodesFree,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalImageFsInodesFree,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("300Mi"),
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("2Gi"),
 					},
 				},
 				{
-					Signal:   SignalNodeFsInodesFree,
-					Operator: OpLessThan,
-					Value: ThresholdValue{
+					Signal:   evictionapi.SignalNodeFsInodesFree,
+					Operator: evictionapi.OpLessThan,
+					Value: evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("200Mi"),
 					},
 					GracePeriod: gracePeriod,
-					MinReclaim: &ThresholdValue{
+					MinReclaim: &evictionapi.ThresholdValue{
 						Quantity: quantityMustParse("1Gi"),
 					},
 				},
 			},
 		},
 		"invalid-signal": {
-			evictionHard:            "mem.available<150Mi",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"mem.available": "150Mi"},
+			evictionSoft:            map[string]string{},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
 		"hard-signal-negative": {
-			evictionHard:            "memory.available<-150Mi",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"memory.available": "-150Mi"},
+			evictionSoft:            map[string]string{},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
 		"hard-signal-negative-percentage": {
-			evictionHard:            "memory.available<-15%",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"memory.available": "-15%"},
+			evictionSoft:            map[string]string{},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
 		"soft-signal-negative": {
-			evictionHard:            "",
-			evictionSoft:            "memory.available<-150Mi",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{},
+			evictionSoft:            map[string]string{"memory.available": "-150Mi"},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
-		},
-		"duplicate-signal": {
-			evictionHard:            "memory.available<150Mi,memory.available<100Mi",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
-			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
 		"valid-and-invalid-signal": {
-			evictionHard:            "memory.available<150Mi,invalid.foo<150Mi",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{"memory.available": "150Mi", "invalid.foo": "150Mi"},
+			evictionSoft:            map[string]string{},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
 		"soft-no-grace-period": {
-			evictionHard:            "",
-			evictionSoft:            "memory.available<150Mi",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "",
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{},
+			evictionSoft:            map[string]string{"memory.available": "150Mi"},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
-		"soft-neg-grace-period": {
-			evictionHard:            "",
-			evictionSoft:            "memory.available<150Mi",
-			evictionSoftGracePeriod: "memory.available=-30s",
-			evictionMinReclaim:      "",
+		"soft-negative-grace-period": {
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{},
+			evictionSoft:            map[string]string{"memory.available": "150Mi"},
+			evictionSoftGracePeriod: map[string]string{"memory.available": "-30s"},
+			evictionMinReclaim:      map[string]string{},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
-		"neg-reclaim": {
-			evictionHard:            "",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "memory.available=-300Mi",
+		"negative-reclaim": {
+			allocatableConfig:       []string{},
+			evictionHard:            map[string]string{},
+			evictionSoft:            map[string]string{},
+			evictionSoftGracePeriod: map[string]string{},
+			evictionMinReclaim:      map[string]string{"memory.available": "-300Mi"},
 			expectErr:               true,
-			expectThresholds:        []Threshold{},
-		},
-		"duplicate-reclaim": {
-			evictionHard:            "",
-			evictionSoft:            "",
-			evictionSoftGracePeriod: "",
-			evictionMinReclaim:      "memory.available=-300Mi,memory.available=-100Mi",
-			expectErr:               true,
-			expectThresholds:        []Threshold{},
+			expectThresholds:        []evictionapi.Threshold{},
 		},
 	}
 	for testName, testCase := range testCases {
-		thresholds, err := ParseThresholdConfig(testCase.evictionHard, testCase.evictionSoft, testCase.evictionSoftGracePeriod, testCase.evictionMinReclaim)
+		thresholds, err := ParseThresholdConfig(testCase.allocatableConfig, testCase.evictionHard, testCase.evictionSoft, testCase.evictionSoftGracePeriod, testCase.evictionMinReclaim)
 		if testCase.expectErr != (err != nil) {
 			t.Errorf("Err not as expected, test: %v, error expected: %v, actual: %v", testName, testCase.expectErr, err)
 		}
@@ -359,7 +372,7 @@ func TestParseThresholdConfig(t *testing.T) {
 	}
 }
 
-func thresholdsEqual(expected []Threshold, actual []Threshold) bool {
+func thresholdsEqual(expected []evictionapi.Threshold, actual []evictionapi.Threshold) bool {
 	if len(expected) != len(actual) {
 		return false
 	}
@@ -388,7 +401,7 @@ func thresholdsEqual(expected []Threshold, actual []Threshold) bool {
 	return true
 }
 
-func thresholdEqual(a Threshold, b Threshold) bool {
+func thresholdEqual(a evictionapi.Threshold, b evictionapi.Threshold) bool {
 	return a.GracePeriod == b.GracePeriod &&
 		a.Operator == b.Operator &&
 		a.Signal == b.Signal &&
@@ -396,22 +409,101 @@ func thresholdEqual(a Threshold, b Threshold) bool {
 		compareThresholdValue(a.Value, b.Value)
 }
 
-// TestOrderedByQoS ensures we order BestEffort < Burstable < Guaranteed
-func TestOrderedByQoS(t *testing.T) {
-	bestEffort := newPod("best-effort", []v1.Container{
-		newContainer("best-effort", newResourceList("", ""), newResourceList("", "")),
+func TestOrderedByExceedsRequestMemory(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	below := newPod("below-requests", -1, []v1.Container{
+		newContainer("below-requests", newResourceList("", "200Mi", ""), newResourceList("", "", "")),
 	}, nil)
-	burstable := newPod("burstable", []v1.Container{
-		newContainer("burstable", newResourceList("100m", "100Mi"), newResourceList("200m", "200Mi")),
+	exceeds := newPod("exceeds-requests", 1, []v1.Container{
+		newContainer("exceeds-requests", newResourceList("", "100Mi", ""), newResourceList("", "", "")),
 	}, nil)
-	guaranteed := newPod("guaranteed", []v1.Container{
-		newContainer("guaranteed", newResourceList("200m", "200Mi"), newResourceList("200m", "200Mi")),
+	stats := map[*v1.Pod]statsapi.PodStats{
+		below:   newPodMemoryStats(below, resource.MustParse("199Mi")),   // -1 relative to request
+		exceeds: newPodMemoryStats(exceeds, resource.MustParse("101Mi")), // 1 relative to request
+	}
+	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
+		result, found := stats[pod]
+		return result, found
+	}
+	pods := []*v1.Pod{below, exceeds}
+	orderedBy(exceedMemoryRequests(statsFn)).Sort(pods)
+
+	expected := []*v1.Pod{exceeds, below}
+	for i := range expected {
+		if pods[i] != expected[i] {
+			t.Errorf("Expected pod: %s, but got: %s", expected[i].Name, pods[i].Name)
+		}
+	}
+}
+
+func TestOrderedByExceedsRequestDisk(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.LocalStorageCapacityIsolation))
+	below := newPod("below-requests", -1, []v1.Container{
+		newContainer("below-requests", v1.ResourceList{v1.ResourceEphemeralStorage: resource.MustParse("200Mi")}, newResourceList("", "", "")),
+	}, nil)
+	exceeds := newPod("exceeds-requests", 1, []v1.Container{
+		newContainer("exceeds-requests", v1.ResourceList{v1.ResourceEphemeralStorage: resource.MustParse("100Mi")}, newResourceList("", "", "")),
+	}, nil)
+	stats := map[*v1.Pod]statsapi.PodStats{
+		below:   newPodDiskStats(below, resource.MustParse("100Mi"), resource.MustParse("99Mi"), resource.MustParse("0Mi")),  // -1 relative to request
+		exceeds: newPodDiskStats(exceeds, resource.MustParse("90Mi"), resource.MustParse("11Mi"), resource.MustParse("0Mi")), // 1 relative to request
+	}
+	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
+		result, found := stats[pod]
+		return result, found
+	}
+	pods := []*v1.Pod{below, exceeds}
+	orderedBy(exceedDiskRequests(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, resourceDisk)).Sort(pods)
+
+	expected := []*v1.Pod{exceeds, below}
+	for i := range expected {
+		if pods[i] != expected[i] {
+			t.Errorf("Expected pod: %s, but got: %s", expected[i].Name, pods[i].Name)
+		}
+	}
+}
+
+func TestOrderedByPriority(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	low := newPod("low-priority", -134, []v1.Container{
+		newContainer("low-priority", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, nil)
+	medium := newPod("medium-priority", 1, []v1.Container{
+		newContainer("medium-priority", newResourceList("100m", "100Mi", ""), newResourceList("200m", "200Mi", "")),
+	}, nil)
+	high := newPod("high-priority", 12534, []v1.Container{
+		newContainer("high-priority", newResourceList("200m", "200Mi", ""), newResourceList("200m", "200Mi", "")),
 	}, nil)
 
-	pods := []*v1.Pod{guaranteed, burstable, bestEffort}
-	orderedBy(qosComparator).Sort(pods)
+	pods := []*v1.Pod{high, medium, low}
+	orderedBy(priority).Sort(pods)
 
-	expected := []*v1.Pod{bestEffort, burstable, guaranteed}
+	expected := []*v1.Pod{low, medium, high}
+	for i := range expected {
+		if pods[i] != expected[i] {
+			t.Errorf("Expected pod: %s, but got: %s", expected[i].Name, pods[i].Name)
+		}
+	}
+}
+
+func TestOrderedByPriorityDisabled(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=false", features.PodPriority))
+	low := newPod("low-priority", lowPriority, []v1.Container{
+		newContainer("low-priority", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, nil)
+	medium := newPod("medium-priority", defaultPriority, []v1.Container{
+		newContainer("medium-priority", newResourceList("100m", "100Mi", ""), newResourceList("200m", "200Mi", "")),
+	}, nil)
+	high := newPod("high-priority", highPriority, []v1.Container{
+		newContainer("high-priority", newResourceList("200m", "200Mi", ""), newResourceList("200m", "200Mi", "")),
+	}, nil)
+
+	pods := []*v1.Pod{high, medium, low}
+	orderedBy(priority).Sort(pods)
+
+	// orderedBy(priority) should not change the input ordering, since we did not enable the PodPriority feature gate
+	expected := []*v1.Pod{high, medium, low}
 	for i := range expected {
 		if pods[i] != expected[i] {
 			t.Errorf("Expected pod: %s, but got: %s", expected[i].Name, pods[i].Name)
@@ -420,73 +512,64 @@ func TestOrderedByQoS(t *testing.T) {
 }
 
 func TestOrderedbyDisk(t *testing.T) {
-	testOrderedByResource(t, resourceDisk, newPodDiskStats)
-}
-
-func TestOrderedbyInodes(t *testing.T) {
-	testOrderedByResource(t, resourceInodes, newPodInodeStats)
-}
-
-// testOrderedByDisk ensures we order pods by greediest resource consumer
-func testOrderedByResource(t *testing.T, orderedByResource v1.ResourceName,
-	newPodStatsFunc func(pod *v1.Pod, rootFsUsed, logsUsed, perLocalVolumeUsed resource.Quantity) statsapi.PodStats) {
-	pod1 := newPod("best-effort-high", []v1.Container{
-		newContainer("best-effort-high", newResourceList("", ""), newResourceList("", "")),
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.LocalStorageCapacityIsolation))
+	pod1 := newPod("best-effort-high", defaultPriority, []v1.Container{
+		newContainer("best-effort-high", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod2 := newPod("best-effort-low", []v1.Container{
-		newContainer("best-effort-low", newResourceList("", ""), newResourceList("", "")),
+	pod2 := newPod("best-effort-low", defaultPriority, []v1.Container{
+		newContainer("best-effort-low", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod3 := newPod("burstable-high", []v1.Container{
-		newContainer("burstable-high", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod3 := newPod("burstable-high", defaultPriority, []v1.Container{
+		newContainer("burstable-high", newResourceList("", "", "100Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod4 := newPod("burstable-low", []v1.Container{
-		newContainer("burstable-low", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod4 := newPod("burstable-low", defaultPriority, []v1.Container{
+		newContainer("burstable-low", newResourceList("", "", "100Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod5 := newPod("guaranteed-high", []v1.Container{
-		newContainer("guaranteed-high", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod5 := newPod("guaranteed-high", defaultPriority, []v1.Container{
+		newContainer("guaranteed-high", newResourceList("", "", "400Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod6 := newPod("guaranteed-low", []v1.Container{
-		newContainer("guaranteed-low", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod6 := newPod("guaranteed-low", defaultPriority, []v1.Container{
+		newContainer("guaranteed-low", newResourceList("", "", "400Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
 	stats := map[*v1.Pod]statsapi.PodStats{
-		pod1: newPodStatsFunc(pod1, resource.MustParse("50Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")),  // 200Mi
-		pod2: newPodStatsFunc(pod2, resource.MustParse("100Mi"), resource.MustParse("150Mi"), resource.MustParse("50Mi")), // 300Mi
-		pod3: newPodStatsFunc(pod3, resource.MustParse("200Mi"), resource.MustParse("150Mi"), resource.MustParse("50Mi")), // 400Mi
-		pod4: newPodStatsFunc(pod4, resource.MustParse("300Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 450Mi
-		pod5: newPodStatsFunc(pod5, resource.MustParse("400Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 550Mi
-		pod6: newPodStatsFunc(pod6, resource.MustParse("500Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 650Mi
+		pod1: newPodDiskStats(pod1, resource.MustParse("50Mi"), resource.MustParse("100Mi"), resource.MustParse("150Mi")), // 300Mi - 0 = 300Mi
+		pod2: newPodDiskStats(pod2, resource.MustParse("25Mi"), resource.MustParse("25Mi"), resource.MustParse("50Mi")),   // 100Mi - 0 = 100Mi
+		pod3: newPodDiskStats(pod3, resource.MustParse("150Mi"), resource.MustParse("150Mi"), resource.MustParse("50Mi")), // 350Mi - 100Mi = 250Mi
+		pod4: newPodDiskStats(pod4, resource.MustParse("25Mi"), resource.MustParse("35Mi"), resource.MustParse("50Mi")),   // 110Mi - 100Mi = 10Mi
+		pod5: newPodDiskStats(pod5, resource.MustParse("225Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 375Mi - 400Mi = -25Mi
+		pod6: newPodDiskStats(pod6, resource.MustParse("25Mi"), resource.MustParse("45Mi"), resource.MustParse("50Mi")),   // 120Mi - 400Mi = -280Mi
 	}
 	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
 		result, found := stats[pod]
 		return result, found
 	}
 	pods := []*v1.Pod{pod1, pod2, pod3, pod4, pod5, pod6}
-	orderedBy(disk(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, orderedByResource)).Sort(pods)
-	expected := []*v1.Pod{pod6, pod5, pod4, pod3, pod2, pod1}
+	orderedBy(disk(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, resourceDisk)).Sort(pods)
+	expected := []*v1.Pod{pod1, pod3, pod2, pod4, pod5, pod6}
 	for i := range expected {
 		if pods[i] != expected[i] {
 			t.Errorf("Expected pod[%d]: %s, but got: %s", i, expected[i].Name, pods[i].Name)
@@ -494,74 +577,245 @@ func testOrderedByResource(t *testing.T, orderedByResource v1.ResourceName,
 	}
 }
 
-func TestOrderedbyQoSDisk(t *testing.T) {
-	testOrderedByQoSResource(t, resourceDisk, newPodDiskStats)
-}
-
-func TestOrderedbyQoSInodes(t *testing.T) {
-	testOrderedByQoSResource(t, resourceInodes, newPodInodeStats)
-}
-
-// testOrderedByQoSDisk ensures we order pods by qos and then greediest resource consumer
-func testOrderedByQoSResource(t *testing.T, orderedByResource v1.ResourceName,
-	newPodStatsFunc func(pod *v1.Pod, rootFsUsed, logsUsed, perLocalVolumeUsed resource.Quantity) statsapi.PodStats) {
-	pod1 := newPod("best-effort-high", []v1.Container{
-		newContainer("best-effort-high", newResourceList("", ""), newResourceList("", "")),
+// Tests that we correctly ignore disk requests when the local storage feature gate is disabled.
+func TestOrderedbyDiskDisableLocalStorage(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=false", features.LocalStorageCapacityIsolation))
+	pod1 := newPod("best-effort-high", defaultPriority, []v1.Container{
+		newContainer("best-effort-high", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod2 := newPod("best-effort-low", []v1.Container{
-		newContainer("best-effort-low", newResourceList("", ""), newResourceList("", "")),
+	pod2 := newPod("best-effort-low", defaultPriority, []v1.Container{
+		newContainer("best-effort-low", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod3 := newPod("burstable-high", []v1.Container{
-		newContainer("burstable-high", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod3 := newPod("burstable-high", defaultPriority, []v1.Container{
+		newContainer("burstable-high", newResourceList("", "", "100Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod4 := newPod("burstable-low", []v1.Container{
-		newContainer("burstable-low", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod4 := newPod("burstable-low", defaultPriority, []v1.Container{
+		newContainer("burstable-low", newResourceList("", "", "100Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod5 := newPod("guaranteed-high", []v1.Container{
-		newContainer("guaranteed-high", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod5 := newPod("guaranteed-high", defaultPriority, []v1.Container{
+		newContainer("guaranteed-high", newResourceList("", "", "400Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
-	pod6 := newPod("guaranteed-low", []v1.Container{
-		newContainer("guaranteed-low", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod6 := newPod("guaranteed-low", defaultPriority, []v1.Container{
+		newContainer("guaranteed-low", newResourceList("", "", "400Mi"), newResourceList("", "", "400Mi")),
 	}, []v1.Volume{
 		newVolume("local-volume", v1.VolumeSource{
 			EmptyDir: &v1.EmptyDirVolumeSource{},
 		}),
 	})
 	stats := map[*v1.Pod]statsapi.PodStats{
-		pod1: newPodStatsFunc(pod1, resource.MustParse("50Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")),  // 200Mi
-		pod2: newPodStatsFunc(pod2, resource.MustParse("100Mi"), resource.MustParse("150Mi"), resource.MustParse("50Mi")), // 300Mi
-		pod3: newPodStatsFunc(pod3, resource.MustParse("200Mi"), resource.MustParse("150Mi"), resource.MustParse("50Mi")), // 400Mi
-		pod4: newPodStatsFunc(pod4, resource.MustParse("300Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 450Mi
-		pod5: newPodStatsFunc(pod5, resource.MustParse("400Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 550Mi
-		pod6: newPodStatsFunc(pod6, resource.MustParse("500Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 650Mi
+		pod1: newPodDiskStats(pod1, resource.MustParse("50Mi"), resource.MustParse("100Mi"), resource.MustParse("150Mi")), // 300Mi
+		pod2: newPodDiskStats(pod2, resource.MustParse("25Mi"), resource.MustParse("25Mi"), resource.MustParse("50Mi")),   // 100Mi
+		pod3: newPodDiskStats(pod3, resource.MustParse("150Mi"), resource.MustParse("150Mi"), resource.MustParse("50Mi")), // 350Mi
+		pod4: newPodDiskStats(pod4, resource.MustParse("25Mi"), resource.MustParse("35Mi"), resource.MustParse("50Mi")),   // 110Mi
+		pod5: newPodDiskStats(pod5, resource.MustParse("225Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")), // 375Mi
+		pod6: newPodDiskStats(pod6, resource.MustParse("25Mi"), resource.MustParse("45Mi"), resource.MustParse("50Mi")),   // 120Mi
 	}
 	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
 		result, found := stats[pod]
 		return result, found
 	}
-	pods := []*v1.Pod{pod1, pod2, pod3, pod4, pod5, pod6}
-	orderedBy(qosComparator, disk(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, orderedByResource)).Sort(pods)
-	expected := []*v1.Pod{pod2, pod1, pod4, pod3, pod6, pod5}
+	pods := []*v1.Pod{pod1, pod3, pod2, pod4, pod5, pod6}
+	orderedBy(disk(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, resourceDisk)).Sort(pods)
+	expected := []*v1.Pod{pod5, pod3, pod1, pod6, pod4, pod2}
+	for i := range expected {
+		if pods[i] != expected[i] {
+			t.Errorf("Expected pod[%d]: %s, but got: %s", i, expected[i].Name, pods[i].Name)
+		}
+	}
+}
+
+func TestOrderedbyInodes(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.LocalStorageCapacityIsolation))
+	low := newPod("low", defaultPriority, []v1.Container{
+		newContainer("low", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	medium := newPod("medium", defaultPriority, []v1.Container{
+		newContainer("medium", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	high := newPod("high", defaultPriority, []v1.Container{
+		newContainer("high", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	stats := map[*v1.Pod]statsapi.PodStats{
+		low:    newPodInodeStats(low, resource.MustParse("50000"), resource.MustParse("100000"), resource.MustParse("50000")),     // 200000
+		medium: newPodInodeStats(medium, resource.MustParse("100000"), resource.MustParse("150000"), resource.MustParse("50000")), // 300000
+		high:   newPodInodeStats(high, resource.MustParse("200000"), resource.MustParse("150000"), resource.MustParse("50000")),   // 400000
+	}
+	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
+		result, found := stats[pod]
+		return result, found
+	}
+	pods := []*v1.Pod{low, medium, high}
+	orderedBy(disk(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, resourceInodes)).Sort(pods)
+	expected := []*v1.Pod{high, medium, low}
+	for i := range expected {
+		if pods[i] != expected[i] {
+			t.Errorf("Expected pod[%d]: %s, but got: %s", i, expected[i].Name, pods[i].Name)
+		}
+	}
+}
+
+// TestOrderedByPriorityDisk ensures we order pods by priority and then greediest resource consumer
+func TestOrderedByPriorityDisk(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.LocalStorageCapacityIsolation))
+	pod1 := newPod("above-requests-low-priority-high-usage", lowPriority, []v1.Container{
+		newContainer("above-requests-low-priority-high-usage", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod2 := newPod("above-requests-low-priority-low-usage", lowPriority, []v1.Container{
+		newContainer("above-requests-low-priority-low-usage", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod3 := newPod("above-requests-high-priority-high-usage", highPriority, []v1.Container{
+		newContainer("above-requests-high-priority-high-usage", newResourceList("", "", "100Mi"), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod4 := newPod("above-requests-high-priority-low-usage", highPriority, []v1.Container{
+		newContainer("above-requests-high-priority-low-usage", newResourceList("", "", "100Mi"), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod5 := newPod("below-requests-low-priority-high-usage", lowPriority, []v1.Container{
+		newContainer("below-requests-low-priority-high-usage", newResourceList("", "", "1Gi"), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod6 := newPod("below-requests-low-priority-low-usage", lowPriority, []v1.Container{
+		newContainer("below-requests-low-priority-low-usage", newResourceList("", "", "1Gi"), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod7 := newPod("below-requests-high-priority-high-usage", highPriority, []v1.Container{
+		newContainer("below-requests-high-priority-high-usage", newResourceList("", "", "1Gi"), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod8 := newPod("below-requests-high-priority-low-usage", highPriority, []v1.Container{
+		newContainer("below-requests-high-priority-low-usage", newResourceList("", "", "1Gi"), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	stats := map[*v1.Pod]statsapi.PodStats{
+		pod1: newPodDiskStats(pod1, resource.MustParse("200Mi"), resource.MustParse("100Mi"), resource.MustParse("200Mi")), // 500 relative to request
+		pod2: newPodDiskStats(pod2, resource.MustParse("10Mi"), resource.MustParse("10Mi"), resource.MustParse("30Mi")),    // 50 relative to request
+		pod3: newPodDiskStats(pod3, resource.MustParse("200Mi"), resource.MustParse("150Mi"), resource.MustParse("250Mi")), // 500 relative to request
+		pod4: newPodDiskStats(pod4, resource.MustParse("90Mi"), resource.MustParse("50Mi"), resource.MustParse("10Mi")),    // 50 relative to request
+		pod5: newPodDiskStats(pod5, resource.MustParse("500Mi"), resource.MustParse("200Mi"), resource.MustParse("100Mi")), // -200 relative to request
+		pod6: newPodDiskStats(pod6, resource.MustParse("50Mi"), resource.MustParse("100Mi"), resource.MustParse("50Mi")),   // -800 relative to request
+		pod7: newPodDiskStats(pod7, resource.MustParse("250Mi"), resource.MustParse("500Mi"), resource.MustParse("50Mi")),  // -200 relative to request
+		pod8: newPodDiskStats(pod8, resource.MustParse("100Mi"), resource.MustParse("60Mi"), resource.MustParse("40Mi")),   // -800 relative to request
+	}
+	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
+		result, found := stats[pod]
+		return result, found
+	}
+	pods := []*v1.Pod{pod8, pod7, pod6, pod5, pod4, pod3, pod2, pod1}
+	expected := []*v1.Pod{pod1, pod2, pod3, pod4, pod5, pod6, pod7, pod8}
+	fsStatsToMeasure := []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}
+	orderedBy(exceedDiskRequests(statsFn, fsStatsToMeasure, resourceDisk), priority, disk(statsFn, fsStatsToMeasure, resourceDisk)).Sort(pods)
+	for i := range expected {
+		if pods[i] != expected[i] {
+			t.Errorf("Expected pod[%d]: %s, but got: %s", i, expected[i].Name, pods[i].Name)
+		}
+	}
+}
+
+// TestOrderedByPriorityInodes ensures we order pods by priority and then greediest resource consumer
+func TestOrderedByPriorityInodes(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	pod1 := newPod("low-priority-high-usage", lowPriority, []v1.Container{
+		newContainer("low-priority-high-usage", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod2 := newPod("low-priority-low-usage", lowPriority, []v1.Container{
+		newContainer("low-priority-low-usage", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod3 := newPod("high-priority-high-usage", highPriority, []v1.Container{
+		newContainer("high-priority-high-usage", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	pod4 := newPod("high-priority-low-usage", highPriority, []v1.Container{
+		newContainer("high-priority-low-usage", newResourceList("", "", ""), newResourceList("", "", "")),
+	}, []v1.Volume{
+		newVolume("local-volume", v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		}),
+	})
+	stats := map[*v1.Pod]statsapi.PodStats{
+		pod1: newPodInodeStats(pod1, resource.MustParse("50000"), resource.MustParse("100000"), resource.MustParse("250000")), // 400000
+		pod2: newPodInodeStats(pod2, resource.MustParse("60000"), resource.MustParse("30000"), resource.MustParse("10000")),   // 100000
+		pod3: newPodInodeStats(pod3, resource.MustParse("150000"), resource.MustParse("150000"), resource.MustParse("50000")), // 350000
+		pod4: newPodInodeStats(pod4, resource.MustParse("10000"), resource.MustParse("40000"), resource.MustParse("100000")),  // 150000
+	}
+	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
+		result, found := stats[pod]
+		return result, found
+	}
+	pods := []*v1.Pod{pod4, pod3, pod2, pod1}
+	orderedBy(priority, disk(statsFn, []fsStatsType{fsStatsRoot, fsStatsLogs, fsStatsLocalVolumeSource}, resourceInodes)).Sort(pods)
+	expected := []*v1.Pod{pod1, pod2, pod3, pod4}
 	for i := range expected {
 		if pods[i] != expected[i] {
 			t.Errorf("Expected pod[%d]: %s, but got: %s", i, expected[i].Name, pods[i].Name)
@@ -571,23 +825,23 @@ func testOrderedByQoSResource(t *testing.T, orderedByResource v1.ResourceName,
 
 // TestOrderedByMemory ensures we order pods by greediest memory consumer relative to request.
 func TestOrderedByMemory(t *testing.T) {
-	pod1 := newPod("best-effort-high", []v1.Container{
-		newContainer("best-effort-high", newResourceList("", ""), newResourceList("", "")),
+	pod1 := newPod("best-effort-high", defaultPriority, []v1.Container{
+		newContainer("best-effort-high", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, nil)
-	pod2 := newPod("best-effort-low", []v1.Container{
-		newContainer("best-effort-low", newResourceList("", ""), newResourceList("", "")),
+	pod2 := newPod("best-effort-low", defaultPriority, []v1.Container{
+		newContainer("best-effort-low", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, nil)
-	pod3 := newPod("burstable-high", []v1.Container{
-		newContainer("burstable-high", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod3 := newPod("burstable-high", defaultPriority, []v1.Container{
+		newContainer("burstable-high", newResourceList("", "100Mi", ""), newResourceList("", "1Gi", "")),
 	}, nil)
-	pod4 := newPod("burstable-low", []v1.Container{
-		newContainer("burstable-low", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod4 := newPod("burstable-low", defaultPriority, []v1.Container{
+		newContainer("burstable-low", newResourceList("", "100Mi", ""), newResourceList("", "1Gi", "")),
 	}, nil)
-	pod5 := newPod("guaranteed-high", []v1.Container{
-		newContainer("guaranteed-high", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod5 := newPod("guaranteed-high", defaultPriority, []v1.Container{
+		newContainer("guaranteed-high", newResourceList("", "1Gi", ""), newResourceList("", "1Gi", "")),
 	}, nil)
-	pod6 := newPod("guaranteed-low", []v1.Container{
-		newContainer("guaranteed-low", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod6 := newPod("guaranteed-low", defaultPriority, []v1.Container{
+		newContainer("guaranteed-low", newResourceList("", "1Gi", ""), newResourceList("", "1Gi", "")),
 	}, nil)
 	stats := map[*v1.Pod]statsapi.PodStats{
 		pod1: newPodMemoryStats(pod1, resource.MustParse("500Mi")), // 500 relative to request
@@ -611,41 +865,50 @@ func TestOrderedByMemory(t *testing.T) {
 	}
 }
 
-// TestOrderedByQoSMemory ensures we order by qosComparator and then memory consumption relative to request.
-func TestOrderedByQoSMemory(t *testing.T) {
-	pod1 := newPod("best-effort-high", []v1.Container{
-		newContainer("best-effort-high", newResourceList("", ""), newResourceList("", "")),
+// TestOrderedByPriorityMemory ensures we order by priority and then memory consumption relative to request.
+func TestOrderedByPriorityMemory(t *testing.T) {
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	pod1 := newPod("above-requests-low-priority-high-usage", lowPriority, []v1.Container{
+		newContainer("above-requests-low-priority-high-usage", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, nil)
-	pod2 := newPod("best-effort-low", []v1.Container{
-		newContainer("best-effort-low", newResourceList("", ""), newResourceList("", "")),
+	pod2 := newPod("above-requests-low-priority-low-usage", lowPriority, []v1.Container{
+		newContainer("above-requests-low-priority-low-usage", newResourceList("", "", ""), newResourceList("", "", "")),
 	}, nil)
-	pod3 := newPod("burstable-high", []v1.Container{
-		newContainer("burstable-high", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod3 := newPod("above-requests-high-priority-high-usage", highPriority, []v1.Container{
+		newContainer("above-requests-high-priority-high-usage", newResourceList("", "100Mi", ""), newResourceList("", "", "")),
 	}, nil)
-	pod4 := newPod("burstable-low", []v1.Container{
-		newContainer("burstable-low", newResourceList("100m", "100Mi"), newResourceList("200m", "1Gi")),
+	pod4 := newPod("above-requests-high-priority-low-usage", highPriority, []v1.Container{
+		newContainer("above-requests-high-priority-low-usage", newResourceList("", "100Mi", ""), newResourceList("", "", "")),
 	}, nil)
-	pod5 := newPod("guaranteed-high", []v1.Container{
-		newContainer("guaranteed-high", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod5 := newPod("below-requests-low-priority-high-usage", lowPriority, []v1.Container{
+		newContainer("below-requests-low-priority-high-usage", newResourceList("", "1Gi", ""), newResourceList("", "", "")),
 	}, nil)
-	pod6 := newPod("guaranteed-low", []v1.Container{
-		newContainer("guaranteed-low", newResourceList("100m", "1Gi"), newResourceList("100m", "1Gi")),
+	pod6 := newPod("below-requests-low-priority-low-usage", lowPriority, []v1.Container{
+		newContainer("below-requests-low-priority-low-usage", newResourceList("", "1Gi", ""), newResourceList("", "", "")),
+	}, nil)
+	pod7 := newPod("below-requests-high-priority-high-usage", highPriority, []v1.Container{
+		newContainer("below-requests-high-priority-high-usage", newResourceList("", "1Gi", ""), newResourceList("", "", "")),
+	}, nil)
+	pod8 := newPod("below-requests-high-priority-low-usage", highPriority, []v1.Container{
+		newContainer("below-requests-high-priority-low-usage", newResourceList("", "1Gi", ""), newResourceList("", "", "")),
 	}, nil)
 	stats := map[*v1.Pod]statsapi.PodStats{
 		pod1: newPodMemoryStats(pod1, resource.MustParse("500Mi")), // 500 relative to request
 		pod2: newPodMemoryStats(pod2, resource.MustParse("50Mi")),  // 50 relative to request
-		pod3: newPodMemoryStats(pod3, resource.MustParse("50Mi")),  // -50 relative to request
-		pod4: newPodMemoryStats(pod4, resource.MustParse("300Mi")), // 200 relative to request
+		pod3: newPodMemoryStats(pod3, resource.MustParse("600Mi")), // 500 relative to request
+		pod4: newPodMemoryStats(pod4, resource.MustParse("150Mi")), // 50 relative to request
 		pod5: newPodMemoryStats(pod5, resource.MustParse("800Mi")), // -200 relative to request
 		pod6: newPodMemoryStats(pod6, resource.MustParse("200Mi")), // -800 relative to request
+		pod7: newPodMemoryStats(pod7, resource.MustParse("800Mi")), // -200 relative to request
+		pod8: newPodMemoryStats(pod8, resource.MustParse("200Mi")), // -800 relative to request
 	}
 	statsFn := func(pod *v1.Pod) (statsapi.PodStats, bool) {
 		result, found := stats[pod]
 		return result, found
 	}
-	pods := []*v1.Pod{pod1, pod2, pod3, pod4, pod5, pod6}
-	expected := []*v1.Pod{pod1, pod2, pod4, pod3, pod5, pod6}
-	orderedBy(qosComparator, memory(statsFn)).Sort(pods)
+	pods := []*v1.Pod{pod8, pod7, pod6, pod5, pod4, pod3, pod2, pod1}
+	expected := []*v1.Pod{pod1, pod2, pod3, pod4, pod5, pod6, pod7, pod8}
+	orderedBy(exceedMemoryRequests(statsFn), priority, memory(statsFn)).Sort(pods)
 	for i := range expected {
 		if pods[i] != expected[i] {
 			t.Errorf("Expected pod[%d]: %s, but got: %s", i, expected[i].Name, pods[i].Name)
@@ -698,6 +961,7 @@ func TestMakeSignalObservations(t *testing.T) {
 	}
 	nodeAvailableBytes := uint64(1024 * 1024 * 1024)
 	nodeWorkingSetBytes := uint64(1024 * 1024 * 1024)
+	allocatableMemoryCapacity := uint64(5 * 1024 * 1024 * 1024)
 	imageFsAvailableBytes := uint64(1024 * 1024)
 	imageFsCapacityBytes := uint64(1024 * 1024 * 2)
 	nodeFsAvailableBytes := uint64(1024)
@@ -737,16 +1001,31 @@ func TestMakeSignalObservations(t *testing.T) {
 		podMaker("pod1", "ns2", "uuid2", 1),
 		podMaker("pod3", "ns3", "uuid3", 1),
 	}
-	containerWorkingSetBytes := int64(1024 * 1024)
+	containerWorkingSetBytes := int64(1024 * 1024 * 1024)
 	for _, pod := range pods {
 		fakeStats.Pods = append(fakeStats.Pods, newPodStats(pod, containerWorkingSetBytes))
 	}
-	actualObservations, statsFunc, err := makeSignalObservations(provider)
-
+	res := quantityMustParse("5Gi")
+	capacityProvider := newMockCapacityProvider(v1.ResourceList{v1.ResourceMemory: *quantityMustParse("5Gi")}, v1.ResourceList{v1.ResourceMemory: *quantityMustParse("0Gi")})
+	// Allocatable thresholds are always 100%.  Verify that Threshold == Capacity.
+	if res.CmpInt64(int64(allocatableMemoryCapacity)) != 0 {
+		t.Errorf("Expected Threshold %v to be equal to value %v", res.Value(), allocatableMemoryCapacity)
+	}
+	actualObservations, statsFunc, err := makeSignalObservations(provider, capacityProvider, pods)
 	if err != nil {
 		t.Errorf("Unexpected err: %v", err)
 	}
-	memQuantity, found := actualObservations[SignalMemoryAvailable]
+	allocatableMemQuantity, found := actualObservations[evictionapi.SignalAllocatableMemoryAvailable]
+	if !found {
+		t.Errorf("Expected allocatable memory observation, but didnt find one")
+	}
+	if allocatableMemQuantity.available.Value() != 2*containerWorkingSetBytes {
+		t.Errorf("Expected %v, actual: %v", containerWorkingSetBytes, allocatableMemQuantity.available.Value())
+	}
+	if expectedBytes := int64(allocatableMemoryCapacity); allocatableMemQuantity.capacity.Value() != expectedBytes {
+		t.Errorf("Expected %v, actual: %v", expectedBytes, allocatableMemQuantity.capacity.Value())
+	}
+	memQuantity, found := actualObservations[evictionapi.SignalMemoryAvailable]
 	if !found {
 		t.Errorf("Expected available memory observation: %v", err)
 	}
@@ -756,7 +1035,7 @@ func TestMakeSignalObservations(t *testing.T) {
 	if expectedBytes := int64(nodeWorkingSetBytes + nodeAvailableBytes); memQuantity.capacity.Value() != expectedBytes {
 		t.Errorf("Expected %v, actual: %v", expectedBytes, memQuantity.capacity.Value())
 	}
-	nodeFsQuantity, found := actualObservations[SignalNodeFsAvailable]
+	nodeFsQuantity, found := actualObservations[evictionapi.SignalNodeFsAvailable]
 	if !found {
 		t.Errorf("Expected available nodefs observation: %v", err)
 	}
@@ -766,7 +1045,7 @@ func TestMakeSignalObservations(t *testing.T) {
 	if expectedBytes := int64(nodeFsCapacityBytes); nodeFsQuantity.capacity.Value() != expectedBytes {
 		t.Errorf("Expected %v, actual: %v", expectedBytes, nodeFsQuantity.capacity.Value())
 	}
-	nodeFsInodesQuantity, found := actualObservations[SignalNodeFsInodesFree]
+	nodeFsInodesQuantity, found := actualObservations[evictionapi.SignalNodeFsInodesFree]
 	if !found {
 		t.Errorf("Expected inodes free nodefs observation: %v", err)
 	}
@@ -776,7 +1055,7 @@ func TestMakeSignalObservations(t *testing.T) {
 	if expected := int64(nodeFsInodes); nodeFsInodesQuantity.capacity.Value() != expected {
 		t.Errorf("Expected %v, actual: %v", expected, nodeFsInodesQuantity.capacity.Value())
 	}
-	imageFsQuantity, found := actualObservations[SignalImageFsAvailable]
+	imageFsQuantity, found := actualObservations[evictionapi.SignalImageFsAvailable]
 	if !found {
 		t.Errorf("Expected available imagefs observation: %v", err)
 	}
@@ -786,7 +1065,7 @@ func TestMakeSignalObservations(t *testing.T) {
 	if expectedBytes := int64(imageFsCapacityBytes); imageFsQuantity.capacity.Value() != expectedBytes {
 		t.Errorf("Expected %v, actual: %v", expectedBytes, imageFsQuantity.capacity.Value())
 	}
-	imageFsInodesQuantity, found := actualObservations[SignalImageFsInodesFree]
+	imageFsInodesQuantity, found := actualObservations[evictionapi.SignalImageFsInodesFree]
 	if !found {
 		t.Errorf("Expected inodes free imagefs observation: %v", err)
 	}
@@ -811,67 +1090,67 @@ func TestMakeSignalObservations(t *testing.T) {
 }
 
 func TestThresholdsMet(t *testing.T) {
-	hardThreshold := Threshold{
-		Signal:   SignalMemoryAvailable,
-		Operator: OpLessThan,
-		Value: ThresholdValue{
+	hardThreshold := evictionapi.Threshold{
+		Signal:   evictionapi.SignalMemoryAvailable,
+		Operator: evictionapi.OpLessThan,
+		Value: evictionapi.ThresholdValue{
 			Quantity: quantityMustParse("1Gi"),
 		},
-		MinReclaim: &ThresholdValue{
+		MinReclaim: &evictionapi.ThresholdValue{
 			Quantity: quantityMustParse("500Mi"),
 		},
 	}
 	testCases := map[string]struct {
 		enforceMinReclaim bool
-		thresholds        []Threshold
+		thresholds        []evictionapi.Threshold
 		observations      signalObservations
-		result            []Threshold
+		result            []evictionapi.Threshold
 	}{
 		"empty": {
 			enforceMinReclaim: false,
-			thresholds:        []Threshold{},
+			thresholds:        []evictionapi.Threshold{},
 			observations:      signalObservations{},
-			result:            []Threshold{},
+			result:            []evictionapi.Threshold{},
 		},
 		"threshold-met-memory": {
 			enforceMinReclaim: false,
-			thresholds:        []Threshold{hardThreshold},
+			thresholds:        []evictionapi.Threshold{hardThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("500Mi"),
 				},
 			},
-			result: []Threshold{hardThreshold},
+			result: []evictionapi.Threshold{hardThreshold},
 		},
 		"threshold-not-met": {
 			enforceMinReclaim: false,
-			thresholds:        []Threshold{hardThreshold},
+			thresholds:        []evictionapi.Threshold{hardThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("2Gi"),
 				},
 			},
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 		"threshold-met-with-min-reclaim": {
 			enforceMinReclaim: true,
-			thresholds:        []Threshold{hardThreshold},
+			thresholds:        []evictionapi.Threshold{hardThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("1.05Gi"),
 				},
 			},
-			result: []Threshold{hardThreshold},
+			result: []evictionapi.Threshold{hardThreshold},
 		},
 		"threshold-not-met-with-min-reclaim": {
 			enforceMinReclaim: true,
-			thresholds:        []Threshold{hardThreshold},
+			thresholds:        []evictionapi.Threshold{hardThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("2Gi"),
 				},
 			},
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 	}
 	for testName, testCase := range testCases {
@@ -883,8 +1162,8 @@ func TestThresholdsMet(t *testing.T) {
 }
 
 func TestThresholdsUpdatedStats(t *testing.T) {
-	updatedThreshold := Threshold{
-		Signal: SignalMemoryAvailable,
+	updatedThreshold := evictionapi.Threshold{
+		Signal: evictionapi.SignalMemoryAvailable,
 	}
 	locationUTC, err := time.LoadLocation("UTC")
 	if err != nil {
@@ -892,76 +1171,76 @@ func TestThresholdsUpdatedStats(t *testing.T) {
 		return
 	}
 	testCases := map[string]struct {
-		thresholds   []Threshold
+		thresholds   []evictionapi.Threshold
 		observations signalObservations
 		last         signalObservations
-		result       []Threshold
+		result       []evictionapi.Threshold
 	}{
 		"empty": {
-			thresholds:   []Threshold{},
+			thresholds:   []evictionapi.Threshold{},
 			observations: signalObservations{},
 			last:         signalObservations{},
-			result:       []Threshold{},
+			result:       []evictionapi.Threshold{},
 		},
 		"no-time": {
-			thresholds: []Threshold{updatedThreshold},
+			thresholds: []evictionapi.Threshold{updatedThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{},
+				evictionapi.SignalMemoryAvailable: signalObservation{},
 			},
 			last:   signalObservations{},
-			result: []Threshold{updatedThreshold},
+			result: []evictionapi.Threshold{updatedThreshold},
 		},
 		"no-last-observation": {
-			thresholds: []Threshold{updatedThreshold},
+			thresholds: []evictionapi.Threshold{updatedThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 0, 0, 0, locationUTC),
 				},
 			},
 			last:   signalObservations{},
-			result: []Threshold{updatedThreshold},
+			result: []evictionapi.Threshold{updatedThreshold},
 		},
 		"time-machine": {
-			thresholds: []Threshold{updatedThreshold},
+			thresholds: []evictionapi.Threshold{updatedThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 0, 0, 0, locationUTC),
 				},
 			},
 			last: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 1, 0, 0, locationUTC),
 				},
 			},
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 		"same-observation": {
-			thresholds: []Threshold{updatedThreshold},
+			thresholds: []evictionapi.Threshold{updatedThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 0, 0, 0, locationUTC),
 				},
 			},
 			last: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 0, 0, 0, locationUTC),
 				},
 			},
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 		"new-observation": {
-			thresholds: []Threshold{updatedThreshold},
+			thresholds: []evictionapi.Threshold{updatedThreshold},
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 1, 0, 0, locationUTC),
 				},
 			},
 			last: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					time: metav1.Date(2016, 1, 1, 0, 0, 0, 0, locationUTC),
 				},
 			},
-			result: []Threshold{updatedThreshold},
+			result: []evictionapi.Threshold{updatedThreshold},
 		},
 	}
 	for testName, testCase := range testCases {
@@ -973,21 +1252,21 @@ func TestThresholdsUpdatedStats(t *testing.T) {
 }
 
 func TestPercentageThresholdsMet(t *testing.T) {
-	specificThresholds := []Threshold{
+	specificThresholds := []evictionapi.Threshold{
 		{
-			Signal:   SignalMemoryAvailable,
-			Operator: OpLessThan,
-			Value: ThresholdValue{
+			Signal:   evictionapi.SignalMemoryAvailable,
+			Operator: evictionapi.OpLessThan,
+			Value: evictionapi.ThresholdValue{
 				Percentage: 0.2,
 			},
-			MinReclaim: &ThresholdValue{
+			MinReclaim: &evictionapi.ThresholdValue{
 				Percentage: 0.05,
 			},
 		},
 		{
-			Signal:   SignalNodeFsAvailable,
-			Operator: OpLessThan,
-			Value: ThresholdValue{
+			Signal:   evictionapi.SignalNodeFsAvailable,
+			Operator: evictionapi.OpLessThan,
+			Value: evictionapi.ThresholdValue{
 				Percentage: 0.3,
 			},
 		},
@@ -995,19 +1274,19 @@ func TestPercentageThresholdsMet(t *testing.T) {
 
 	testCases := map[string]struct {
 		enforceMinRelaim bool
-		thresholds       []Threshold
+		thresholds       []evictionapi.Threshold
 		observations     signalObservations
-		result           []Threshold
+		result           []evictionapi.Threshold
 	}{
 		"BothMet": {
 			enforceMinRelaim: false,
 			thresholds:       specificThresholds,
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("100Mi"),
 					capacity:  quantityMustParse("1000Mi"),
 				},
-				SignalNodeFsAvailable: signalObservation{
+				evictionapi.SignalNodeFsAvailable: signalObservation{
 					available: quantityMustParse("100Gi"),
 					capacity:  quantityMustParse("1000Gi"),
 				},
@@ -1018,68 +1297,68 @@ func TestPercentageThresholdsMet(t *testing.T) {
 			enforceMinRelaim: false,
 			thresholds:       specificThresholds,
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("300Mi"),
 					capacity:  quantityMustParse("1000Mi"),
 				},
-				SignalNodeFsAvailable: signalObservation{
+				evictionapi.SignalNodeFsAvailable: signalObservation{
 					available: quantityMustParse("400Gi"),
 					capacity:  quantityMustParse("1000Gi"),
 				},
 			},
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 		"DiskMet": {
 			enforceMinRelaim: false,
 			thresholds:       specificThresholds,
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("300Mi"),
 					capacity:  quantityMustParse("1000Mi"),
 				},
-				SignalNodeFsAvailable: signalObservation{
+				evictionapi.SignalNodeFsAvailable: signalObservation{
 					available: quantityMustParse("100Gi"),
 					capacity:  quantityMustParse("1000Gi"),
 				},
 			},
-			result: []Threshold{specificThresholds[1]},
+			result: []evictionapi.Threshold{specificThresholds[1]},
 		},
 		"MemoryMet": {
 			enforceMinRelaim: false,
 			thresholds:       specificThresholds,
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("100Mi"),
 					capacity:  quantityMustParse("1000Mi"),
 				},
-				SignalNodeFsAvailable: signalObservation{
+				evictionapi.SignalNodeFsAvailable: signalObservation{
 					available: quantityMustParse("400Gi"),
 					capacity:  quantityMustParse("1000Gi"),
 				},
 			},
-			result: []Threshold{specificThresholds[0]},
+			result: []evictionapi.Threshold{specificThresholds[0]},
 		},
 		"MemoryMetWithMinReclaim": {
 			enforceMinRelaim: true,
 			thresholds:       specificThresholds,
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("225Mi"),
 					capacity:  quantityMustParse("1000Mi"),
 				},
 			},
-			result: []Threshold{specificThresholds[0]},
+			result: []evictionapi.Threshold{specificThresholds[0]},
 		},
 		"MemoryNotMetWithMinReclaim": {
 			enforceMinRelaim: true,
 			thresholds:       specificThresholds,
 			observations: signalObservations{
-				SignalMemoryAvailable: signalObservation{
+				evictionapi.SignalMemoryAvailable: signalObservation{
 					available: quantityMustParse("300Mi"),
 					capacity:  quantityMustParse("1000Mi"),
 				},
 			},
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 	}
 	for testName, testCase := range testCases {
@@ -1091,29 +1370,29 @@ func TestPercentageThresholdsMet(t *testing.T) {
 }
 
 func TestThresholdsFirstObservedAt(t *testing.T) {
-	hardThreshold := Threshold{
-		Signal:   SignalMemoryAvailable,
-		Operator: OpLessThan,
-		Value: ThresholdValue{
+	hardThreshold := evictionapi.Threshold{
+		Signal:   evictionapi.SignalMemoryAvailable,
+		Operator: evictionapi.OpLessThan,
+		Value: evictionapi.ThresholdValue{
 			Quantity: quantityMustParse("1Gi"),
 		},
 	}
 	now := metav1.Now()
 	oldTime := metav1.NewTime(now.Time.Add(-1 * time.Minute))
 	testCases := map[string]struct {
-		thresholds     []Threshold
+		thresholds     []evictionapi.Threshold
 		lastObservedAt thresholdsObservedAt
 		now            time.Time
 		result         thresholdsObservedAt
 	}{
 		"empty": {
-			thresholds:     []Threshold{},
+			thresholds:     []evictionapi.Threshold{},
 			lastObservedAt: thresholdsObservedAt{},
 			now:            now.Time,
 			result:         thresholdsObservedAt{},
 		},
 		"no-previous-observation": {
-			thresholds:     []Threshold{hardThreshold},
+			thresholds:     []evictionapi.Threshold{hardThreshold},
 			lastObservedAt: thresholdsObservedAt{},
 			now:            now.Time,
 			result: thresholdsObservedAt{
@@ -1121,7 +1400,7 @@ func TestThresholdsFirstObservedAt(t *testing.T) {
 			},
 		},
 		"previous-observation": {
-			thresholds: []Threshold{hardThreshold},
+			thresholds: []evictionapi.Threshold{hardThreshold},
 			lastObservedAt: thresholdsObservedAt{
 				hardThreshold: oldTime.Time,
 			},
@@ -1141,17 +1420,17 @@ func TestThresholdsFirstObservedAt(t *testing.T) {
 
 func TestThresholdsMetGracePeriod(t *testing.T) {
 	now := metav1.Now()
-	hardThreshold := Threshold{
-		Signal:   SignalMemoryAvailable,
-		Operator: OpLessThan,
-		Value: ThresholdValue{
+	hardThreshold := evictionapi.Threshold{
+		Signal:   evictionapi.SignalMemoryAvailable,
+		Operator: evictionapi.OpLessThan,
+		Value: evictionapi.ThresholdValue{
 			Quantity: quantityMustParse("1Gi"),
 		},
 	}
-	softThreshold := Threshold{
-		Signal:   SignalMemoryAvailable,
-		Operator: OpLessThan,
-		Value: ThresholdValue{
+	softThreshold := evictionapi.Threshold{
+		Signal:   evictionapi.SignalMemoryAvailable,
+		Operator: evictionapi.OpLessThan,
+		Value: evictionapi.ThresholdValue{
 			Quantity: quantityMustParse("2Gi"),
 		},
 		GracePeriod: 1 * time.Minute,
@@ -1160,33 +1439,33 @@ func TestThresholdsMetGracePeriod(t *testing.T) {
 	testCases := map[string]struct {
 		observedAt thresholdsObservedAt
 		now        time.Time
-		result     []Threshold
+		result     []evictionapi.Threshold
 	}{
 		"empty": {
 			observedAt: thresholdsObservedAt{},
 			now:        now.Time,
-			result:     []Threshold{},
+			result:     []evictionapi.Threshold{},
 		},
 		"hard-threshold-met": {
 			observedAt: thresholdsObservedAt{
 				hardThreshold: now.Time,
 			},
 			now:    now.Time,
-			result: []Threshold{hardThreshold},
+			result: []evictionapi.Threshold{hardThreshold},
 		},
 		"soft-threshold-not-met": {
 			observedAt: thresholdsObservedAt{
 				softThreshold: now.Time,
 			},
 			now:    now.Time,
-			result: []Threshold{},
+			result: []evictionapi.Threshold{},
 		},
 		"soft-threshold-met": {
 			observedAt: thresholdsObservedAt{
 				softThreshold: oldTime.Time,
 			},
 			now:    now.Time,
-			result: []Threshold{softThreshold},
+			result: []evictionapi.Threshold{softThreshold},
 		},
 	}
 	for testName, testCase := range testCases {
@@ -1199,16 +1478,16 @@ func TestThresholdsMetGracePeriod(t *testing.T) {
 
 func TestNodeConditions(t *testing.T) {
 	testCases := map[string]struct {
-		inputs []Threshold
+		inputs []evictionapi.Threshold
 		result []v1.NodeConditionType
 	}{
 		"empty-list": {
-			inputs: []Threshold{},
+			inputs: []evictionapi.Threshold{},
 			result: []v1.NodeConditionType{},
 		},
 		"memory.available": {
-			inputs: []Threshold{
-				{Signal: SignalMemoryAvailable},
+			inputs: []evictionapi.Threshold{
+				{Signal: evictionapi.SignalMemoryAvailable},
 			},
 			result: []v1.NodeConditionType{v1.NodeMemoryPressure},
 		},
@@ -1308,12 +1587,12 @@ func TestHasNodeConditions(t *testing.T) {
 		result bool
 	}{
 		"has-condition": {
-			inputs: []v1.NodeConditionType{v1.NodeReady, v1.NodeOutOfDisk, v1.NodeMemoryPressure},
+			inputs: []v1.NodeConditionType{v1.NodeReady, v1.NodeDiskPressure, v1.NodeMemoryPressure},
 			item:   v1.NodeMemoryPressure,
 			result: true,
 		},
 		"does-not-have-condition": {
-			inputs: []v1.NodeConditionType{v1.NodeReady, v1.NodeOutOfDisk},
+			inputs: []v1.NodeConditionType{v1.NodeReady, v1.NodeDiskPressure},
 			item:   v1.NodeMemoryPressure,
 			result: false,
 		},
@@ -1327,24 +1606,24 @@ func TestHasNodeConditions(t *testing.T) {
 
 func TestGetStarvedResources(t *testing.T) {
 	testCases := map[string]struct {
-		inputs []Threshold
+		inputs []evictionapi.Threshold
 		result []v1.ResourceName
 	}{
 		"memory.available": {
-			inputs: []Threshold{
-				{Signal: SignalMemoryAvailable},
+			inputs: []evictionapi.Threshold{
+				{Signal: evictionapi.SignalMemoryAvailable},
 			},
 			result: []v1.ResourceName{v1.ResourceMemory},
 		},
 		"imagefs.available": {
-			inputs: []Threshold{
-				{Signal: SignalImageFsAvailable},
+			inputs: []evictionapi.Threshold{
+				{Signal: evictionapi.SignalImageFsAvailable},
 			},
 			result: []v1.ResourceName{resourceImageFs},
 		},
 		"nodefs.available": {
-			inputs: []Threshold{
-				{Signal: SignalNodeFsAvailable},
+			inputs: []evictionapi.Threshold{
+				{Signal: evictionapi.SignalNodeFsAvailable},
 			},
 			result: []v1.ResourceName{resourceNodeFs},
 		},
@@ -1397,50 +1676,50 @@ func testParsePercentage(t *testing.T) {
 
 func testCompareThresholdValue(t *testing.T) {
 	testCases := []struct {
-		a, b  ThresholdValue
+		a, b  evictionapi.ThresholdValue
 		equal bool
 	}{
 		{
-			a: ThresholdValue{
+			a: evictionapi.ThresholdValue{
 				Quantity: resource.NewQuantity(123, resource.BinarySI),
 			},
-			b: ThresholdValue{
+			b: evictionapi.ThresholdValue{
 				Quantity: resource.NewQuantity(123, resource.BinarySI),
 			},
 			equal: true,
 		},
 		{
-			a: ThresholdValue{
+			a: evictionapi.ThresholdValue{
 				Quantity: resource.NewQuantity(123, resource.BinarySI),
 			},
-			b: ThresholdValue{
+			b: evictionapi.ThresholdValue{
 				Quantity: resource.NewQuantity(456, resource.BinarySI),
 			},
 			equal: false,
 		},
 		{
-			a: ThresholdValue{
+			a: evictionapi.ThresholdValue{
 				Quantity: resource.NewQuantity(123, resource.BinarySI),
 			},
-			b: ThresholdValue{
+			b: evictionapi.ThresholdValue{
 				Percentage: 0.1,
 			},
 			equal: false,
 		},
 		{
-			a: ThresholdValue{
+			a: evictionapi.ThresholdValue{
 				Percentage: 0.1,
 			},
-			b: ThresholdValue{
+			b: evictionapi.ThresholdValue{
 				Percentage: 0.1,
 			},
 			equal: true,
 		},
 		{
-			a: ThresholdValue{
+			a: evictionapi.ThresholdValue{
 				Percentage: 0.2,
 			},
-			b: ThresholdValue{
+			b: evictionapi.ThresholdValue{
 				Percentage: 0.1,
 			},
 			equal: false,
@@ -1538,13 +1817,30 @@ func newPodMemoryStats(pod *v1.Pod, workingSet resource.Quantity) statsapi.PodSt
 	return result
 }
 
-func newResourceList(cpu, memory string) v1.ResourceList {
+func newResourceList(cpu, memory, disk string) v1.ResourceList {
 	res := v1.ResourceList{}
 	if cpu != "" {
 		res[v1.ResourceCPU] = resource.MustParse(cpu)
 	}
 	if memory != "" {
 		res[v1.ResourceMemory] = resource.MustParse(memory)
+	}
+	if disk != "" {
+		res[v1.ResourceEphemeralStorage] = resource.MustParse(disk)
+	}
+	return res
+}
+
+func newEphemeralStorageResourceList(ephemeral, cpu, memory string) v1.ResourceList {
+	res := v1.ResourceList{}
+	if ephemeral != "" {
+		res[v1.ResourceEphemeralStorage] = resource.MustParse(ephemeral)
+	}
+	if cpu != "" {
+		res[v1.ResourceCPU] = resource.MustParse(cpu)
+	}
+	if memory != "" {
+		res[v1.ResourceMemory] = resource.MustParse("1Mi")
 	}
 	return res
 }
@@ -1571,15 +1867,16 @@ func newVolume(name string, volumeSource v1.VolumeSource) v1.Volume {
 }
 
 // newPod uses the name as the uid.  Make names unique for testing.
-func newPod(name string, containers []v1.Container, volumes []v1.Volume) *v1.Pod {
+func newPod(name string, priority int32, containers []v1.Container, volumes []v1.Volume) *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			UID:  types.UID(name),
 		},
 		Spec: v1.PodSpec{
 			Containers: containers,
 			Volumes:    volumes,
+			Priority:   &priority,
 		},
 	}
 }
@@ -1601,7 +1898,7 @@ func (s1 nodeConditionList) Equal(s2 nodeConditionList) bool {
 }
 
 // thresholdList is a simple alias to support equality checking independent of order
-type thresholdList []Threshold
+type thresholdList []evictionapi.Threshold
 
 // Equal adds the ability to check equality between two lists of node conditions.
 func (s1 thresholdList) Equal(s2 thresholdList) bool {

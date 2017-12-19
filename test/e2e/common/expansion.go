@@ -17,22 +17,27 @@ limitations under the License.
 package common
 
 import (
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/util/uuid"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/kubernetes/test/e2e/framework"
-
-	. "github.com/onsi/ginkgo"
 )
 
 // These tests exercise the Kubernetes expansion syntax $(VAR).
-// For more information, see: docs/design/expansion.md
+// For more information, see:
+// https://github.com/kubernetes/community/blob/master/contributors/design-proposals/node/expansion.md
 var _ = framework.KubeDescribe("Variable Expansion", func() {
 	f := framework.NewDefaultFramework("var-expansion")
 
-	It("should allow composing env vars into new env vars [Conformance]", func() {
+	/*
+		    Testname: var-expansion-env
+		    Description: Make sure environment variables can be set using an
+			expansion of previously defined environment variables
+	*/
+	framework.ConformanceIt("should allow composing env vars into new env vars ", func() {
 		podName := "var-expansion-" + string(uuid.NewUUID())
 		pod := &v1.Pod{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:   podName,
 				Labels: map[string]string{"name": podName},
 			},
@@ -40,7 +45,7 @@ var _ = framework.KubeDescribe("Variable Expansion", func() {
 				Containers: []v1.Container{
 					{
 						Name:    "dapi-container",
-						Image:   "gcr.io/google_containers/busybox:1.24",
+						Image:   busyboxImage,
 						Command: []string{"sh", "-c", "env"},
 						Env: []v1.EnvVar{
 							{
@@ -69,10 +74,15 @@ var _ = framework.KubeDescribe("Variable Expansion", func() {
 		})
 	})
 
-	It("should allow substituting values in a container's command [Conformance]", func() {
+	/*
+		    Testname: var-expansion-command
+		    Description: Make sure a container's commands can be set using an
+			expansion of environment variables.
+	*/
+	framework.ConformanceIt("should allow substituting values in a container's command ", func() {
 		podName := "var-expansion-" + string(uuid.NewUUID())
 		pod := &v1.Pod{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:   podName,
 				Labels: map[string]string{"name": podName},
 			},
@@ -80,7 +90,7 @@ var _ = framework.KubeDescribe("Variable Expansion", func() {
 				Containers: []v1.Container{
 					{
 						Name:    "dapi-container",
-						Image:   "gcr.io/google_containers/busybox:1.24",
+						Image:   busyboxImage,
 						Command: []string{"sh", "-c", "TEST_VAR=wrong echo \"$(TEST_VAR)\""},
 						Env: []v1.EnvVar{
 							{
@@ -99,10 +109,15 @@ var _ = framework.KubeDescribe("Variable Expansion", func() {
 		})
 	})
 
-	It("should allow substituting values in a container's args [Conformance]", func() {
+	/*
+		    Testname: var-expansion-arg
+		    Description: Make sure a container's args can be set using an
+			expansion of environment variables.
+	*/
+	framework.ConformanceIt("should allow substituting values in a container's args ", func() {
 		podName := "var-expansion-" + string(uuid.NewUUID())
 		pod := &v1.Pod{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:   podName,
 				Labels: map[string]string{"name": podName},
 			},
@@ -110,7 +125,7 @@ var _ = framework.KubeDescribe("Variable Expansion", func() {
 				Containers: []v1.Container{
 					{
 						Name:    "dapi-container",
-						Image:   "gcr.io/google_containers/busybox:1.24",
+						Image:   busyboxImage,
 						Command: []string{"sh", "-c"},
 						Args:    []string{"TEST_VAR=wrong echo \"$(TEST_VAR)\""},
 						Env: []v1.EnvVar{

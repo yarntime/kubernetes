@@ -29,17 +29,19 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	utiltesting "k8s.io/client-go/util/testing"
 	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/api/validation"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	k8s_api_v1 "k8s.io/kubernetes/pkg/apis/core/v1"
+	"k8s.io/kubernetes/pkg/apis/core/validation"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
-	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/securitycontext"
-	"k8s.io/kubernetes/pkg/types"
-	utiltesting "k8s.io/kubernetes/pkg/util/testing"
-	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 func TestExtractFromNonExistentFile(t *testing.T) {
@@ -58,7 +60,7 @@ func TestUpdateOnNonExistentFile(t *testing.T) {
 	case got := <-ch:
 		update := got.(kubetypes.PodUpdate)
 		expected := CreatePodUpdate(kubetypes.SET, kubetypes.FileSource)
-		if !api.Semantic.DeepDerivative(expected, update) {
+		if !apiequality.Semantic.DeepDerivative(expected, update) {
 			t.Fatalf("expected %#v, Got %#v", expected, update)
 		}
 
@@ -78,7 +80,7 @@ func TestReadPodsFromFileExistAlready(t *testing.T) {
 				t.Fatalf("unable to create temp dir: %v", err)
 			}
 			defer os.RemoveAll(dirName)
-			file := testCase.writeToFile(dirName, "test_pod_config", t)
+			file := testCase.writeToFile(dirName, "test_pod_manifest", t)
 
 			ch := make(chan interface{})
 			NewSourceFile(file, hostname, time.Millisecond, ch)
@@ -88,14 +90,14 @@ func TestReadPodsFromFileExistAlready(t *testing.T) {
 				for _, pod := range update.Pods {
 					// TODO: remove the conversion when validation is performed on versioned objects.
 					internalPod := &api.Pod{}
-					if err := v1.Convert_v1_Pod_To_api_Pod(pod, internalPod, nil); err != nil {
+					if err := k8s_api_v1.Convert_v1_Pod_To_core_Pod(pod, internalPod, nil); err != nil {
 						t.Fatalf("%s: Cannot convert pod %#v, %#v", testCase.desc, pod, err)
 					}
 					if errs := validation.ValidatePod(internalPod); len(errs) > 0 {
 						t.Fatalf("%s: Invalid pod %#v, %#v", testCase.desc, internalPod, errs)
 					}
 				}
-				if !api.Semantic.DeepEqual(testCase.expected, update) {
+				if !apiequality.Semantic.DeepEqual(testCase.expected, update) {
 					t.Fatalf("%s: Expected %#v, Got %#v", testCase.desc, testCase.expected, update)
 				}
 			case <-time.After(wait.ForeverTestTimeout):
@@ -128,7 +130,7 @@ func TestExtractFromBadDataFile(t *testing.T) {
 	}
 	defer os.RemoveAll(dirName)
 
-	fileName := filepath.Join(dirName, "test_pod_config")
+	fileName := filepath.Join(dirName, "test_pod_manifest")
 	err = ioutil.WriteFile(fileName, []byte{1, 2, 3}, 0555)
 	if err != nil {
 		t.Fatalf("unable to write test file %#v", err)
@@ -159,7 +161,7 @@ func TestExtractFromEmptyDir(t *testing.T) {
 
 	update := (<-ch).(kubetypes.PodUpdate)
 	expected := CreatePodUpdate(kubetypes.SET, kubetypes.FileSource)
-	if !api.Semantic.DeepEqual(expected, update) {
+	if !apiequality.Semantic.DeepEqual(expected, update) {
 		t.Fatalf("expected %#v, Got %#v", expected, update)
 	}
 }
@@ -180,7 +182,7 @@ func getTestCases(hostname types.NodeName) []*testCase {
 					Kind:       "Pod",
 					APIVersion: "",
 				},
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
 					UID:       "12345",
 					Namespace: "mynamespace",
@@ -188,13 +190,14 @@ func getTestCases(hostname types.NodeName) []*testCase {
 				Spec: v1.PodSpec{
 					Containers:      []v1.Container{{Name: "image", Image: "test/image", SecurityContext: securitycontext.ValidSecurityContextWithContainerDefaults()}},
 					SecurityContext: &v1.PodSecurityContext{},
+					SchedulerName:   api.DefaultSchedulerName,
 				},
 				Status: v1.PodStatus{
 					Phase: v1.PodPending,
 				},
 			},
 			expected: CreatePodUpdate(kubetypes.SET, kubetypes.FileSource, &v1.Pod{
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:        "test-" + string(hostname),
 					UID:         "12345",
 					Namespace:   "mynamespace",
@@ -206,13 +209,20 @@ func getTestCases(hostname types.NodeName) []*testCase {
 					RestartPolicy:                 v1.RestartPolicyAlways,
 					DNSPolicy:                     v1.DNSClusterFirst,
 					TerminationGracePeriodSeconds: &grace,
+					Tolerations: []v1.Toleration{{
+						Operator: "Exists",
+						Effect:   "NoExecute",
+					}},
 					Containers: []v1.Container{{
 						Name:  "image",
 						Image: "test/image",
-						TerminationMessagePath: "/dev/termination-log",
-						ImagePullPolicy:        "Always",
-						SecurityContext:        securitycontext.ValidSecurityContextWithContainerDefaults()}},
+						TerminationMessagePath:   "/dev/termination-log",
+						ImagePullPolicy:          "Always",
+						SecurityContext:          securitycontext.ValidSecurityContextWithContainerDefaults(),
+						TerminationMessagePolicy: v1.TerminationMessageReadFile,
+					}},
 					SecurityContext: &v1.PodSecurityContext{},
+					SchedulerName:   api.DefaultSchedulerName,
 				},
 				Status: v1.PodStatus{
 					Phase: v1.PodPending,
@@ -244,7 +254,7 @@ func watchFileAdded(watchDir bool, t *testing.T) {
 	hostname := types.NodeName("random-test-hostname")
 	var testCases = getTestCases(hostname)
 
-	fileNamePre := "test_pod_config"
+	fileNamePre := "test_pod_manifest"
 	for index, testCase := range testCases {
 		func() {
 			dirName, err := utiltesting.MkTmpdir("dir-test")
@@ -282,7 +292,7 @@ func watchFileChanged(watchDir bool, t *testing.T) {
 	hostname := types.NodeName("random-test-hostname")
 	var testCases = getTestCases(hostname)
 
-	fileNamePre := "test_pod_config"
+	fileNamePre := "test_pod_manifest"
 	for index, testCase := range testCases {
 		func() {
 			dirName, err := utiltesting.MkTmpdir("dir-test")
@@ -363,7 +373,7 @@ func expectUpdate(t *testing.T, ch chan interface{}, testCase *testCase) {
 			for _, pod := range update.Pods {
 				// TODO: remove the conversion when validation is performed on versioned objects.
 				internalPod := &api.Pod{}
-				if err := v1.Convert_v1_Pod_To_api_Pod(pod, internalPod, nil); err != nil {
+				if err := k8s_api_v1.Convert_v1_Pod_To_core_Pod(pod, internalPod, nil); err != nil {
 					t.Fatalf("%s: Cannot convert pod %#v, %#v", testCase.desc, pod, err)
 				}
 				if errs := validation.ValidatePod(internalPod); len(errs) > 0 {
@@ -371,7 +381,7 @@ func expectUpdate(t *testing.T, ch chan interface{}, testCase *testCase) {
 				}
 			}
 
-			if !api.Semantic.DeepEqual(testCase.expected, update) {
+			if !apiequality.Semantic.DeepEqual(testCase.expected, update) {
 				t.Fatalf("%s: Expected: %#v, Got: %#v", testCase.desc, testCase.expected, update)
 			}
 			return

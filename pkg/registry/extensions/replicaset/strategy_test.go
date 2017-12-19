@@ -17,15 +17,26 @@ limitations under the License.
 package replicaset
 
 import (
+	"reflect"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/registry/rest"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+)
+
+const (
+	fakeImageName  = "fake-name"
+	fakeImage      = "fakeimage"
+	replicasetName = "test-replicaset"
+	namespace      = "test-namespace"
 )
 
 func TestReplicaSetStrategy(t *testing.T) {
-	ctx := api.NewDefaultContext()
+	ctx := genericapirequest.NewDefaultContext()
 	if !Strategy.NamespaceScoped() {
 		t.Errorf("ReplicaSet must be namespace scoped")
 	}
@@ -36,18 +47,18 @@ func TestReplicaSetStrategy(t *testing.T) {
 	validSelector := map[string]string{"a": "b"}
 	validPodTemplate := api.PodTemplate{
 		Template: api.PodTemplateSpec{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Labels: validSelector,
 			},
 			Spec: api.PodSpec{
 				RestartPolicy: api.RestartPolicyAlways,
 				DNSPolicy:     api.DNSClusterFirst,
-				Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent"}},
+				Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile}},
 			},
 		},
 	}
 	rs := &extensions.ReplicaSet{
-		ObjectMeta: api.ObjectMeta{Name: "abc", Namespace: api.NamespaceDefault},
+		ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault},
 		Spec: extensions.ReplicaSetSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: validSelector},
 			Template: validPodTemplate.Template,
@@ -71,7 +82,7 @@ func TestReplicaSetStrategy(t *testing.T) {
 	}
 
 	invalidRc := &extensions.ReplicaSet{
-		ObjectMeta: api.ObjectMeta{Name: "bar", ResourceVersion: "4"},
+		ObjectMeta: metav1.ObjectMeta{Name: "bar", ResourceVersion: "4"},
 	}
 	Strategy.PrepareForUpdate(ctx, invalidRc, rs)
 	errs = Strategy.ValidateUpdate(ctx, invalidRc, rs)
@@ -84,7 +95,7 @@ func TestReplicaSetStrategy(t *testing.T) {
 }
 
 func TestReplicaSetStatusStrategy(t *testing.T) {
-	ctx := api.NewDefaultContext()
+	ctx := genericapirequest.NewDefaultContext()
 	if !StatusStrategy.NamespaceScoped() {
 		t.Errorf("ReplicaSet must be namespace scoped")
 	}
@@ -94,7 +105,7 @@ func TestReplicaSetStatusStrategy(t *testing.T) {
 	validSelector := map[string]string{"a": "b"}
 	validPodTemplate := api.PodTemplate{
 		Template: api.PodTemplateSpec{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Labels: validSelector,
 			},
 			Spec: api.PodSpec{
@@ -105,7 +116,7 @@ func TestReplicaSetStatusStrategy(t *testing.T) {
 		},
 	}
 	oldRS := &extensions.ReplicaSet{
-		ObjectMeta: api.ObjectMeta{Name: "abc", Namespace: api.NamespaceDefault, ResourceVersion: "10"},
+		ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault, ResourceVersion: "10"},
 		Spec: extensions.ReplicaSetSpec{
 			Replicas: 3,
 			Selector: &metav1.LabelSelector{MatchLabels: validSelector},
@@ -117,7 +128,7 @@ func TestReplicaSetStatusStrategy(t *testing.T) {
 		},
 	}
 	newRS := &extensions.ReplicaSet{
-		ObjectMeta: api.ObjectMeta{Name: "abc", Namespace: api.NamespaceDefault, ResourceVersion: "9"},
+		ObjectMeta: metav1.ObjectMeta{Name: "abc", Namespace: metav1.NamespaceDefault, ResourceVersion: "9"},
 		Spec: extensions.ReplicaSetSpec{
 			Replicas: 1,
 			Selector: &metav1.LabelSelector{MatchLabels: validSelector},
@@ -138,5 +149,136 @@ func TestReplicaSetStatusStrategy(t *testing.T) {
 	errs := StatusStrategy.ValidateUpdate(ctx, newRS, oldRS)
 	if len(errs) != 0 {
 		t.Errorf("Unexpected error %v", errs)
+	}
+}
+
+func TestSelectorImmutability(t *testing.T) {
+	tests := []struct {
+		requestInfo       genericapirequest.RequestInfo
+		oldSelectorLabels map[string]string
+		newSelectorLabels map[string]string
+		expectedErrorList field.ErrorList
+	}{
+		{
+			genericapirequest.RequestInfo{
+				APIGroup:   "apps",
+				APIVersion: "v1beta2",
+				Resource:   "replicasets",
+			},
+			map[string]string{"a": "b"},
+			map[string]string{"c": "d"},
+			field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeInvalid,
+					Field: field.NewPath("spec").Child("selector").String(),
+					BadValue: &metav1.LabelSelector{
+						MatchLabels:      map[string]string{"c": "d"},
+						MatchExpressions: []metav1.LabelSelectorRequirement{},
+					},
+					Detail: "field is immutable",
+				},
+			},
+		},
+		{
+			genericapirequest.RequestInfo{
+				APIGroup:   "extensions",
+				APIVersion: "v1beta1",
+				Resource:   "replicasets",
+			},
+			map[string]string{"a": "b"},
+			map[string]string{"c": "d"},
+			field.ErrorList{},
+		},
+	}
+
+	for _, test := range tests {
+		oldReplicaSet := newReplicaSetWithSelectorLabels(test.oldSelectorLabels)
+		newReplicaSet := newReplicaSetWithSelectorLabels(test.newSelectorLabels)
+		context := genericapirequest.NewContext()
+		context = genericapirequest.WithRequestInfo(context, &test.requestInfo)
+		errorList := rsStrategy{}.ValidateUpdate(context, newReplicaSet, oldReplicaSet)
+		if !reflect.DeepEqual(test.expectedErrorList, errorList) {
+			t.Errorf("Unexpected error list, expected: %v, actual: %v", test.expectedErrorList, errorList)
+		}
+	}
+}
+
+func newReplicaSetWithSelectorLabels(selectorLabels map[string]string) *extensions.ReplicaSet {
+	return &extensions.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            replicasetName,
+			Namespace:       namespace,
+			ResourceVersion: "1",
+		},
+		Spec: extensions.ReplicaSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels:      selectorLabels,
+				MatchExpressions: []metav1.LabelSelectorRequirement{},
+			},
+			Template: api.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: selectorLabels,
+				},
+				Spec: api.PodSpec{
+					RestartPolicy: api.RestartPolicyAlways,
+					DNSPolicy:     api.DNSClusterFirst,
+					Containers:    []api.Container{{Name: fakeImageName, Image: fakeImage, ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile}},
+				},
+			},
+		},
+	}
+}
+
+func TestReplicasetDefaultGarbageCollectionPolicy(t *testing.T) {
+	// Make sure we correctly implement the interface.
+	// Otherwise a typo could silently change the default.
+	var gcds rest.GarbageCollectionDeleteStrategy = Strategy
+	tests := []struct {
+		requestInfo      genericapirequest.RequestInfo
+		expectedGCPolicy rest.GarbageCollectionPolicy
+		isNilRequestInfo bool
+	}{
+		{
+			genericapirequest.RequestInfo{
+				APIGroup:   "extensions",
+				APIVersion: "v1beta1",
+				Resource:   "replicasets",
+			},
+			rest.OrphanDependents,
+			false,
+		},
+		{
+			genericapirequest.RequestInfo{
+				APIGroup:   "apps",
+				APIVersion: "v1beta2",
+				Resource:   "replicasets",
+			},
+			rest.OrphanDependents,
+			false,
+		},
+		{
+			genericapirequest.RequestInfo{
+				APIGroup:   "apps",
+				APIVersion: "v1",
+				Resource:   "replicasets",
+			},
+			rest.DeleteDependents,
+			false,
+		},
+		{
+			expectedGCPolicy: rest.OrphanDependents,
+			isNilRequestInfo: true,
+		},
+	}
+
+	for _, test := range tests {
+		context := genericapirequest.NewContext()
+		if !test.isNilRequestInfo {
+			context = genericapirequest.WithRequestInfo(context, &test.requestInfo)
+		}
+		if got, want := gcds.DefaultGarbageCollectionPolicy(context), test.expectedGCPolicy; got != want {
+			t.Errorf("%s/%s: DefaultGarbageCollectionPolicy() = %#v, want %#v", test.requestInfo.APIGroup,
+				test.requestInfo.APIVersion, got, want)
+		}
 	}
 }

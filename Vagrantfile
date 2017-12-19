@@ -30,6 +30,8 @@ $kube_os = ENV['KUBERNETES_OS'] || "fedora"
 
 # Determine whether vagrant should use nfs to sync folders
 $use_nfs = ENV['KUBERNETES_VAGRANT_USE_NFS'] == 'true'
+# Determine whether vagrant should use rsync to sync folders
+$use_rsync = ENV['KUBERNETES_VAGRANT_USE_RSYNC'] == 'true'
 
 # To override the vagrant provider, use (e.g.):
 #   KUBERNETES_PROVIDER=vagrant VAGRANT_DEFAULT_PROVIDER=... .../cluster/kube-up.sh
@@ -69,7 +71,7 @@ $kube_provider_boxes = {
   :libvirt => {
     'fedora' => {
       :box_name => 'kube-fedora23',
-      :box_url => 'https://dl.fedoraproject.org/pub/fedora/linux/releases/23/Cloud/x86_64/Images/Fedora-Cloud-Base-Vagrant-23-20151030.x86_64.vagrant-libvirt.box'
+      :box_url => 'https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/23/Cloud/x86_64/Images/Fedora-Cloud-Base-Vagrant-23-20151030.x86_64.vagrant-libvirt.box'
     }
   },
   :vmware_desktop => {
@@ -156,6 +158,15 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
     if $use_nfs then
       config.vm.synced_folder ".", "/vagrant", nfs: true
+    elsif $use_rsync then
+      opts = {}
+      if ENV['KUBERNETES_VAGRANT_RSYNC_ARGS'] then
+        opts[:rsync__args] = ENV['KUBERNETES_VAGRANT_RSYNC_ARGS'].split(" ")
+      end
+      if ENV['KUBERNETES_VAGRANT_RSYNC_EXCLUDE'] then
+        opts[:rsync__exclude] = ENV['KUBERNETES_VAGRANT_RSYNC_EXCLUDE'].split(" ")
+      end
+      config.vm.synced_folder ".", "/vagrant", opts
     end
 
     # Try VMWare Fusion first (see

@@ -19,13 +19,13 @@ package services
 import (
 	"time"
 
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/apimachinery/registered"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	"k8s.io/kubernetes/pkg/client/typed/dynamic"
+	"k8s.io/api/core/v1"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/informers"
+	clientset "k8s.io/client-go/kubernetes"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	namespacecontroller "k8s.io/kubernetes/pkg/controller/namespace"
-	"k8s.io/kubernetes/test/e2e/framework"
 )
 
 const (
@@ -39,25 +39,34 @@ const (
 
 // NamespaceController is a server which manages namespace controller.
 type NamespaceController struct {
+	host   string
 	stopCh chan struct{}
 }
 
 // NewNamespaceController creates a new namespace controller.
-func NewNamespaceController() *NamespaceController {
-	return &NamespaceController{stopCh: make(chan struct{})}
+func NewNamespaceController(host string) *NamespaceController {
+	return &NamespaceController{host: host, stopCh: make(chan struct{})}
 }
 
 // Start starts the namespace controller.
 func (n *NamespaceController) Start() error {
 	// Use the default QPS
-	config := restclient.AddUserAgent(&restclient.Config{Host: framework.TestContext.Host}, ncName)
+	config := restclient.AddUserAgent(&restclient.Config{Host: n.host}, ncName)
 	client, err := clientset.NewForConfig(config)
 	if err != nil {
 		return err
 	}
-	clientPool := dynamic.NewClientPool(config, registered.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
+	clientPool := dynamic.NewClientPool(config, legacyscheme.Registry.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
 	discoverResourcesFn := client.Discovery().ServerPreferredNamespacedResources
-	nc := namespacecontroller.NewNamespaceController(client, clientPool, discoverResourcesFn, ncResyncPeriod, v1.FinalizerKubernetes)
+	informerFactory := informers.NewSharedInformerFactory(client, ncResyncPeriod)
+	nc := namespacecontroller.NewNamespaceController(
+		client,
+		clientPool,
+		discoverResourcesFn,
+		informerFactory.Core().V1().Namespaces(),
+		ncResyncPeriod, v1.FinalizerKubernetes,
+	)
+	informerFactory.Start(n.stopCh)
 	go nc.Run(ncConcurrency, n.stopCh)
 	return nil
 }

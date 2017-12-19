@@ -22,11 +22,11 @@ import (
 	"net/url"
 	"strings"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	"k8s.io/kubernetes/pkg/client/unversioned/remotecommand"
-	remotecommandserver "k8s.io/kubernetes/pkg/kubelet/server/remotecommand"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 
 	. "github.com/onsi/gomega"
 )
@@ -57,7 +57,7 @@ func (f *Framework) ExecWithOptions(options ExecOptions) (string, string, error)
 
 	const tty = false
 
-	req := f.ClientSet.Core().RESTClient().Post().
+	req := f.ClientSet.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(options.PodName).
 		Namespace(options.Namespace).
@@ -70,7 +70,7 @@ func (f *Framework) ExecWithOptions(options ExecOptions) (string, string, error)
 		Stdout:    options.CaptureStdout,
 		Stderr:    options.CaptureStderr,
 		TTY:       tty,
-	}, api.ParameterCodec)
+	}, legacyscheme.ParameterCodec)
 
 	var stdout, stderr bytes.Buffer
 	err = execute("POST", req.URL(), config, options.Stdin, &stdout, &stderr, tty)
@@ -112,14 +112,14 @@ func (f *Framework) ExecShellInContainer(podName, containerName string, cmd stri
 }
 
 func (f *Framework) ExecCommandInPod(podName string, cmd ...string) string {
-	pod, err := f.PodClient().Get(podName)
+	pod, err := f.PodClient().Get(podName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed to get pod")
 	Expect(pod.Spec.Containers).NotTo(BeEmpty())
 	return f.ExecCommandInContainer(podName, pod.Spec.Containers[0].Name, cmd...)
 }
 
 func (f *Framework) ExecCommandInPodWithFullOutput(podName string, cmd ...string) (string, string, error) {
-	pod, err := f.PodClient().Get(podName)
+	pod, err := f.PodClient().Get(podName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed to get pod")
 	Expect(pod.Spec.Containers).NotTo(BeEmpty())
 	return f.ExecCommandInContainerWithFullOutput(podName, pod.Spec.Containers[0].Name, cmd...)
@@ -134,15 +134,14 @@ func (f *Framework) ExecShellInPodWithFullOutput(podName string, cmd string) (st
 }
 
 func execute(method string, url *url.URL, config *restclient.Config, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
-	exec, err := remotecommand.NewExecutor(config, method, url)
+	exec, err := remotecommand.NewSPDYExecutor(config, method, url)
 	if err != nil {
 		return err
 	}
 	return exec.Stream(remotecommand.StreamOptions{
-		SupportedProtocols: remotecommandserver.SupportedStreamingProtocols,
-		Stdin:              stdin,
-		Stdout:             stdout,
-		Stderr:             stderr,
-		Tty:                tty,
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+		Tty:    tty,
 	})
 }

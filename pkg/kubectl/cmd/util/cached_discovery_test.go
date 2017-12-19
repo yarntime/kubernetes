@@ -22,16 +22,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emicklei/go-restful/swagger"
+	"github.com/googleapis/gnostic/OpenAPIv2"
 	"github.com/stretchr/testify/assert"
 
-	"k8s.io/kubernetes/pkg/api/errors"
-	metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	"k8s.io/kubernetes/pkg/client/restclient/fake"
-	"k8s.io/kubernetes/pkg/client/typed/discovery"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-	"k8s.io/kubernetes/pkg/version"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/version"
+	"k8s.io/client-go/discovery"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/rest/fake"
 )
 
 func TestCachedDiscoveryClient_Fresh(t *testing.T) {
@@ -100,7 +100,9 @@ type fakeDiscoveryClient struct {
 	groupCalls    int
 	resourceCalls int
 	versionCalls  int
-	swaggerCalls  int
+	openAPICalls  int
+
+	serverResourcesHandler func() ([]*metav1.APIResourceList, error)
 }
 
 var _ discovery.DiscoveryInterface = &fakeDiscoveryClient{}
@@ -133,7 +135,7 @@ func (c *fakeDiscoveryClient) ServerGroups() (*metav1.APIGroupList, error) {
 func (c *fakeDiscoveryClient) ServerResourcesForGroupVersion(groupVersion string) (*metav1.APIResourceList, error) {
 	c.resourceCalls = c.resourceCalls + 1
 	if groupVersion == "a/v1" {
-		return &metav1.APIResourceList{}, nil
+		return &metav1.APIResourceList{APIResources: []metav1.APIResource{{Name: "widgets", Kind: "Widget"}}}, nil
 	}
 
 	return nil, errors.NewNotFound(schema.GroupResource{}, "")
@@ -141,6 +143,9 @@ func (c *fakeDiscoveryClient) ServerResourcesForGroupVersion(groupVersion string
 
 func (c *fakeDiscoveryClient) ServerResources() ([]*metav1.APIResourceList, error) {
 	c.resourceCalls = c.resourceCalls + 1
+	if c.serverResourcesHandler != nil {
+		return c.serverResourcesHandler()
+	}
 	return []*metav1.APIResourceList{}, nil
 }
 
@@ -159,7 +164,7 @@ func (c *fakeDiscoveryClient) ServerVersion() (*version.Info, error) {
 	return &version.Info{}, nil
 }
 
-func (c *fakeDiscoveryClient) SwaggerSchema(version schema.GroupVersion) (*swagger.ApiDeclaration, error) {
-	c.swaggerCalls = c.swaggerCalls + 1
-	return &swagger.ApiDeclaration{}, nil
+func (c *fakeDiscoveryClient) OpenAPISchema() (*openapi_v2.Document, error) {
+	c.openAPICalls = c.openAPICalls + 1
+	return &openapi_v2.Document{}, nil
 }

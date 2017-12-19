@@ -21,13 +21,14 @@ package e2e_node
 import (
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	"fmt"
 	"os/exec"
 
 	. "github.com/onsi/ginkgo"
-	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/api/core/v1"
 	testutils "k8s.io/kubernetes/test/utils"
 )
 
@@ -35,7 +36,7 @@ import (
 // If the timeout is hit, it returns the list of currently running pods.
 func waitForPods(f *framework.Framework, pod_count int, timeout time.Duration) (runningPods []*v1.Pod) {
 	for start := time.Now(); time.Since(start) < timeout; time.Sleep(10 * time.Second) {
-		podList, err := f.PodClient().List(v1.ListOptions{})
+		podList, err := f.PodClient().List(metav1.ListOptions{})
 		if err != nil {
 			framework.Logf("Failed to list pods on node: %v", err)
 			continue
@@ -78,7 +79,7 @@ var _ = framework.KubeDescribe("Restart [Serial] [Slow] [Disruptive]", func() {
 		Context("Network", func() {
 			It("should recover from ip leak", func() {
 
-				pods := newTestPods(podCount, framework.GetPauseImageNameForHostArch(), "restart-docker-test")
+				pods := newTestPods(podCount, false, framework.GetPauseImageNameForHostArch(), "restart-docker-test")
 				By(fmt.Sprintf("Trying to create %d pods on node", len(pods)))
 				createBatchPodWithRateControl(f, pods, podCreationInterval)
 				defer deletePodsSync(f, pods)

@@ -1,13 +1,9 @@
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])
-
 load(
     "@io_bazel_rules_go//go:def.bzl",
-    "go_binary",
     "go_library",
     "go_test",
-    "cgo_library",
 )
 
 go_library(
@@ -16,28 +12,44 @@ go_library(
         "admission.go",
         "doc.go",
     ],
-    tags = ["automanaged"],
+    importpath = "k8s.io/kubernetes/plugin/pkg/admission/persistentvolume/label",
     deps = [
-        "//pkg/admission:go_default_library",
-        "//pkg/api:go_default_library",
-        "//pkg/apis/meta/v1:go_default_library",
-        "//pkg/client/clientset_generated/internalclientset:go_default_library",
+        "//pkg/apis/core:go_default_library",
         "//pkg/cloudprovider:go_default_library",
         "//pkg/cloudprovider/providers/aws:go_default_library",
         "//pkg/cloudprovider/providers/gce:go_default_library",
+        "//pkg/kubeapiserver/admission:go_default_library",
+        "//pkg/kubelet/apis:go_default_library",
         "//pkg/volume:go_default_library",
+        "//vendor/github.com/golang/glog:go_default_library",
+        "//vendor/k8s.io/apiserver/pkg/admission:go_default_library",
     ],
 )
 
 go_test(
     name = "go_default_test",
     srcs = ["admission_test.go"],
-    library = "go_default_library",
-    tags = ["automanaged"],
+    importpath = "k8s.io/kubernetes/plugin/pkg/admission/persistentvolume/label",
+    library = ":go_default_library",
     deps = [
-        "//pkg/admission:go_default_library",
-        "//pkg/api:go_default_library",
+        "//pkg/apis/core:go_default_library",
         "//pkg/cloudprovider/providers/aws:go_default_library",
-        "//pkg/types:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/api/resource:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/types:go_default_library",
+        "//vendor/k8s.io/apiserver/pkg/admission:go_default_library",
     ],
+)
+
+filegroup(
+    name = "package-srcs",
+    srcs = glob(["**"]),
+    tags = ["automanaged"],
+    visibility = ["//visibility:private"],
+)
+
+filegroup(
+    name = "all-srcs",
+    srcs = [":package-srcs"],
+    tags = ["automanaged"],
 )

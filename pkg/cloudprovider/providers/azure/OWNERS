@@ -1,3 +1,14 @@
-assignees:
-  - colemickens
-  - brendandburns
+approvers:
+- andyzhangx
+- brendandburns
+- colemickens
+- feiskyer
+- jdumars
+- khenidak
+reviewers:
+- andyzhangx
+- brendandburns
+- colemickens
+- feiskyer
+- jdumars
+- khenidak

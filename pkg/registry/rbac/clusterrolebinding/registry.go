@@ -17,20 +17,22 @@ limitations under the License.
 package clusterrolebinding
 
 import (
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/rest"
+	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/kubernetes/pkg/apis/rbac"
-	"k8s.io/kubernetes/pkg/watch"
 )
 
 // Registry is an interface for things that know how to store ClusterRoleBindings.
 type Registry interface {
-	ListClusterRoleBindings(ctx api.Context, options *api.ListOptions) (*rbac.ClusterRoleBindingList, error)
-	CreateClusterRoleBinding(ctx api.Context, clusterRoleBinding *rbac.ClusterRoleBinding) error
-	UpdateClusterRoleBinding(ctx api.Context, clusterRoleBinding *rbac.ClusterRoleBinding) error
-	GetClusterRoleBinding(ctx api.Context, name string) (*rbac.ClusterRoleBinding, error)
-	DeleteClusterRoleBinding(ctx api.Context, name string) error
-	WatchClusterRoleBindings(ctx api.Context, options *api.ListOptions) (watch.Interface, error)
+	ListClusterRoleBindings(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (*rbac.ClusterRoleBindingList, error)
+	CreateClusterRoleBinding(ctx genericapirequest.Context, clusterRoleBinding *rbac.ClusterRoleBinding, createValidation rest.ValidateObjectFunc) error
+	UpdateClusterRoleBinding(ctx genericapirequest.Context, clusterRoleBinding *rbac.ClusterRoleBinding, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc) error
+	GetClusterRoleBinding(ctx genericapirequest.Context, name string, options *metav1.GetOptions) (*rbac.ClusterRoleBinding, error)
+	DeleteClusterRoleBinding(ctx genericapirequest.Context, name string) error
+	WatchClusterRoleBindings(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (watch.Interface, error)
 }
 
 // storage puts strong typing around storage calls
@@ -44,7 +46,7 @@ func NewRegistry(s rest.StandardStorage) Registry {
 	return &storage{s}
 }
 
-func (s *storage) ListClusterRoleBindings(ctx api.Context, options *api.ListOptions) (*rbac.ClusterRoleBindingList, error) {
+func (s *storage) ListClusterRoleBindings(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (*rbac.ClusterRoleBindingList, error) {
 	obj, err := s.List(ctx, options)
 	if err != nil {
 		return nil, err
@@ -53,30 +55,30 @@ func (s *storage) ListClusterRoleBindings(ctx api.Context, options *api.ListOpti
 	return obj.(*rbac.ClusterRoleBindingList), nil
 }
 
-func (s *storage) CreateClusterRoleBinding(ctx api.Context, clusterRoleBinding *rbac.ClusterRoleBinding) error {
-	_, err := s.Create(ctx, clusterRoleBinding)
+func (s *storage) CreateClusterRoleBinding(ctx genericapirequest.Context, clusterRoleBinding *rbac.ClusterRoleBinding, createValidation rest.ValidateObjectFunc) error {
+	_, err := s.Create(ctx, clusterRoleBinding, createValidation, false)
 	return err
 }
 
-func (s *storage) UpdateClusterRoleBinding(ctx api.Context, clusterRoleBinding *rbac.ClusterRoleBinding) error {
-	_, _, err := s.Update(ctx, clusterRoleBinding.Name, rest.DefaultUpdatedObjectInfo(clusterRoleBinding, api.Scheme))
+func (s *storage) UpdateClusterRoleBinding(ctx genericapirequest.Context, clusterRoleBinding *rbac.ClusterRoleBinding, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc) error {
+	_, _, err := s.Update(ctx, clusterRoleBinding.Name, rest.DefaultUpdatedObjectInfo(clusterRoleBinding), createValidation, updateValidation)
 	return err
 }
 
-func (s *storage) WatchClusterRoleBindings(ctx api.Context, options *api.ListOptions) (watch.Interface, error) {
+func (s *storage) WatchClusterRoleBindings(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
 	return s.Watch(ctx, options)
 }
 
-func (s *storage) GetClusterRoleBinding(ctx api.Context, name string) (*rbac.ClusterRoleBinding, error) {
-	obj, err := s.Get(ctx, name)
+func (s *storage) GetClusterRoleBinding(ctx genericapirequest.Context, name string, options *metav1.GetOptions) (*rbac.ClusterRoleBinding, error) {
+	obj, err := s.Get(ctx, name, options)
 	if err != nil {
 		return nil, err
 	}
 	return obj.(*rbac.ClusterRoleBinding), nil
 }
 
-func (s *storage) DeleteClusterRoleBinding(ctx api.Context, name string) error {
-	_, err := s.Delete(ctx, name, nil)
+func (s *storage) DeleteClusterRoleBinding(ctx genericapirequest.Context, name string) error {
+	_, _, err := s.Delete(ctx, name, nil)
 	return err
 }
 
@@ -86,7 +88,7 @@ type AuthorizerAdapter struct {
 }
 
 func (a AuthorizerAdapter) ListClusterRoleBindings() ([]*rbac.ClusterRoleBinding, error) {
-	list, err := a.Registry.ListClusterRoleBindings(api.NewContext(), &api.ListOptions{})
+	list, err := a.Registry.ListClusterRoleBindings(genericapirequest.NewContext(), &metainternalversion.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

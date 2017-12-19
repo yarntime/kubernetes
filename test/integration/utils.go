@@ -20,14 +20,15 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api/errors"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/typed/core/v1"
-	"k8s.io/kubernetes/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	clientset "k8s.io/client-go/kubernetes"
+	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 func DeletePodOrErrorf(t *testing.T, c clientset.Interface, ns, name string) {
-	if err := c.Core().Pods(ns).Delete(name, nil); err != nil {
+	if err := c.CoreV1().Pods(ns).Delete(name, nil); err != nil {
 		t.Errorf("unable to delete pod %v: %v", name, err)
 	}
 }
@@ -37,6 +38,7 @@ func DeletePodOrErrorf(t *testing.T, c clientset.Interface, ns, name string) {
 var Code200 = map[int]bool{200: true}
 var Code201 = map[int]bool{201: true}
 var Code400 = map[int]bool{400: true}
+var Code401 = map[int]bool{401: true}
 var Code403 = map[int]bool{403: true}
 var Code404 = map[int]bool{404: true}
 var Code405 = map[int]bool{405: true}
@@ -48,7 +50,7 @@ var Code503 = map[int]bool{503: true}
 // WaitForPodToDisappear polls the API server if the pod has been deleted.
 func WaitForPodToDisappear(podClient coreclient.PodInterface, podName string, interval, timeout time.Duration) error {
 	return wait.PollImmediate(interval, timeout, func() (bool, error) {
-		_, err := podClient.Get(podName)
+		_, err := podClient.Get(podName, metav1.GetOptions{})
 		if err == nil {
 			return false, nil
 		} else {

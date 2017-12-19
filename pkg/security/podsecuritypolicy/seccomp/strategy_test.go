@@ -21,7 +21,8 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	api "k8s.io/kubernetes/pkg/apis/core"
 )
 
 var (
@@ -208,7 +209,7 @@ func TestValidatePod(t *testing.T) {
 	}
 	for k, v := range tests {
 		pod := &api.Pod{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Annotations: v.podAnnotations,
 			},
 		}
@@ -295,7 +296,7 @@ func TestValidateContainer(t *testing.T) {
 	}
 	for k, v := range tests {
 		pod := &api.Pod{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Annotations: v.podAnnotations,
 			},
 		}
