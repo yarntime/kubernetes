@@ -29,13 +29,13 @@ spec:
     spec:
       containers:
       - name: kubernetes-dashboard
-        image: k8s.gcr.io/kubernetes-dashboard-amd64:v1.8.0
+        image: gcr.io/google_containers/kubernetes-dashboard-amd64:v1.8.0
         resources:
           limits:
             cpu: 100m
             memory: 300Mi
           requests:
-            cpu: 100m
+            cpu: 50m
             memory: 100Mi
         ports:
         - containerPort: 8443

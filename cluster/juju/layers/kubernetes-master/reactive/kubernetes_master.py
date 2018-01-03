@@ -39,7 +39,7 @@ from charms.reactive import hook
 from charms.reactive import remove_state
 from charms.reactive import set_state
 from charms.reactive import is_state
-from charms.reactive import when, when_any, when_not, when_all
+from charms.reactive import when, when_any, when_not
 from charms.reactive.helpers import data_changed, any_file_changed
 from charms.kubernetes.common import get_version
 from charms.kubernetes.common import retry
@@ -601,6 +601,7 @@ def configure_cdk_addons():
     dnsEnabled = str(hookenv.config('enable-kube-dns')).lower()
     args = [
         'arch=' + arch(),
+        'dns-ip=' + get_deprecated_dns_ip(),
         'dns-domain=' + hookenv.config('dns_domain'),
         'enable-dashboard=' + dbEnabled,
         'enable-kube-dns=' + dnsEnabled
@@ -976,6 +977,14 @@ def get_dns_ip():
     return svc['spec']['clusterIP']
 
 
+def get_deprecated_dns_ip():
+    '''We previously hardcoded the dns ip. This function returns the old
+    hardcoded value for use with older versions of cdk_addons.'''
+    interface = ipaddress.IPv4Interface(service_cidr())
+    ip = interface.network.network_address + 10
+    return ip.exploded
+
+
 def get_kubernetes_service_ip():
     '''Get the IP address for the kubernetes service based on the cidr.'''
     interface = ipaddress.IPv4Interface(service_cidr())
@@ -1232,7 +1241,9 @@ def all_kube_system_pods_running():
     result = json.loads(output)
     for pod in result['items']:
         status = pod['status']['phase']
-        if status != 'Running':
+        # Evicted nodes should re-spawn
+        if status != 'Running' and \
+           pod['status'].get('reason', '') != 'Evicted':
             return False
 
     return True

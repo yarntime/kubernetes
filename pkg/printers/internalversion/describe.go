@@ -1081,7 +1081,7 @@ func printFlexPersistentVolumeSource(flex *api.FlexPersistentVolumeSource, w Pre
 		"    Driver:\t%v\n"+
 		"    FSType:\t%v\n"+
 		"    SecretRef:\t%v\n"+
-		"    ReadOnly:\t%v\n",
+		"    ReadOnly:\t%v\n"+
 		"    Options:\t%v\n",
 		flex.Driver, flex.FSType, flex.SecretRef, flex.ReadOnly, flex.Options)
 }
@@ -2634,6 +2634,9 @@ func describeNode(node *api.Node, nodeNonTerminatedPodsList *api.PodList, events
 		}
 		if len(node.Spec.ExternalID) > 0 {
 			w.Write(LEVEL_0, "ExternalID:\t%s\n", node.Spec.ExternalID)
+		}
+		if len(node.Spec.ProviderID) > 0 {
+			w.Write(LEVEL_0, "ProviderID:\t%s\n", node.Spec.ProviderID)
 		}
 		if canViewPods && nodeNonTerminatedPodsList != nil {
 			if err := describeNodeResource(nodeNonTerminatedPodsList, node, w); err != nil {

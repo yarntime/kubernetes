@@ -2,16 +2,15 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
-    srcs = [
-        "doc.go",
-        "types.go",
-        "zz_generated.deepcopy.go",
-    ],
-    importpath = "k8s.io/kubernetes/pkg/kubectl/testing",
+    srcs = ["utils.go"],
+    importpath = "k8s.io/kubernetes/cmd/controller-manager/app/options",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/apis/componentconfig:go_default_library",
+        "//pkg/client/leaderelectionconfig:go_default_library",
+        "//vendor/github.com/cloudflare/cfssl/helpers:go_default_library",
+        "//vendor/github.com/spf13/pflag:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
-        "//vendor/k8s.io/apimachinery/pkg/runtime:go_default_library",
     ],
 )
 

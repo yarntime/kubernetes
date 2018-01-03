@@ -257,8 +257,8 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 						"type": "pd-ssd",
 						"zone": cloudZone,
 					},
-					"1.5Gi",
-					"2Gi",
+					"1.5G",
+					"2G",
 					func(volume *v1.PersistentVolume) error {
 						return checkGCEPD(volume, "pd-ssd")
 					},
@@ -270,8 +270,8 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 					map[string]string{
 						"type": "pd-standard",
 					},
-					"1.5Gi",
-					"2Gi",
+					"1.5G",
+					"2G",
 					func(volume *v1.PersistentVolume) error {
 						return checkGCEPD(volume, "pd-standard")
 					},
@@ -436,8 +436,8 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 				map[string]string{
 					"type": "pd-standard",
 				},
-				"1Gi",
-				"1Gi",
+				"1G",
+				"1G",
 				func(volume *v1.PersistentVolume) error {
 					return checkGCEPD(volume, "pd-standard")
 				},
@@ -470,8 +470,8 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 				map[string]string{
 					"type": "pd-standard",
 				},
-				"1Gi",
-				"1Gi",
+				"1G",
+				"1G",
 				func(volume *v1.PersistentVolume) error {
 					return checkGCEPD(volume, "pd-standard")
 				},
@@ -501,7 +501,7 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Get a list of all zones in the project
-			zones, err := gceCloud.GetComputeService().Zones.List(framework.TestContext.CloudConfig.ProjectID).Do()
+			zones, err := gceCloud.ComputeServices().GA.Zones.List(framework.TestContext.CloudConfig.ProjectID).Do()
 			Expect(err).NotTo(HaveOccurred())
 			for _, z := range zones.Items {
 				allZones.Insert(z.Name)
@@ -521,7 +521,7 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 				name:        "unmanaged_zone",
 				provisioner: "kubernetes.io/gce-pd",
 				parameters:  map[string]string{"zone": unmanagedZone},
-				claimSize:   "1Gi",
+				claimSize:   "1G",
 			}
 			sc := newStorageClass(test, ns, suffix)
 			sc, err = c.StorageV1().StorageClasses().Create(sc)
@@ -641,6 +641,14 @@ var _ = utils.SIGDescribe("Dynamic Provisioning", func() {
 				claimSize:    "2Gi",
 				expectedSize: "2Gi",
 			}
+			// gce or gke
+			if getDefaultPluginName() == "kubernetes.io/gce-pd" {
+				// using GB not GiB as e2e test unit since gce-pd returns GB,
+				// or expectedSize may be greater than claimSize.
+				test.claimSize = "2G"
+				test.expectedSize = "2G"
+			}
+
 			claim := newClaim(test, ns, "default")
 			testDynamicProvisioning(test, c, claim, nil)
 		})
@@ -906,7 +914,7 @@ func startExternalProvisioner(c clientset.Interface, ns string) *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:  "nfs-provisioner",
-					Image: "quay.io/kubernetes_incubator/nfs-provisioner:v1.0.6",
+					Image: "quay.io/kubernetes_incubator/nfs-provisioner:v1.0.9",
 					SecurityContext: &v1.SecurityContext{
 						Capabilities: &v1.Capabilities{
 							Add: []v1.Capability{"DAC_READ_SEARCH"},

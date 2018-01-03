@@ -436,7 +436,7 @@ function start_apiserver {
     # Admission Controllers to invoke prior to persisting objects in cluster
     #
     # ResourceQuota must come last, or a creation is recorded, but the pod may be forbidden.
-    ADMISSION_CONTROL=Initializers,NamespaceLifecycle,LimitRanger,ServiceAccount${security_admission},DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota
+    ADMISSION_CONTROL=Initializers,NamespaceLifecycle,LimitRanger,ServiceAccount${security_admission},DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota,PodPreset
     # This is the default dir and filename where the apiserver will generate a self-signed cert
     # which should be able to be used as the CA to verify itself
 
@@ -477,6 +477,13 @@ function start_apiserver {
           RUNTIME_CONFIG+=","
         fi
         RUNTIME_CONFIG+="admissionregistration.k8s.io/v1alpha1"
+    fi
+
+    if [[ ${ADMISSION_CONTROL} == *"PodPreset"* ]]; then
+        if [[ -n "${RUNTIME_CONFIG}" ]]; then
+            RUNTIME_CONFIG+=","
+        fi
+        RUNTIME_CONFIG+="settings.k8s.io/v1alpha1"
     fi
 
     runtime_config=""
@@ -745,7 +752,7 @@ function start_kubelet {
         --privileged=true \
         -i \
         --cidfile=$KUBELET_CIDFILE \
-        k8s.gcr.io/kubelet \
+        gcr.io/google_containers/kubelet \
         /kubelet --v=${LOG_LEVEL} --containerized ${priv_arg}--chaos-chance="${CHAOS_CHANCE}" --pod-manifest-path="${POD_MANIFEST_PATH}" --hostname-override="${HOSTNAME_OVERRIDE}" --cloud-provider="${CLOUD_PROVIDER}" --cloud-config="${CLOUD_CONFIG}" \ --address="127.0.0.1" --kubeconfig "$CERT_DIR"/kubelet.kubeconfig --port="$KUBELET_PORT"  --enable-controller-attach-detach="${ENABLE_CONTROLLER_ATTACH_DETACH}" &> $KUBELET_LOG &
     fi
 }
@@ -833,8 +840,12 @@ function create_storage_class {
 
 function print_success {
 if [[ "${START_MODE}" != "kubeletonly" ]]; then
+  if [[ "${ENABLE_DAEMON}" = false ]]; then
+    echo "Local Kubernetes cluster is running. Press Ctrl-C to shut it down."
+  else
+    echo "Local Kubernetes cluster is running."
+  fi
   cat <<EOF
-Local Kubernetes cluster is running. Press Ctrl-C to shut it down.
 
 Logs:
   ${APISERVER_LOG:-}
@@ -858,8 +869,12 @@ fi
 
 if [[ "${START_MODE}" != "kubeletonly" ]]; then
   echo
+  if [[ "${ENABLE_DAEMON}" = false ]]; then
+    echo "To start using your cluster, you can open up another terminal/tab and run:"
+  else
+    echo "To start using your cluster, run:"
+  fi
   cat <<EOF
-To start using your cluster, you can open up another terminal/tab and run:
 
   export KUBECONFIG=${CERT_DIR}/admin.kubeconfig
   cluster/kubectl.sh
