@@ -93,6 +93,7 @@ func (c *csiDriverClient) assertConnection() error {
 // If version is not supported, the assertion fails with an error.
 // This test should be done early during the storage operation flow to avoid
 // unnecessary calls later.
+// `ver` argument holds the expected supported version.
 func (c *csiDriverClient) AssertSupportedVersion(ctx grpctx.Context, ver *csipb.Version) error {
 	if c.versionAsserted {
 		if !c.versionSupported {
@@ -117,9 +118,15 @@ func (c *csiDriverClient) AssertSupportedVersion(ctx grpctx.Context, ver *csipb.
 	vers := rsp.GetSupportedVersions()
 	glog.V(4).Info(log("driver reports %d versions supported: %s", len(vers), versToStr(vers)))
 
+	// If our supported version is still at 0.X.X, then check
+	// also the minor number. If our supported version is >= 1.X.X
+	// then check only the major number.
 	for _, v := range vers {
-		//TODO (vladimirvivien) use more lenient/heuristic for exact or match of ranges etc
-		if verToStr(v) == verToStr(ver) {
+		if ver.GetMajor() == uint32(0) &&
+			(ver.GetMajor() == v.GetMajor() && ver.GetMinor() == v.GetMinor()) {
+			supported = true
+			break
+		} else if ver.GetMajor() != uint32(0) && ver.GetMajor() == v.GetMajor() {
 			supported = true
 			break
 		}
@@ -129,7 +136,10 @@ func (c *csiDriverClient) AssertSupportedVersion(ctx grpctx.Context, ver *csipb.
 	c.versionSupported = supported
 
 	if !supported {
-		return fmt.Errorf("version %s not supported", verToStr(ver))
+		return fmt.Errorf(
+			"CSI Driver does not support version %s. Instead it supports versions %s",
+			verToStr(ver),
+			versToStr(vers))
 	}
 
 	glog.V(4).Info(log("version %s supported", verToStr(ver)))

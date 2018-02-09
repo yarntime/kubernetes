@@ -356,9 +356,17 @@ var _ = SIGDescribe("Density", func() {
 	testCaseBaseName := "density"
 	missingMeasurements := 0
 	var testPhaseDurations *timer.TestPhaseTimer
+	var profileGathererStopCh chan struct{}
 
 	// Gathers data prior to framework namespace teardown
 	AfterEach(func() {
+		// Stop apiserver CPU profile gatherer and gather memory allocations profile.
+		close(profileGathererStopCh)
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		framework.GatherApiserverMemoryProfile(&wg, "density")
+		wg.Wait()
+
 		saturationThreshold := time.Duration((totalPods / MinPodsPerSecondThroughput)) * time.Second
 		if saturationThreshold < MinSaturationThreshold {
 			saturationThreshold = MinSaturationThreshold
@@ -442,6 +450,10 @@ var _ = SIGDescribe("Density", func() {
 			}
 			framework.Logf("Name: %v, clusterIP: %v, externalIP: %v", node.ObjectMeta.Name, internalIP, externalIP)
 		}
+
+		// Start apiserver CPU profile gatherer with frequency based on cluster size.
+		profileGatheringDelay := time.Duration(5+nodeCount/100) * time.Minute
+		profileGathererStopCh = framework.StartApiserverCPUProfileGatherer(profileGatheringDelay)
 	})
 
 	type Density struct {
@@ -528,7 +540,7 @@ var _ = SIGDescribe("Density", func() {
 			podThroughput := 20
 			timeout := time.Duration(totalPods/podThroughput)*time.Second + 3*time.Minute
 			// createClients is defined in load.go
-			clients, internalClients, err := createClients(numberOfCollections)
+			clients, internalClients, scalesClients, err := createClients(numberOfCollections)
 			for i := 0; i < numberOfCollections; i++ {
 				nsName := namespaces[i].Name
 				secretNames := []string{}
@@ -559,6 +571,7 @@ var _ = SIGDescribe("Density", func() {
 				baseConfig := &testutils.RCConfig{
 					Client:               clients[i],
 					InternalClient:       internalClients[i],
+					ScalesGetter:         scalesClients[i],
 					Image:                framework.GetPauseImageName(f.ClientSet),
 					Name:                 name,
 					Namespace:            nsName,
@@ -590,7 +603,7 @@ var _ = SIGDescribe("Density", func() {
 			}
 
 			// Single client is running out of http2 connections in delete phase, hence we need more.
-			clients, internalClients, err = createClients(2)
+			clients, internalClients, _, err = createClients(2)
 
 			dConfig := DensityTestConfig{
 				ClientSets:         clients,

@@ -20,6 +20,7 @@ package informers
 
 import (
 	"fmt"
+
 	v1alpha1 "k8s.io/api/admissionregistration/v1alpha1"
 	v1beta1 "k8s.io/api/admissionregistration/v1beta1"
 	v1 "k8s.io/api/apps/v1"
@@ -247,6 +248,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		// Group=storage.k8s.io, Version=v1beta1
 	case storage_v1beta1.SchemeGroupVersion.WithResource("storageclasses"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Storage().V1beta1().StorageClasses().Informer()}, nil
+	case storage_v1beta1.SchemeGroupVersion.WithResource("volumeattachments"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Storage().V1beta1().VolumeAttachments().Informer()}, nil
 
 	}
 

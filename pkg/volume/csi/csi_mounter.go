@@ -34,6 +34,8 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util"
 )
 
+const defaultFSType = "ext4"
+
 //TODO (vladimirvivien) move this in a central loc later
 var (
 	volDataKey = struct {
@@ -136,7 +138,7 @@ func (c *csiMountMgr) SetUpAt(dir string, fsGroup *int64) error {
 
 	// search for attachment by VolumeAttachment.Spec.Source.PersistentVolumeName
 	if c.volumeInfo == nil {
-		attachment, err := c.k8s.StorageV1alpha1().VolumeAttachments().Get(attachID, meta.GetOptions{})
+		attachment, err := c.k8s.StorageV1beta1().VolumeAttachments().Get(attachID, meta.GetOptions{})
 		if err != nil {
 			glog.Error(log("mounter.SetupAt failed while getting volume attachment [id=%v]: %v", attachID, err))
 			return err
@@ -189,6 +191,11 @@ func (c *csiMountMgr) SetUpAt(dir string, fsGroup *int64) error {
 		accessMode = c.spec.PersistentVolume.Spec.AccessModes[0]
 	}
 
+	fsType := csiSource.FSType
+	if len(fsType) == 0 {
+		fsType = defaultFSType
+	}
+
 	err = csi.NodePublishVolume(
 		ctx,
 		c.volumeID,
@@ -197,7 +204,7 @@ func (c *csiMountMgr) SetUpAt(dir string, fsGroup *int64) error {
 		accessMode,
 		c.volumeInfo,
 		attribs,
-		"ext4", //TODO needs to be sourced from PV or somewhere else
+		fsType,
 	)
 
 	if err != nil {

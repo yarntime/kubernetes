@@ -277,11 +277,11 @@ kube::util::group-version-to-pkg-path() {
     meta/v1)
       echo "../vendor/k8s.io/apimachinery/pkg/apis/meta/v1"
       ;;
-    meta/v1alpha1)
-      echo "vendor/k8s.io/apimachinery/pkg/apis/meta/v1alpha1"
+    meta/v1beta1)
+      echo "vendor/k8s.io/apimachinery/pkg/apis/meta/v1beta1"
       ;;
-    meta/v1alpha1)
-      echo "../vendor/k8s.io/apimachinery/pkg/apis/meta/v1alpha1"
+    meta/v1beta1)
+      echo "../vendor/k8s.io/apimachinery/pkg/apis/meta/v1beta1"
       ;;
     unversioned)
       echo "pkg/api/unversioned"
@@ -446,6 +446,9 @@ kube::util::ensure_godep_version() {
 
   kube::log::status "Installing godep version ${GODEP_VERSION}"
   go install ./vendor/github.com/tools/godep/
+  GP="$(echo $GOPATH | cut -f1 -d:)"
+  hash -r # force bash to clear PATH cache
+  PATH="${GP}/bin:${PATH}"
 
   if [[ "$(godep version 2>/dev/null)" != *"godep ${GODEP_VERSION}"* ]]; then
     kube::log::error "Expected godep ${GODEP_VERSION}, got $(godep version)"
@@ -476,15 +479,10 @@ kube::util::go_install_from_commit() {
 
   kube::util::ensure-temp-dir
   mkdir -p "${KUBE_TEMP}/go/src"
-  # TODO(spiffxp): remove this brittle workaround for go getting a package that doesn't exist at HEAD
-  repo=$(echo ${pkg} | cut -d/ -f1-3)
-  git clone "https://${repo}" "${KUBE_TEMP}/go/src/${repo}"
-  # GOPATH="${KUBE_TEMP}/go" go get -d -u "${pkg}"
+  GOPATH="${KUBE_TEMP}/go" go get -d -u "${pkg}"
   (
-    cd "${KUBE_TEMP}/go/src/${repo}"
-    git fetch # TODO(spiffxp): workaround
+    cd "${KUBE_TEMP}/go/src/${pkg}"
     git checkout -q "${commit}"
-    GOPATH="${KUBE_TEMP}/go" go get -d "${pkg}" #TODO(spiffxp): workaround
     GOPATH="${KUBE_TEMP}/go" go install "${pkg}"
   )
   PATH="${KUBE_TEMP}/go/bin:${PATH}"

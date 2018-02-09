@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	apiserveroptions "k8s.io/apiserver/pkg/server/options"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
-	utilconfig "k8s.io/apiserver/pkg/util/flag"
+	utilflag "k8s.io/apiserver/pkg/util/flag"
 	auditwebhook "k8s.io/apiserver/plugin/pkg/audit/webhook"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
@@ -43,7 +43,7 @@ func TestAddFlags(t *testing.T) {
 	s.AddFlags(f)
 
 	args := []string{
-		"--admission-control=AlwaysDeny",
+		"--enable-admission-plugins=AlwaysDeny",
 		"--admission-control-config-file=/admission-control-config",
 		"--advertise-address=192.168.10.10",
 		"--allow-privileged=false",
@@ -110,12 +110,14 @@ func TestAddFlags(t *testing.T) {
 			RequestTimeout:              time.Duration(2) * time.Minute,
 			MinRequestTimeout:           1800,
 		},
-		Admission: &apiserveroptions.AdmissionOptions{
-			RecommendedPluginOrder: []string{"NamespaceLifecycle", "Initializers", "MutatingAdmissionWebhook", "ValidatingAdmissionWebhook"},
-			DefaultOffPlugins:      []string{"Initializers", "MutatingAdmissionWebhook", "ValidatingAdmissionWebhook"},
-			PluginNames:            []string{"AlwaysDeny"},
-			ConfigFile:             "/admission-control-config",
-			Plugins:                s.Admission.Plugins,
+		Admission: &kubeoptions.AdmissionOptions{
+			GenericAdmission: &apiserveroptions.AdmissionOptions{
+				RecommendedPluginOrder: s.Admission.GenericAdmission.RecommendedPluginOrder,
+				DefaultOffPlugins:      s.Admission.GenericAdmission.DefaultOffPlugins,
+				EnablePlugins:          []string{"AlwaysDeny"},
+				ConfigFile:             "/admission-control-config",
+				Plugins:                s.Admission.GenericAdmission.Plugins,
+			},
 		},
 		Etcd: &apiserveroptions.EtcdOptions{
 			StorageConfig: storagebackend.Config{
@@ -233,8 +235,8 @@ func TestAddFlags(t *testing.T) {
 			StorageVersions:        legacyscheme.Registry.AllPreferredGroupVersions(),
 			DefaultStorageVersions: legacyscheme.Registry.AllPreferredGroupVersions(),
 		},
-		APIEnablement: &kubeoptions.APIEnablementOptions{
-			RuntimeConfig: utilconfig.ConfigurationMap{},
+		APIEnablement: &apiserveroptions.APIEnablementOptions{
+			RuntimeConfig: utilflag.ConfigurationMap{},
 		},
 		EnableLogsHandler:       false,
 		EnableAggregatorRouting: true,

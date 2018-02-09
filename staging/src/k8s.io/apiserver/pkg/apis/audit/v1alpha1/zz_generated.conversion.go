@@ -21,13 +21,14 @@ limitations under the License.
 package v1alpha1
 
 import (
+	unsafe "unsafe"
+
 	authentication_v1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	types "k8s.io/apimachinery/pkg/types"
 	audit "k8s.io/apiserver/pkg/apis/audit"
-	unsafe "unsafe"
 )
 
 func init() {
@@ -83,6 +84,7 @@ func autoConvert_v1alpha1_Event_To_audit_Event(in *Event, out *audit.Event, s co
 	out.ResponseObject = (*runtime.Unknown)(unsafe.Pointer(in.ResponseObject))
 	out.RequestReceivedTimestamp = in.RequestReceivedTimestamp
 	out.StageTimestamp = in.StageTimestamp
+	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
 	return nil
 }
 
@@ -112,6 +114,7 @@ func autoConvert_audit_Event_To_v1alpha1_Event(in *audit.Event, out *Event, s co
 	out.ResponseObject = (*runtime.Unknown)(unsafe.Pointer(in.ResponseObject))
 	out.RequestReceivedTimestamp = in.RequestReceivedTimestamp
 	out.StageTimestamp = in.StageTimestamp
+	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
 	return nil
 }
 

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	bootstrapapi "k8s.io/client-go/tools/bootstrap/token/api"
 	"k8s.io/kubernetes/pkg/registry/core/service/ipallocator"
 	"k8s.io/kubernetes/pkg/util/version"
 )
@@ -164,10 +165,10 @@ const (
 	KubeletBaseConfigurationFile = "kubelet"
 
 	// MinExternalEtcdVersion indicates minimum external etcd version which kubeadm supports
-	MinExternalEtcdVersion = "3.0.14"
+	MinExternalEtcdVersion = "3.1.11"
 
 	// DefaultEtcdVersion indicates the default etcd version that kubeadm uses
-	DefaultEtcdVersion = "3.1.10"
+	DefaultEtcdVersion = "3.2.14"
 
 	// Etcd defines variable used internally when referring to etcd component
 	Etcd = "etcd"
@@ -199,6 +200,9 @@ const (
 	CoreDNS = "coredns"
 	// KubeDNS defines a variable used internally when referring to the kube-dns addon for a cluster
 	KubeDNS = "kube-dns"
+
+	// CRICtlPackage defines the go package that installs crictl
+	CRICtlPackage = "github.com/kubernetes-incubator/cri-tools/cmd/crictl"
 )
 
 var (
@@ -220,7 +224,7 @@ var (
 	AuthorizationWebhookConfigPath = filepath.Join(KubernetesDir, "webhook_authz.conf")
 
 	// DefaultTokenUsages specifies the default functions a token will get
-	DefaultTokenUsages = []string{"signing", "authentication"}
+	DefaultTokenUsages = bootstrapapi.KnownTokenUsages
 
 	// MasterComponents defines the master component names
 	MasterComponents = []string{KubeAPIServer, KubeControllerManager, KubeScheduler}
@@ -233,10 +237,9 @@ var (
 
 	// SupportedEtcdVersion lists officially supported etcd versions with corresponding kubernetes releases
 	SupportedEtcdVersion = map[uint8]string{
-		8:  "3.0.17",
-		9:  "3.1.10",
-		10: "3.1.10",
-		11: "3.1.10",
+		9:  "3.1.11",
+		10: "3.2.14",
+		11: "3.2.14",
 	}
 )
 

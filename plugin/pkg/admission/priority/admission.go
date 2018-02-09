@@ -34,7 +34,8 @@ import (
 )
 
 const (
-	pluginName = "Priority"
+	// PluginName indicates name of admission plugin.
+	PluginName = "Priority"
 
 	// HighestUserDefinablePriority is the highest priority for user defined priority classes. Priority values larger than 1 billion are reserved for Kubernetes system use.
 	HighestUserDefinablePriority = 1000000000
@@ -50,7 +51,7 @@ var SystemPriorityClasses = map[string]int32{
 
 // Register registers a plugin
 func Register(plugins *admission.Plugins) {
-	plugins.Register(pluginName, func(config io.Reader) (admission.Interface, error) {
+	plugins.Register(PluginName, func(config io.Reader) (admission.Interface, error) {
 		return NewPlugin(), nil
 	})
 }
@@ -79,10 +80,10 @@ func NewPlugin() *PriorityPlugin {
 // ValidateInitialization implements the InitializationValidator interface.
 func (p *PriorityPlugin) ValidateInitialization() error {
 	if p.client == nil {
-		return fmt.Errorf("%s requires a client", pluginName)
+		return fmt.Errorf("%s requires a client", PluginName)
 	}
 	if p.lister == nil {
-		return fmt.Errorf("%s requires a lister", pluginName)
+		return fmt.Errorf("%s requires a lister", PluginName)
 	}
 	return nil
 }
@@ -156,9 +157,7 @@ func (p *PriorityPlugin) admitPod(a admission.Attributes) error {
 	if !ok {
 		return errors.NewBadRequest("resource was marked with kind Pod but was unable to be converted")
 	}
-	if _, isMirrorPod := pod.Annotations[api.MirrorPodAnnotationKey]; isMirrorPod {
-		return nil
-	}
+
 	// Make sure that the client has not set `priority` at the time of pod creation.
 	if operation == admission.Create && pod.Spec.Priority != nil {
 		return admission.NewForbidden(a, fmt.Errorf("the integer value of priority must not be provided in pod spec. Priority admission controller populates the value from the given PriorityClass name"))
@@ -177,12 +176,15 @@ func (p *PriorityPlugin) admitPod(a admission.Attributes) error {
 			if !ok {
 				// Now that we didn't find any system priority, try resolving by user defined priority classes.
 				pc, err := p.lister.Get(pod.Spec.PriorityClassName)
+
 				if err != nil {
-					return fmt.Errorf("failed to get default priority class %s: %v", pod.Spec.PriorityClassName, err)
+					if errors.IsNotFound(err) {
+						return admission.NewForbidden(a, fmt.Errorf("no PriorityClass with name %v was found", pod.Spec.PriorityClassName))
+					}
+
+					return fmt.Errorf("failed to get PriorityClass with name %s: %v", pod.Spec.PriorityClassName, err)
 				}
-				if pc == nil {
-					return admission.NewForbidden(a, fmt.Errorf("no PriorityClass with name %v was found", pod.Spec.PriorityClassName))
-				}
+
 				priority = pc.Value
 			}
 		}

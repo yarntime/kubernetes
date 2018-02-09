@@ -67,12 +67,12 @@ import (
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/kubelet/util/queue"
 	kubeletvolume "k8s.io/kubernetes/pkg/kubelet/volumemanager"
+	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	_ "k8s.io/kubernetes/pkg/volume/host_path"
 	volumetest "k8s.io/kubernetes/pkg/volume/testing"
 	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
-	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 )
 
 func init() {
@@ -127,12 +127,12 @@ func newTestKubelet(t *testing.T, controllerAttachDetachEnabled bool) *TestKubel
 	imageList := []kubecontainer.Image{
 		{
 			ID:       "abc",
-			RepoTags: []string{"gcr.io/google_containers:v1", "gcr.io/google_containers:v2"},
+			RepoTags: []string{"k8s.gcr.io:v1", "k8s.gcr.io:v2"},
 			Size:     123,
 		},
 		{
 			ID:       "efg",
-			RepoTags: []string{"gcr.io/google_containers:v3", "gcr.io/google_containers:v4"},
+			RepoTags: []string{"k8s.gcr.io:v3", "k8s.gcr.io:v4"},
 			Size:     456,
 		},
 	}
@@ -256,7 +256,7 @@ func newTestKubeletWithImageList(
 		HighThresholdPercent: 90,
 		LowThresholdPercent:  80,
 	}
-	imageGCManager, err := images.NewImageGCManager(fakeRuntime, kubelet.StatsProvider, fakeRecorder, fakeNodeRef, fakeImageGCPolicy)
+	imageGCManager, err := images.NewImageGCManager(fakeRuntime, kubelet.StatsProvider, fakeRecorder, fakeNodeRef, fakeImageGCPolicy, "")
 	assert.NoError(t, err)
 	kubelet.imageManager = &fakeImageGCManager{
 		fakeImageService: fakeRuntime,
@@ -333,8 +333,6 @@ func newTestPods(count int) []*v1.Pod {
 	}
 	return pods
 }
-
-var emptyPodUIDs map[types.UID]kubetypes.SyncPodType
 
 func TestSyncLoopAbort(t *testing.T) {
 	testKubelet := newTestKubelet(t, false /* controllerAttachDetachEnabled */)
@@ -733,7 +731,7 @@ func TestValidateContainerLogStatus(t *testing.T) {
 						Running: &v1.ContainerStateRunning{},
 					},
 					LastTerminationState: v1.ContainerState{
-						Terminated: &v1.ContainerStateTerminated{},
+						Terminated: &v1.ContainerStateTerminated{ContainerID: "docker://fakeid"},
 					},
 				},
 			},
@@ -761,8 +759,50 @@ func TestValidateContainerLogStatus(t *testing.T) {
 					},
 				},
 			},
+			success:  false,
+			pSuccess: false,
+		},
+		{
+			statuses: []v1.ContainerStatus{
+				{
+					Name: containerName,
+					State: v1.ContainerState{
+						Terminated: &v1.ContainerStateTerminated{ContainerID: "docker://fakeid"},
+					},
+				},
+			},
 			success:  true,
 			pSuccess: false,
+		},
+		{
+			statuses: []v1.ContainerStatus{
+				{
+					Name: containerName,
+					State: v1.ContainerState{
+						Terminated: &v1.ContainerStateTerminated{},
+					},
+					LastTerminationState: v1.ContainerState{
+						Terminated: &v1.ContainerStateTerminated{},
+					},
+				},
+			},
+			success:  false,
+			pSuccess: false,
+		},
+		{
+			statuses: []v1.ContainerStatus{
+				{
+					Name: containerName,
+					State: v1.ContainerState{
+						Terminated: &v1.ContainerStateTerminated{},
+					},
+					LastTerminationState: v1.ContainerState{
+						Terminated: &v1.ContainerStateTerminated{ContainerID: "docker://fakeid"},
+					},
+				},
+			},
+			success:  true,
+			pSuccess: true,
 		},
 		{
 			statuses: []v1.ContainerStatus{

@@ -21,7 +21,6 @@ limitations under the License.
 package kubeletconfig
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -81,15 +80,7 @@ func (in *KubeletAuthorization) DeepCopy() *KubeletAuthorization {
 func (in *KubeletConfiguration) DeepCopyInto(out *KubeletConfiguration) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
-	if in.ConfigTrialDuration != nil {
-		in, out := &in.ConfigTrialDuration, &out.ConfigTrialDuration
-		if *in == nil {
-			*out = nil
-		} else {
-			*out = new(v1.Duration)
-			**out = **in
-		}
-	}
+	out.ConfigTrialDuration = in.ConfigTrialDuration
 	out.SyncFrequency = in.SyncFrequency
 	out.FileCheckFrequency = in.FileCheckFrequency
 	out.HTTPCheckFrequency = in.HTTPCheckFrequency
@@ -105,23 +96,13 @@ func (in *KubeletConfiguration) DeepCopyInto(out *KubeletConfiguration) {
 			}
 		}
 	}
+	if in.TLSCipherSuites != nil {
+		in, out := &in.TLSCipherSuites, &out.TLSCipherSuites
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	out.Authentication = in.Authentication
 	out.Authorization = in.Authorization
-	if in.HostNetworkSources != nil {
-		in, out := &in.HostNetworkSources, &out.HostNetworkSources
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.HostPIDSources != nil {
-		in, out := &in.HostPIDSources, &out.HostPIDSources
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.HostIPCSources != nil {
-		in, out := &in.HostIPCSources, &out.HostIPCSources
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.ClusterDNS != nil {
 		in, out := &in.ClusterDNS, &out.ClusterDNS
 		*out = make([]string, len(*in))

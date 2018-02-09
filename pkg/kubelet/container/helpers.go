@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
 	"k8s.io/kubernetes/pkg/kubelet/util/ioutils"
 	hashutil "k8s.io/kubernetes/pkg/util/hash"
@@ -302,7 +302,7 @@ func GetContainerSpec(pod *v1.Pod, containerName string) *v1.Container {
 
 // HasPrivilegedContainer returns true if any of the containers in the pod are privileged.
 func HasPrivilegedContainer(pod *v1.Pod) bool {
-	for _, c := range pod.Spec.Containers {
+	for _, c := range append(pod.Spec.Containers, pod.Spec.InitContainers...) {
 		if c.SecurityContext != nil &&
 			c.SecurityContext.Privileged != nil &&
 			*c.SecurityContext.Privileged {

@@ -19,6 +19,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"k8s.io/apiserver/pkg/util/flag"
 	"k8s.io/client-go/tools/clientcmd"
@@ -212,6 +213,10 @@ var (
 	}
 )
 
+func NewDefaultKubectlCommand() *cobra.Command {
+	return NewKubectlCommand(cmdutil.NewFactory(nil), os.Stdin, os.Stdout, os.Stderr)
+}
+
 // NewKubectlCommand creates the `kubectl` command and its nested children.
 func NewKubectlCommand(f cmdutil.Factory, in io.Reader, out, err io.Writer) *cobra.Command {
 	// Parent command to which all subcommands are added.
@@ -367,14 +372,4 @@ func deprecatedAlias(deprecatedVersion string, cmd *cobra.Command) *cobra.Comman
 	cmd.Short = fmt.Sprintf("%s. This command is deprecated, use %q instead", cmd.Short, originalName)
 	cmd.Hidden = true
 	return cmd
-}
-
-// deprecated is similar to deprecatedAlias, but it is used for deprecations
-// that are not simple aliases; this command is actually a different
-// (deprecated) codepath.
-func deprecated(baseName, to string, parent, cmd *cobra.Command) string {
-	cmd.Long = fmt.Sprintf("Deprecated: all functionality can be found in \"%s %s\"", baseName, to)
-	cmd.Short = fmt.Sprintf("Deprecated: use %s", to)
-	parent.AddCommand(cmd)
-	return cmd.Name()
 }

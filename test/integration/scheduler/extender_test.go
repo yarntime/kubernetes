@@ -38,10 +38,10 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/plugin/pkg/scheduler"
-	_ "k8s.io/kubernetes/plugin/pkg/scheduler/algorithmprovider"
-	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
-	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
+	"k8s.io/kubernetes/pkg/scheduler"
+	_ "k8s.io/kubernetes/pkg/scheduler/algorithmprovider"
+	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
+	"k8s.io/kubernetes/pkg/scheduler/factory"
 	e2e "k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/integration/framework"
 )
@@ -334,7 +334,7 @@ func TestSchedulerExtender(t *testing.T) {
 				FilterVerb:     filter,
 				PrioritizeVerb: prioritize,
 				Weight:         3,
-				EnableHttps:    false,
+				EnableHTTPS:    false,
 			},
 			{
 				URLPrefix:      es2.URL,
@@ -342,14 +342,14 @@ func TestSchedulerExtender(t *testing.T) {
 				PrioritizeVerb: prioritize,
 				BindVerb:       bind,
 				Weight:         4,
-				EnableHttps:    false,
+				EnableHTTPS:    false,
 			},
 			{
 				URLPrefix:        es3.URL,
 				FilterVerb:       filter,
 				PrioritizeVerb:   prioritize,
 				Weight:           10,
-				EnableHttps:      false,
+				EnableHTTPS:      false,
 				NodeCacheCapable: true,
 			},
 		},

@@ -35,7 +35,6 @@ import (
 	"github.com/go-openapi/spec"
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -56,6 +55,7 @@ import (
 	openapi "k8s.io/kube-openapi/pkg/common"
 
 	webhookinit "k8s.io/apiserver/pkg/admission/plugin/webhook/initializer"
+	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/storage/etcd3/preflight"
 	clientgoinformers "k8s.io/client-go/informers"
 	clientgoclientset "k8s.io/client-go/kubernetes"
@@ -93,6 +93,7 @@ import (
 
 	_ "k8s.io/kubernetes/pkg/util/reflector/prometheus" // for reflector metric registration
 	_ "k8s.io/kubernetes/pkg/util/workqueue/prometheus" // for workqueue metric registration
+	"k8s.io/kubernetes/pkg/version/verflag"
 )
 
 const etcdRetryLimit = 60
@@ -101,7 +102,6 @@ const etcdRetryInterval = 1 * time.Second
 // NewAPIServerCommand creates a *cobra.Command object with default parameters
 func NewAPIServerCommand() *cobra.Command {
 	s := options.NewServerRunOptions()
-	s.AddFlags(pflag.CommandLine)
 	cmd := &cobra.Command{
 		Use: "kube-apiserver",
 		Long: `The Kubernetes API server validates and configures data
@@ -109,8 +109,16 @@ for the api objects which include pods, services, replicationcontrollers, and
 others. The API Server services REST operations and provides the frontend to the
 cluster's shared state through which all other components interact.`,
 		Run: func(cmd *cobra.Command, args []string) {
+			verflag.PrintAndExitIfRequested()
+
+			stopCh := server.SetupSignalHandler()
+			if err := Run(s, stopCh); err != nil {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				os.Exit(1)
+			}
 		},
 	}
+	s.AddFlags(cmd.Flags())
 
 	return cmd
 }
@@ -134,6 +142,7 @@ func CreateServerChain(runOptions *options.ServerRunOptions, stopCh <-chan struc
 	if err != nil {
 		return nil, err
 	}
+
 	kubeAPIServerConfig, sharedInformers, versionedInformers, insecureServingOptions, serviceResolver, err := CreateKubeAPIServerConfig(runOptions, nodeTunneler, proxyTransport)
 	if err != nil {
 		return nil, err
@@ -296,7 +305,7 @@ func CreateKubeAPIServerConfig(s *options.ServerRunOptions, nodeTunneler tunnele
 		return nil, nil, nil, nil, nil, err
 	}
 
-	storageFactory, err := BuildStorageFactory(s)
+	storageFactory, err := BuildStorageFactory(s, genericConfig.MergedResourceConfig)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
@@ -376,6 +385,9 @@ func BuildGenericConfig(s *options.ServerRunOptions, proxyTransport *http.Transp
 	if err := s.Features.ApplyTo(genericConfig); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
+	if err := s.APIEnablement.ApplyTo(genericConfig, master.DefaultAPIResourceConfigSource(), legacyscheme.Registry); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 
 	genericConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, legacyscheme.Scheme)
 	genericConfig.OpenAPIConfig.PostProcessSpec = postProcessOpenAPISpecForBackwardCompatibility
@@ -390,7 +402,7 @@ func BuildGenericConfig(s *options.ServerRunOptions, proxyTransport *http.Transp
 	kubeVersion := version.Get()
 	genericConfig.Version = &kubeVersion
 
-	storageFactory, err := BuildStorageFactory(s)
+	storageFactory, err := BuildStorageFactory(s, genericConfig.MergedResourceConfig)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
@@ -443,7 +455,7 @@ func BuildGenericConfig(s *options.ServerRunOptions, proxyTransport *http.Transp
 		return nil, nil, nil, nil, nil, fmt.Errorf("invalid authentication config: %v", err)
 	}
 
-	genericConfig.Authorizer, genericConfig.RuleResolver, err = BuildAuthorizer(s, sharedInformers)
+	genericConfig.Authorizer, genericConfig.RuleResolver, err = BuildAuthorizer(s, sharedInformers, versionedInformers)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("invalid authorization config: %v", err)
 	}
@@ -451,27 +463,35 @@ func BuildGenericConfig(s *options.ServerRunOptions, proxyTransport *http.Transp
 		genericConfig.DisabledPostStartHooks.Insert(rbacrest.PostStartHookName)
 	}
 
-	webhookAuthResolver := func(delegate webhookconfig.AuthenticationInfoResolver) webhookconfig.AuthenticationInfoResolver {
-		return webhookconfig.AuthenticationInfoResolverFunc(func(server string) (*rest.Config, error) {
-			if server == "kubernetes.default.svc" {
-				return genericConfig.LoopbackClientConfig, nil
-			}
-			ret, err := delegate.ClientConfigFor(server)
-			if err != nil {
-				return nil, err
-			}
-			if proxyTransport != nil && proxyTransport.Dial != nil {
-				ret.Dial = proxyTransport.Dial
-			}
-			return ret, err
-		})
+	webhookAuthResolverWrapper := func(delegate webhookconfig.AuthenticationInfoResolver) webhookconfig.AuthenticationInfoResolver {
+		return &webhookconfig.AuthenticationInfoResolverDelegator{
+			ClientConfigForFunc: func(server string) (*rest.Config, error) {
+				if server == "kubernetes.default.svc" {
+					return genericConfig.LoopbackClientConfig, nil
+				}
+				return delegate.ClientConfigFor(server)
+			},
+			ClientConfigForServiceFunc: func(serviceName, serviceNamespace string) (*rest.Config, error) {
+				if serviceName == "kubernetes" && serviceNamespace == "default" {
+					return genericConfig.LoopbackClientConfig, nil
+				}
+				ret, err := delegate.ClientConfigForService(serviceName, serviceNamespace)
+				if err != nil {
+					return nil, err
+				}
+				if proxyTransport != nil && proxyTransport.Dial != nil {
+					ret.Dial = proxyTransport.Dial
+				}
+				return ret, err
+			},
+		}
 	}
 	pluginInitializers, err := BuildAdmissionPluginInitializers(
 		s,
 		client,
 		sharedInformers,
 		serviceResolver,
-		webhookAuthResolver,
+		webhookAuthResolverWrapper,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("failed to create admission plugin initializer: %v", err)
@@ -546,14 +566,14 @@ func BuildAuthenticator(s *options.ServerRunOptions, storageFactory serverstorag
 }
 
 // BuildAuthorizer constructs the authorizer
-func BuildAuthorizer(s *options.ServerRunOptions, sharedInformers informers.SharedInformerFactory) (authorizer.Authorizer, authorizer.RuleResolver, error) {
-	authorizationConfig := s.Authorization.ToAuthorizationConfig(sharedInformers)
+func BuildAuthorizer(s *options.ServerRunOptions, sharedInformers informers.SharedInformerFactory, versionedInformers clientgoinformers.SharedInformerFactory) (authorizer.Authorizer, authorizer.RuleResolver, error) {
+	authorizationConfig := s.Authorization.ToAuthorizationConfig(sharedInformers, versionedInformers)
 	return authorizationConfig.New()
 }
 
 // BuildStorageFactory constructs the storage factory. If encryption at rest is used, it expects
 // all supported KMS plugins to be registered in the KMS plugin registry before being called.
-func BuildStorageFactory(s *options.ServerRunOptions) (*serverstorage.DefaultStorageFactory, error) {
+func BuildStorageFactory(s *options.ServerRunOptions, apiResourceConfig *serverstorage.ResourceConfig) (*serverstorage.DefaultStorageFactory, error) {
 	storageGroupsToEncodingVersion, err := s.StorageSerialization.StorageGroupsToEncodingVersion()
 	if err != nil {
 		return nil, fmt.Errorf("error generating storage version map: %s", err)
@@ -566,20 +586,18 @@ func BuildStorageFactory(s *options.ServerRunOptions) (*serverstorage.DefaultSto
 		// FIXME (soltysh): this GroupVersionResource override should be configurable
 		[]schema.GroupVersionResource{
 			batch.Resource("cronjobs").WithVersion("v1beta1"),
-			storage.Resource("volumeattachments").WithVersion("v1alpha1"),
+			storage.Resource("volumeattachments").WithVersion("v1beta1"),
 			admissionregistration.Resource("initializerconfigurations").WithVersion("v1alpha1"),
 		},
-		master.DefaultAPIResourceConfigSource(), s.APIEnablement.RuntimeConfig)
+		apiResourceConfig)
 	if err != nil {
 		return nil, fmt.Errorf("error in initializing storage factory: %s", err)
 	}
 
 	storageFactory.AddCohabitatingResources(networking.Resource("networkpolicies"), extensions.Resource("networkpolicies"))
-
-	// keep Deployments, Daemonsets and ReplicaSets in extensions for backwards compatibility, we'll have to migrate at some point, eventually
-	storageFactory.AddCohabitatingResources(extensions.Resource("deployments"), apps.Resource("deployments"))
-	storageFactory.AddCohabitatingResources(extensions.Resource("daemonsets"), apps.Resource("daemonsets"))
-	storageFactory.AddCohabitatingResources(extensions.Resource("replicasets"), apps.Resource("replicasets"))
+	storageFactory.AddCohabitatingResources(apps.Resource("deployments"), extensions.Resource("deployments"))
+	storageFactory.AddCohabitatingResources(apps.Resource("daemonsets"), extensions.Resource("daemonsets"))
+	storageFactory.AddCohabitatingResources(apps.Resource("replicasets"), extensions.Resource("replicasets"))
 	storageFactory.AddCohabitatingResources(api.Resource("events"), events.Resource("events"))
 	for _, override := range s.Etcd.EtcdServersOverrides {
 		tokens := strings.Split(override, "#")
@@ -687,6 +705,20 @@ func defaultOptions(s *options.ServerRunOptions) error {
 		s.Etcd.WatchCacheSizes, err = serveroptions.WriteWatchCacheSizes(sizes)
 		if err != nil {
 			return err
+		}
+	}
+
+	// TODO: remove when we stop supporting the legacy group version.
+	if s.APIEnablement.RuntimeConfig != nil {
+		for key, value := range s.APIEnablement.RuntimeConfig {
+			if key == "v1" || strings.HasPrefix(key, "v1/") ||
+				key == "api/v1" || strings.HasPrefix(key, "api/v1/") {
+				delete(s.APIEnablement.RuntimeConfig, key)
+				s.APIEnablement.RuntimeConfig["/v1"] = value
+			}
+			if key == "api/legacy" {
+				delete(s.APIEnablement.RuntimeConfig, key)
+			}
 		}
 	}
 

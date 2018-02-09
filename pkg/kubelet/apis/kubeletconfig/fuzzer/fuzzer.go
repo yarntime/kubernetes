@@ -36,7 +36,6 @@ func Funcs(codecs runtimeserializer.CodecFactory) []interface{} {
 		// provide non-empty values for fields with defaults, so the defaulter doesn't change values during round-trip
 		func(obj *kubeletconfig.KubeletConfiguration, c fuzz.Continue) {
 			c.FuzzNoCustom(obj)
-			obj.ConfigTrialDuration = &metav1.Duration{Duration: 10 * time.Minute}
 			obj.Authentication.Anonymous.Enabled = true
 			obj.Authentication.Webhook.Enabled = false
 			obj.Authentication.Webhook.CacheTTL = metav1.Duration{Duration: 2 * time.Minute}
@@ -44,7 +43,6 @@ func Funcs(codecs runtimeserializer.CodecFactory) []interface{} {
 			obj.Authorization.Webhook.CacheAuthorizedTTL = metav1.Duration{Duration: 5 * time.Minute}
 			obj.Authorization.Webhook.CacheUnauthorizedTTL = metav1.Duration{Duration: 30 * time.Second}
 			obj.Address = "0.0.0.0"
-			obj.CAdvisorPort = 4194
 			obj.VolumeStatsAggPeriod = metav1.Duration{Duration: time.Minute}
 			obj.RuntimeRequestTimeout = metav1.Duration{Duration: 2 * time.Minute}
 			obj.CPUCFSQuota = true
@@ -56,15 +54,13 @@ func Funcs(codecs runtimeserializer.CodecFactory) []interface{} {
 			obj.FileCheckFrequency = metav1.Duration{Duration: 20 * time.Second}
 			obj.HealthzBindAddress = "127.0.0.1"
 			obj.HealthzPort = 10248
-			obj.HostNetworkSources = []string{kubetypes.AllSource}
-			obj.HostPIDSources = []string{kubetypes.AllSource}
-			obj.HostIPCSources = []string{kubetypes.AllSource}
 			obj.HTTPCheckFrequency = metav1.Duration{Duration: 20 * time.Second}
 			obj.ImageMinimumGCAge = metav1.Duration{Duration: 2 * time.Minute}
 			obj.ImageGCHighThresholdPercent = 85
 			obj.ImageGCLowThresholdPercent = 80
 			obj.MaxOpenFiles = 1000000
 			obj.MaxPods = 110
+			obj.PodPidsLimit = -1
 			obj.NodeStatusUpdateFrequency = metav1.Duration{Duration: 10 * time.Second}
 			obj.CPUManagerPolicy = "none"
 			obj.CPUManagerReconcilePeriod = obj.NodeStatusUpdateFrequency

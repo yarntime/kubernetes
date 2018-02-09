@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"k8s.io/api/core/v1"
-	corev1 "k8s.io/api/core/v1"
 	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
 	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -57,7 +56,7 @@ var (
 		Spec: extensionsv1beta1.PodSecurityPolicySpec{
 			Privileged:               false,
 			AllowPrivilegeEscalation: boolPtr(false),
-			RequiredDropCapabilities: []corev1.Capability{
+			RequiredDropCapabilities: []v1.Capability{
 				"AUDIT_WRITE",
 				"CHOWN",
 				"DAC_OVERRIDE",
@@ -235,10 +234,10 @@ func testPrivilegedPods(f *framework.Framework, tester func(pod *v1.Pod)) {
 		tester(unconfined)
 	})
 
-	By("Running a CAP_SYS_ADMIN pod", func() {
+	By("Running a SYS_ADMIN pod", func() {
 		sysadmin := restrictedPod(f, "sysadmin")
 		sysadmin.Spec.Containers[0].SecurityContext.Capabilities = &v1.Capabilities{
-			Add: []v1.Capability{"CAP_SYS_ADMIN"},
+			Add: []v1.Capability{"SYS_ADMIN"},
 		}
 		sysadmin.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = nil
 		tester(sysadmin)

@@ -30,9 +30,8 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 	statsapi "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
 	evictionapi "k8s.io/kubernetes/pkg/kubelet/eviction/api"
-	"k8s.io/kubernetes/pkg/kubelet/server/stats"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
-	schedulerutils "k8s.io/kubernetes/plugin/pkg/scheduler/util"
+	schedulerutils "k8s.io/kubernetes/pkg/scheduler/util"
 )
 
 const (
@@ -590,7 +589,7 @@ func memory(stats statsFunc) cmpFunc {
 }
 
 // podRequest returns the total resource request of a pod which is the
-// max(sum of init container requests, sum of container requests)
+// max(max of init container requests, sum of container requests)
 func podRequest(pod *v1.Pod, resourceName v1.ResourceName) resource.Quantity {
 	containerValue := resource.Quantity{Format: resource.BinarySI}
 	if resourceName == resourceDisk && !utilfeature.DefaultFeatureGate.Enabled(features.LocalStorageCapacityIsolation) {
@@ -609,9 +608,13 @@ func podRequest(pod *v1.Pod, resourceName v1.ResourceName) resource.Quantity {
 	for i := range pod.Spec.InitContainers {
 		switch resourceName {
 		case v1.ResourceMemory:
-			containerValue.Add(*pod.Spec.Containers[i].Resources.Requests.Memory())
+			if initValue.Cmp(*pod.Spec.InitContainers[i].Resources.Requests.Memory()) < 0 {
+				initValue = *pod.Spec.InitContainers[i].Resources.Requests.Memory()
+			}
 		case resourceDisk:
-			containerValue.Add(*pod.Spec.Containers[i].Resources.Requests.StorageEphemeral())
+			if initValue.Cmp(*pod.Spec.InitContainers[i].Resources.Requests.StorageEphemeral()) < 0 {
+				initValue = *pod.Spec.InitContainers[i].Resources.Requests.StorageEphemeral()
+			}
 		}
 	}
 	if containerValue.Cmp(initValue) > 0 {
@@ -711,11 +714,7 @@ func (a byEvictionPriority) Less(i, j int) bool {
 }
 
 // makeSignalObservations derives observations using the specified summary provider.
-func makeSignalObservations(summaryProvider stats.SummaryProvider, capacityProvider CapacityProvider, pods []*v1.Pod) (signalObservations, statsFunc, error) {
-	summary, err := summaryProvider.Get()
-	if err != nil {
-		return nil, nil, err
-	}
+func makeSignalObservations(summary *statsapi.Summary, capacityProvider CapacityProvider, pods []*v1.Pod) (signalObservations, statsFunc) {
 	// build the function to work against for pod stats
 	statsFunc := cachedStatsFunc(summary.Pods)
 	// build an evaluation context for current eviction signals
@@ -782,7 +781,7 @@ func makeSignalObservations(summaryProvider stats.SummaryProvider, capacityProvi
 		glog.Errorf("Could not find capacity information for resource %v", v1.ResourceMemory)
 	}
 
-	return result, statsFunc, nil
+	return result, statsFunc
 }
 
 // thresholdsMet returns the set of thresholds that were met independent of grace period

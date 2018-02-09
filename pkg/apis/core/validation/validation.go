@@ -64,6 +64,8 @@ const isInvalidQuotaResource string = `must be a standard resource for quota`
 const fieldImmutableErrorMsg string = apimachineryvalidation.FieldImmutableErrorMsg
 const isNotIntegerErrorMsg string = `must be an integer`
 const isNotPositiveErrorMsg string = `must be greater than zero`
+const csiDriverNameRexpErrMsg string = "must consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character"
+const csiDriverNameRexpFmt string = `^[a-zA-Z0-9][-a-zA-Z0-9_.]{0,61}[a-zA-Z-0-9]$`
 
 var pdPartitionErrorMsg string = validation.InclusiveRangeError(1, 255)
 var fileModeErrorMsg string = "must be a number between 0 and 0777 (octal), both inclusive"
@@ -74,6 +76,8 @@ var BannedOwners = apimachineryvalidation.BannedOwners
 var iscsiInitiatorIqnRegex = regexp.MustCompile(`iqn\.\d{4}-\d{2}\.([[:alnum:]-.]+)(:[^,;*&$|\s]+)$`)
 var iscsiInitiatorEuiRegex = regexp.MustCompile(`^eui.[[:alnum:]]{16}$`)
 var iscsiInitiatorNaaRegex = regexp.MustCompile(`^naa.[[:alnum:]]{32}$`)
+
+var csiDriverNameRexp = regexp.MustCompile(csiDriverNameRexpFmt)
 
 // ValidateHasLabel requires that metav1.ObjectMeta has a Label with key and expectedValue
 func ValidateHasLabel(meta metav1.ObjectMeta, fldPath *field.Path, key, expectedValue string) field.ErrorList {
@@ -202,10 +206,6 @@ func ValidateEndpointsSpecificAnnotations(annotations map[string]string, fldPath
 	return allErrs
 }
 
-func ValidateOwnerReferences(ownerReferences []metav1.OwnerReference, fldPath *field.Path) field.ErrorList {
-	return apimachineryvalidation.ValidateOwnerReferences(ownerReferences, fldPath)
-}
-
 // ValidateNameFunc validates that the provided name is valid for a given resource type.
 // Not all resources have the same validation rules for names. Prefix is true
 // if the name will have a value appended to it.  If the name is not valid,
@@ -283,11 +283,6 @@ func NameIsDNSSubdomain(name string, prefix bool) []string {
 	return apimachineryvalidation.NameIsDNSSubdomain(name, prefix)
 }
 
-// NameIsDNSLabel is a ValidateNameFunc for names that must be a DNS 1123 label.
-func NameIsDNSLabel(name string, prefix bool) []string {
-	return apimachineryvalidation.NameIsDNSLabel(name, prefix)
-}
-
 // NameIsDNS1035Label is a ValidateNameFunc for names that must be a DNS 952 label.
 func NameIsDNS1035Label(name string, prefix bool) []string {
 	return apimachineryvalidation.NameIsDNS1035Label(name, prefix)
@@ -351,10 +346,6 @@ func ValidateObjectMetaUpdate(newMeta, oldMeta *metav1.ObjectMeta, fldPath *fiel
 	}
 
 	return allErrs
-}
-
-func ValidateNoNewFinalizers(newFinalizers []string, oldFinalizers []string, fldPath *field.Path) field.ErrorList {
-	return apimachineryvalidation.ValidateNoNewFinalizers(newFinalizers, oldFinalizers, fldPath)
 }
 
 func ValidateVolumes(volumes []core.Volume, fldPath *field.Path) (map[string]core.VolumeSource, field.ErrorList) {
@@ -1446,6 +1437,14 @@ func validateCSIPersistentVolumeSource(csi *core.CSIPersistentVolumeSource, fldP
 		allErrs = append(allErrs, field.Required(fldPath.Child("driver"), ""))
 	}
 
+	if len(csi.Driver) > 63 {
+		allErrs = append(allErrs, field.TooLong(fldPath.Child("driver"), csi.Driver, 63))
+	}
+
+	if !csiDriverNameRexp.MatchString(csi.Driver) {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("driver"), csi.Driver, validation.RegexError(csiDriverNameRexpErrMsg, csiDriverNameRexpFmt, "csi-hostpath")))
+	}
+
 	if len(csi.VolumeHandle) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("volumeHandle"), ""))
 	}
@@ -1796,6 +1795,16 @@ func ValidatePersistentVolumeClaimUpdate(newPvc, oldPvc *core.PersistentVolumeCl
 		oldPvcClone.Spec.VolumeName = newPvcClone.Spec.VolumeName
 	}
 
+	if validateStorageClassUpgrade(oldPvcClone.Annotations, newPvcClone.Annotations,
+		oldPvcClone.Spec.StorageClassName, newPvcClone.Spec.StorageClassName) {
+		newPvcClone.Spec.StorageClassName = nil
+		metav1.SetMetaDataAnnotation(&newPvcClone.ObjectMeta, core.BetaStorageClassAnnotation, oldPvcClone.Annotations[core.BetaStorageClassAnnotation])
+	} else {
+		// storageclass annotation should be immutable after creation
+		// TODO: remove Beta when no longer needed
+		allErrs = append(allErrs, ValidateImmutableAnnotation(newPvc.ObjectMeta.Annotations[v1.BetaStorageClassAnnotation], oldPvc.ObjectMeta.Annotations[v1.BetaStorageClassAnnotation], v1.BetaStorageClassAnnotation, field.NewPath("metadata"))...)
+	}
+
 	if utilfeature.DefaultFeatureGate.Enabled(features.ExpandPersistentVolumes) {
 		// lets make sure storage values are same.
 		if newPvc.Status.Phase == core.ClaimBound && newPvcClone.Spec.Resources.Requests != nil {
@@ -1820,14 +1829,26 @@ func ValidatePersistentVolumeClaimUpdate(newPvc, oldPvc *core.PersistentVolumeCl
 		}
 	}
 
-	// storageclass annotation should be immutable after creation
-	// TODO: remove Beta when no longer needed
-	allErrs = append(allErrs, ValidateImmutableAnnotation(newPvc.ObjectMeta.Annotations[v1.BetaStorageClassAnnotation], oldPvc.ObjectMeta.Annotations[v1.BetaStorageClassAnnotation], v1.BetaStorageClassAnnotation, field.NewPath("metadata"))...)
-
 	if utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) {
 		allErrs = append(allErrs, ValidateImmutableField(newPvc.Spec.VolumeMode, oldPvc.Spec.VolumeMode, field.NewPath("volumeMode"))...)
 	}
 	return allErrs
+}
+
+// Provide an upgrade path from PVC with storage class specified in beta
+// annotation to storage class specified in attribute. We allow update of
+// StorageClassName only if following four conditions are met at the same time:
+// 1. The old pvc's StorageClassAnnotation is set
+// 2. The old pvc's StorageClassName is not set
+// 3. The new pvc's StorageClassName is set and equal to the old value in annotation
+// 4. If the new pvc's StorageClassAnnotation is set,it must be equal to the old pv/pvc's StorageClassAnnotation
+func validateStorageClassUpgrade(oldAnnotations, newAnnotations map[string]string, oldScName, newScName *string) bool {
+	oldSc, oldAnnotationExist := oldAnnotations[core.BetaStorageClassAnnotation]
+	newScInAnnotation, newAnnotationExist := newAnnotations[core.BetaStorageClassAnnotation]
+	return oldAnnotationExist /* condition 1 */ &&
+		oldScName == nil /* condition 2*/ &&
+		(newScName != nil && *newScName == oldSc) /* condition 3 */ &&
+		(!newAnnotationExist || newScInAnnotation == oldSc) /* condition 4 */
 }
 
 // ValidatePersistentVolumeClaimStatusUpdate validates an update to status of a PersistentVolumeClaim
@@ -2657,19 +2678,8 @@ func validateAffinity(affinity *core.Affinity, fldPath *field.Path) field.ErrorL
 	allErrs := field.ErrorList{}
 
 	if affinity != nil {
-		if na := affinity.NodeAffinity; na != nil {
-			// TODO: Uncomment the next three lines once RequiredDuringSchedulingRequiredDuringExecution is implemented.
-			// if na.RequiredDuringSchedulingRequiredDuringExecution != nil {
-			//	allErrs = append(allErrs, ValidateNodeSelector(na.RequiredDuringSchedulingRequiredDuringExecution, fldPath.Child("requiredDuringSchedulingRequiredDuringExecution"))...)
-			// }
-
-			if na.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-				allErrs = append(allErrs, ValidateNodeSelector(na.RequiredDuringSchedulingIgnoredDuringExecution, fldPath.Child("requiredDuringSchedulingIgnoredDuringExecution"))...)
-			}
-
-			if len(na.PreferredDuringSchedulingIgnoredDuringExecution) > 0 {
-				allErrs = append(allErrs, ValidatePreferredSchedulingTerms(na.PreferredDuringSchedulingIgnoredDuringExecution, fldPath.Child("preferredDuringSchedulingIgnoredDuringExecution"))...)
-			}
+		if affinity.NodeAffinity != nil {
+			allErrs = append(allErrs, validateNodeAffinity(affinity.NodeAffinity, fldPath.Child("nodeAffinity"))...)
 		}
 		if affinity.PodAffinity != nil {
 			allErrs = append(allErrs, validatePodAffinity(affinity.PodAffinity, fldPath.Child("podAffinity"))...)
@@ -3086,6 +3096,22 @@ func validatePodAntiAffinity(podAntiAffinity *core.PodAntiAffinity, fldPath *fie
 	return allErrs
 }
 
+// validateNodeAffinity tests that the specified nodeAffinity fields have valid data
+func validateNodeAffinity(na *core.NodeAffinity, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	// TODO: Uncomment the next three lines once RequiredDuringSchedulingRequiredDuringExecution is implemented.
+	// if na.RequiredDuringSchedulingRequiredDuringExecution != nil {
+	//	allErrs = append(allErrs, ValidateNodeSelector(na.RequiredDuringSchedulingRequiredDuringExecution, fldPath.Child("requiredDuringSchedulingRequiredDuringExecution"))...)
+	// }
+	if na.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		allErrs = append(allErrs, ValidateNodeSelector(na.RequiredDuringSchedulingIgnoredDuringExecution, fldPath.Child("requiredDuringSchedulingIgnoredDuringExecution"))...)
+	}
+	if len(na.PreferredDuringSchedulingIgnoredDuringExecution) > 0 {
+		allErrs = append(allErrs, ValidatePreferredSchedulingTerms(na.PreferredDuringSchedulingIgnoredDuringExecution, fldPath.Child("preferredDuringSchedulingIgnoredDuringExecution"))...)
+	}
+	return allErrs
+}
+
 // validatePodAffinity tests that the specified podAffinity fields have valid data
 func validatePodAffinity(podAffinity *core.PodAffinity, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -3367,6 +3393,12 @@ func ValidatePodStatusUpdate(newPod, oldPod *core.Pod) field.ErrorList {
 	fldPath = field.NewPath("status")
 	if newPod.Spec.NodeName != oldPod.Spec.NodeName {
 		allErrs = append(allErrs, field.Forbidden(fldPath.Child("nodeName"), "may not be changed directly"))
+	}
+
+	if newPod.Status.NominatedNodeName != oldPod.Status.NominatedNodeName && len(newPod.Status.NominatedNodeName) > 0 {
+		for _, msg := range ValidateNodeName(newPod.Status.NominatedNodeName, false) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("nominatedNodeName"), newPod.Status.NominatedNodeName, msg))
+		}
 	}
 
 	// If pod should not restart, make sure the status update does not transition
@@ -4351,10 +4383,22 @@ func ValidateConfigMap(cfg *core.ConfigMap) field.ErrorList {
 		for _, msg := range validation.IsConfigMapKey(key) {
 			allErrs = append(allErrs, field.Invalid(field.NewPath("data").Key(key), key, msg))
 		}
+		// check if we have a duplicate key in the other bag
+		if _, isValue := cfg.BinaryData[key]; isValue {
+			msg := "duplicate of key present in binaryData"
+			allErrs = append(allErrs, field.Invalid(field.NewPath("data").Key(key), key, msg))
+		}
+		totalSize += len(value)
+	}
+	for key, value := range cfg.BinaryData {
+		for _, msg := range validation.IsConfigMapKey(key) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("binaryData").Key(key), key, msg))
+		}
 		totalSize += len(value)
 	}
 	if totalSize > core.MaxSecretSize {
-		allErrs = append(allErrs, field.TooLong(field.NewPath("data"), "", core.MaxSecretSize))
+		// pass back "" to indicate that the error refers to the whole object.
+		allErrs = append(allErrs, field.TooLong(field.NewPath(""), cfg, core.MaxSecretSize))
 	}
 
 	return allErrs
@@ -4420,14 +4464,14 @@ func ValidateResourceRequirements(requirements *core.ResourceRequirements, fldPa
 		// Check that request <= limit.
 		limitQuantity, exists := requirements.Limits[resourceName]
 		if exists {
-			// For GPUs, not only requests can't exceed limits, they also can't be lower, i.e. must be equal.
+			// For non overcommitable resources, not only requests can't exceed limits, they also can't be lower, i.e. must be equal.
 			if quantity.Cmp(limitQuantity) != 0 && !helper.IsOvercommitAllowed(resourceName) {
 				allErrs = append(allErrs, field.Invalid(reqPath, quantity.String(), fmt.Sprintf("must be equal to %s limit", resourceName)))
 			} else if quantity.Cmp(limitQuantity) > 0 {
 				allErrs = append(allErrs, field.Invalid(reqPath, quantity.String(), fmt.Sprintf("must be less than or equal to %s limit", resourceName)))
 			}
-		} else if resourceName == core.ResourceNvidiaGPU {
-			allErrs = append(allErrs, field.Invalid(reqPath, quantity.String(), fmt.Sprintf("must be equal to %s request", core.ResourceNvidiaGPU)))
+		} else if !helper.IsOvercommitAllowed(resourceName) {
+			allErrs = append(allErrs, field.Required(limPath, "Limit must be set for non overcommitable resources"))
 		}
 		if helper.IsHugePageResourceName(resourceName) {
 			reqContainsHugePages = true
@@ -4808,8 +4852,8 @@ func ValidateSecurityContext(sc *core.SecurityContext, fldPath *field.Path) fiel
 	}
 
 	if sc.RunAsUser != nil {
-		if *sc.RunAsUser < 0 {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("runAsUser"), *sc.RunAsUser, isNegativeErrorMsg))
+		for _, msg := range validation.IsValidUserID(*sc.RunAsUser) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("runAsUser"), *sc.RunAsUser, msg))
 		}
 	}
 
@@ -4921,4 +4965,14 @@ func ValidateCIDR(cidr string) (*net.IPNet, error) {
 		return nil, err
 	}
 	return net, nil
+}
+
+func IsDecremented(update, old *int32) bool {
+	if update == nil && old != nil {
+		return true
+	}
+	if update == nil || old == nil {
+		return false
+	}
+	return *update < *old
 }

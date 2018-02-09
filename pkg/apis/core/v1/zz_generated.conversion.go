@@ -21,6 +21,8 @@ limitations under the License.
 package v1
 
 import (
+	unsafe "unsafe"
+
 	v1 "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +30,6 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	types "k8s.io/apimachinery/pkg/types"
 	core "k8s.io/kubernetes/pkg/apis/core"
-	unsafe "unsafe"
 )
 
 func init() {
@@ -618,6 +619,7 @@ func autoConvert_v1_CSIPersistentVolumeSource_To_core_CSIPersistentVolumeSource(
 	out.Driver = in.Driver
 	out.VolumeHandle = in.VolumeHandle
 	out.ReadOnly = in.ReadOnly
+	out.FSType = in.FSType
 	return nil
 }
 
@@ -630,6 +632,7 @@ func autoConvert_core_CSIPersistentVolumeSource_To_v1_CSIPersistentVolumeSource(
 	out.Driver = in.Driver
 	out.VolumeHandle = in.VolumeHandle
 	out.ReadOnly = in.ReadOnly
+	out.FSType = in.FSType
 	return nil
 }
 
@@ -837,6 +840,7 @@ func Convert_core_ComponentStatusList_To_v1_ComponentStatusList(in *core.Compone
 func autoConvert_v1_ConfigMap_To_core_ConfigMap(in *v1.ConfigMap, out *core.ConfigMap, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
 	out.Data = *(*map[string]string)(unsafe.Pointer(&in.Data))
+	out.BinaryData = *(*map[string][]byte)(unsafe.Pointer(&in.BinaryData))
 	return nil
 }
 
@@ -848,6 +852,7 @@ func Convert_v1_ConfigMap_To_core_ConfigMap(in *v1.ConfigMap, out *core.ConfigMa
 func autoConvert_core_ConfigMap_To_v1_ConfigMap(in *core.ConfigMap, out *v1.ConfigMap, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
 	out.Data = *(*map[string]string)(unsafe.Pointer(&in.Data))
+	out.BinaryData = *(*map[string][]byte)(unsafe.Pointer(&in.BinaryData))
 	return nil
 }
 
@@ -3937,6 +3942,7 @@ func autoConvert_v1_PodStatus_To_core_PodStatus(in *v1.PodStatus, out *core.PodS
 	out.Conditions = *(*[]core.PodCondition)(unsafe.Pointer(&in.Conditions))
 	out.Message = in.Message
 	out.Reason = in.Reason
+	out.NominatedNodeName = in.NominatedNodeName
 	out.HostIP = in.HostIP
 	out.PodIP = in.PodIP
 	out.StartTime = (*meta_v1.Time)(unsafe.Pointer(in.StartTime))
@@ -3956,6 +3962,7 @@ func autoConvert_core_PodStatus_To_v1_PodStatus(in *core.PodStatus, out *v1.PodS
 	out.Conditions = *(*[]v1.PodCondition)(unsafe.Pointer(&in.Conditions))
 	out.Message = in.Message
 	out.Reason = in.Reason
+	out.NominatedNodeName = in.NominatedNodeName
 	out.HostIP = in.HostIP
 	out.PodIP = in.PodIP
 	out.StartTime = (*meta_v1.Time)(unsafe.Pointer(in.StartTime))

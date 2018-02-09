@@ -49,7 +49,7 @@ type KubeletConfiguration struct {
 
 	// Only used for dynamic configuration.
 	// The length of the trial period for this configuration. This configuration will become the last-known-good after this duration.
-	ConfigTrialDuration *metav1.Duration
+	ConfigTrialDuration metav1.Duration
 	// podManifestPath is the path to the directory containing pod manifests to
 	// run, or the path to a single manifest file
 	PodManifestPath string
@@ -85,23 +85,16 @@ type KubeletConfiguration struct {
 	// tlsPrivateKeyFile is the ile containing x509 private key matching
 	// tlsCertFile.
 	TLSPrivateKeyFile string
+	// TLSCipherSuites is the list of allowed cipher suites for the server.
+	// Values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants).
+	TLSCipherSuites []string
+	// TLSMinVersion is the minimum TLS version supported.
+	// Values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants).
+	TLSMinVersion string
 	// authentication specifies how requests to the Kubelet's server are authenticated
 	Authentication KubeletAuthentication
 	// authorization specifies how requests to the Kubelet's server are authorized
 	Authorization KubeletAuthorization
-	// allowPrivileged enables containers to request privileged mode.
-	// Defaults to false.
-	AllowPrivileged bool
-	// hostNetworkSources is a comma-separated list of sources from which the
-	// Kubelet allows pods to use of host network. Defaults to "*". Valid
-	// options are "file", "http", "api", and "*" (all sources).
-	HostNetworkSources []string
-	// hostPIDSources is a comma-separated list of sources from which the
-	// Kubelet allows pods to use the host pid namespace. Defaults to "*".
-	HostPIDSources []string
-	// hostIPCSources is a comma-separated list of sources from which the
-	// Kubelet allows pods to use the host ipc namespace. Defaults to "*".
-	HostIPCSources []string
 	// registryPullQPS is the limit of registry pulls per second. If 0,
 	// unlimited. Set to 0 for no limit. Defaults to 5.0.
 	RegistryPullQPS int32
@@ -121,8 +114,6 @@ type KubeletConfiguration struct {
 	EnableDebuggingHandlers bool
 	// enableContentionProfiling enables lock contention profiling, if enableDebuggingHandlers is true.
 	EnableContentionProfiling bool
-	// cAdvisorPort is the port of the localhost cAdvisor endpoint (set to 0 to disable)
-	CAdvisorPort int32
 	// healthzPort is the port of the localhost healthz endpoint (set to 0 to disable)
 	HealthzPort int32
 	// healthzBindAddress is the IP address for the healthz server to serve
@@ -200,6 +191,8 @@ type KubeletConfiguration struct {
 	// The CIDR to use for pod IP addresses, only used in standalone mode.
 	// In cluster mode, this is obtained from the master.
 	PodCIDR string
+	// PodPidsLimit is the maximum number of pids in any pod.
+	PodPidsLimit int64
 	// ResolverConfig is the resolver configuration file used as the basis
 	// for the container DNS resolution configuration.
 	ResolverConfig string

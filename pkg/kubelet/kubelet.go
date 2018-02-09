@@ -17,6 +17,7 @@ limitations under the License.
 package kubelet
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -95,6 +96,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/util/queue"
 	"k8s.io/kubernetes/pkg/kubelet/util/sliceutils"
 	"k8s.io/kubernetes/pkg/kubelet/volumemanager"
+	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
 	"k8s.io/kubernetes/pkg/security/apparmor"
 	utildbus "k8s.io/kubernetes/pkg/util/dbus"
 	kubeio "k8s.io/kubernetes/pkg/util/io"
@@ -103,7 +105,6 @@ import (
 	nodeutil "k8s.io/kubernetes/pkg/util/node"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
 	utilexec "k8s.io/utils/exec"
 )
 
@@ -278,9 +279,11 @@ func makePodSourceConfig(kubeCfg *kubeletconfiginternal.KubeletConfiguration, ku
 	// Restore from the checkpoint path
 	// NOTE: This MUST happen before creating the apiserver source
 	// below, or the checkpoint would override the source of truth.
-	updatechannel := cfg.Channel(kubetypes.ApiserverSource)
+
+	var updatechannel chan<- interface{}
 	if bootstrapCheckpointPath != "" {
 		glog.Infof("Adding checkpoint path: %v", bootstrapCheckpointPath)
+		updatechannel = cfg.Channel(kubetypes.ApiserverSource)
 		err := cfg.Restore(bootstrapCheckpointPath, updatechannel)
 		if err != nil {
 			return nil, err
@@ -289,6 +292,9 @@ func makePodSourceConfig(kubeCfg *kubeletconfiginternal.KubeletConfiguration, ku
 
 	if kubeDeps.KubeClient != nil {
 		glog.Infof("Watching apiserver")
+		if updatechannel == nil {
+			updatechannel = cfg.Channel(kubetypes.ApiserverSource)
+		}
 		config.NewSourceApiserver(kubeDeps.KubeClient, nodeName, updatechannel)
 	}
 	return cfg, nil
@@ -369,7 +375,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 			return nil, fmt.Errorf("failed to get instances from cloud provider")
 		}
 
-		nodeName, err = instances.CurrentNodeName(hostname)
+		nodeName, err = instances.CurrentNodeName(context.TODO(), hostname)
 		if err != nil {
 			return nil, fmt.Errorf("error fetching current instance name from cloud provider: %v", err)
 		}
@@ -377,7 +383,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		glog.V(2).Infof("cloud provider determined current node name to be %s", nodeName)
 
 		if utilfeature.DefaultFeatureGate.Enabled(features.RotateKubeletServerCertificate) {
-			nodeAddresses, err := instances.NodeAddresses(nodeName)
+			nodeAddresses, err := instances.NodeAddresses(context.TODO(), nodeName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get the addresses of the current instance from the cloud provider: %v", err)
 			}
@@ -590,6 +596,10 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	var nl *NoOpLegacyHost
 	pluginSettings.LegacyRuntimeHost = nl
 
+	if containerRuntime == kubetypes.RktContainerRuntime {
+		glog.Warningln("rktnetes has been deprecated in favor of rktlet. Please see https://github.com/kubernetes-incubator/rktlet for more information.")
+	}
+
 	// rktnetes cannot be run with CRI.
 	if containerRuntime != kubetypes.RktContainerRuntime {
 		// kubelet defers to the runtime shim to setup networking. Setting
@@ -608,9 +618,6 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 				&pluginSettings, runtimeCgroups, kubeCfg.CgroupDriver, crOptions.DockershimRootDirectory,
 				crOptions.DockerDisableSharedPID)
 			if err != nil {
-				return nil, err
-			}
-			if err := ds.Start(); err != nil {
 				return nil, err
 			}
 			// For now, the CRI shim redirects the streaming requests to the
@@ -633,8 +640,8 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 				return nil, err
 			}
 			if !supported {
-				klet.dockerLegacyService = ds.NewDockerLegacyService()
-				legacyLogProvider = dockershim.NewLegacyLogProvider(klet.dockerLegacyService)
+				klet.dockerLegacyService = ds
+				legacyLogProvider = ds
 			}
 		case kubetypes.RemoteContainerRuntime:
 			// No-op.
@@ -743,7 +750,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	klet.containerDeletor = newPodContainerDeletor(klet.containerRuntime, integer.IntMax(containerGCPolicy.MaxPerPodContainer, minDeadContainerInPod))
 
 	// setup imageManager
-	imageManager, err := images.NewImageGCManager(klet.containerRuntime, klet.StatsProvider, kubeDeps.Recorder, nodeRef, imageGCPolicy)
+	imageManager, err := images.NewImageGCManager(klet.containerRuntime, klet.StatsProvider, kubeDeps.Recorder, nodeRef, imageGCPolicy, crOptions.PodSandboxImage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize image manager: %v", err)
 	}
@@ -773,7 +780,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		kubeDeps.TLSOptions.Config.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			cert := klet.serverCertificateManager.Current()
 			if cert == nil {
-				return nil, fmt.Errorf("no certificate available")
+				return nil, fmt.Errorf("no serving certificate available for the kubelet")
 			}
 			return cert, nil
 		}
@@ -1320,7 +1327,7 @@ func (kl *Kubelet) initializeRuntimeDependentModules() {
 		glog.Fatalf("Failed to start cAdvisor %v", err)
 	}
 	// eviction manager must start after cadvisor because it needs to know if the container runtime has a dedicated imagefs
-	kl.evictionManager.Start(kl.cadvisor, kl.GetActivePods, kl.podResourcesAreReclaimed, kl.containerManager, evictionMonitoringPeriod)
+	kl.evictionManager.Start(kl.StatsProvider, kl.GetActivePods, kl.podResourcesAreReclaimed, kl.containerManager, evictionMonitoringPeriod)
 }
 
 // Run starts the kubelet reacting to config updates
@@ -1334,8 +1341,7 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 
 	if err := kl.initializeModules(); err != nil {
 		kl.recorder.Eventf(kl.nodeRef, v1.EventTypeWarning, events.KubeletSetupFailed, err.Error())
-		glog.Error(err)
-		kl.runtimeState.setInitError(err)
+		glog.Fatal(err)
 	}
 
 	// Start volume manager

@@ -29,7 +29,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	appsv1beta1 "k8s.io/api/apps/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
 	extv1beta1 "k8s.io/api/extensions/v1beta1"
 	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
@@ -120,7 +120,7 @@ const (
 	// provisioner daemonSetName name
 	daemonSetName = "local-volume-provisioner"
 	// provisioner default mount point folder
-	provisionerDefaultMountRoot = "/mnt-local-storage"
+	provisionerDefaultMountRoot = "/mnt/local-storage"
 	// provisioner node/pv cluster role binding
 	nodeBindingName         = "local-storage:provisioner-node-binding"
 	pvBindingName           = "local-storage:provisioner-pv-binding"
@@ -168,6 +168,7 @@ var _ = utils.SIGDescribe("PersistentVolumes-local [Feature:LocalPersistentVolum
 		}
 	})
 
+	// TODO: move this under volumeType loop
 	Context("when one pod requests one prebound PVC", func() {
 
 		var testVol *localTestVolume
@@ -257,74 +258,90 @@ var _ = utils.SIGDescribe("PersistentVolumes-local [Feature:LocalPersistentVolum
 				})
 			})
 
-			Context("when pod using local volume with non-existant path", func() {
-
-				ep := &eventPatterns{
-					reason:  "FailedMount",
-					pattern: make([]string, 2)}
-				ep.pattern = append(ep.pattern, "MountVolume.SetUp failed")
-				ep.pattern = append(ep.pattern, "does not exist")
-
-				It("should not be able to mount", func() {
-					testVol := &localTestVolume{
-						node:            config.node0,
-						hostDir:         "/non-existent/location/nowhere",
-						localVolumeType: testVolType,
-					}
-					By("Creating local PVC and PV")
-					createLocalPVCsPVs(config, []*localTestVolume{testVol}, testMode)
-					pod, err := createLocalPod(config, testVol)
-					Expect(err).To(HaveOccurred())
-					checkPodEvents(config, pod.Name, ep)
-					verifyLocalVolume(config, testVol)
-					cleanupLocalPVCsPVs(config, []*localTestVolume{testVol})
-				})
-			})
-
-			Context("when pod's node is different from PV's NodeAffinity", func() {
-
-				BeforeEach(func() {
-					if len(config.nodes) < 2 {
-						framework.Skipf("Runs only when number of nodes >= 2")
-					}
-				})
-
-				ep := &eventPatterns{
-					reason:  "FailedScheduling",
-					pattern: make([]string, 2)}
-				ep.pattern = append(ep.pattern, "MatchNodeSelector")
-				ep.pattern = append(ep.pattern, "VolumeNodeAffinityConflict")
-
-				It("should not be able to mount due to different NodeAffinity", func() {
-					testPodWithNodeName(config, testVolType, ep, config.nodes[1].Name, makeLocalPodWithNodeAffinity, testMode)
-				})
-
-				It("should not be able to mount due to different NodeSelector", func() {
-					testPodWithNodeName(config, testVolType, ep, config.nodes[1].Name, makeLocalPodWithNodeSelector, testMode)
-				})
-
-			})
-
-			Context("when pod's node is different from PV's NodeName", func() {
-
-				BeforeEach(func() {
-					if len(config.nodes) < 2 {
-						framework.Skipf("Runs only when number of nodes >= 2")
-					}
-				})
-
-				ep := &eventPatterns{
-					reason:  "FailedMount",
-					pattern: make([]string, 2)}
-				ep.pattern = append(ep.pattern, "NodeSelectorTerm")
-				ep.pattern = append(ep.pattern, "Storage node affinity check failed")
-
-				It("should not be able to mount due to different NodeName", func() {
-					testPodWithNodeName(config, testVolType, ep, config.nodes[1].Name, makeLocalPodWithNodeName, testMode)
-				})
-			})
 		})
 	}
+
+	Context("when local volume cannot be mounted [Slow]", func() {
+		// TODO:
+		// - make the pod create timeout shorter
+		// - check for these errors in unit tests intead
+		It("should fail mount due to non-existant path", func() {
+			ep := &eventPatterns{
+				reason:  "FailedMount",
+				pattern: make([]string, 2)}
+			ep.pattern = append(ep.pattern, "MountVolume.SetUp failed")
+			ep.pattern = append(ep.pattern, "does not exist")
+
+			testVol := &localTestVolume{
+				node:            config.node0,
+				hostDir:         "/non-existent/location/nowhere",
+				localVolumeType: DirectoryLocalVolumeType,
+			}
+			By("Creating local PVC and PV")
+			createLocalPVCsPVs(config, []*localTestVolume{testVol}, immediateMode)
+			pod, err := createLocalPod(config, testVol)
+			Expect(err).To(HaveOccurred())
+			checkPodEvents(config, pod.Name, ep)
+			verifyLocalVolume(config, testVol)
+			cleanupLocalPVCsPVs(config, []*localTestVolume{testVol})
+		})
+
+		It("should fail mount due to wrong node", func() {
+			if len(config.nodes) < 2 {
+				framework.Skipf("Runs only when number of nodes >= 2")
+			}
+
+			ep := &eventPatterns{
+				reason:  "FailedMount",
+				pattern: make([]string, 2)}
+			ep.pattern = append(ep.pattern, "NodeSelectorTerm")
+			ep.pattern = append(ep.pattern, "MountVolume.NodeAffinity check failed")
+
+			testVols := setupLocalVolumesPVCsPVs(config, DirectoryLocalVolumeType, config.node0, 1, immediateMode)
+			testVol := testVols[0]
+
+			pod := makeLocalPodWithNodeName(config, testVol, config.nodes[1].Name)
+			pod, err := config.client.CoreV1().Pods(config.ns).Create(pod)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = framework.WaitForPodNameRunningInNamespace(config.client, pod.Name, pod.Namespace)
+			Expect(err).To(HaveOccurred())
+			checkPodEvents(config, pod.Name, ep)
+
+			cleanupLocalVolumes(config, []*localTestVolume{testVol})
+		})
+	})
+
+	Context("when pod's node is different from PV's NodeAffinity", func() {
+		var (
+			testVol    *localTestVolume
+			volumeType localVolumeType
+		)
+
+		BeforeEach(func() {
+			if len(config.nodes) < 2 {
+				framework.Skipf("Runs only when number of nodes >= 2")
+			}
+
+			volumeType = DirectoryLocalVolumeType
+			setupStorageClass(config, &immediateMode)
+			testVols := setupLocalVolumesPVCsPVs(config, volumeType, config.node0, 1, immediateMode)
+			testVol = testVols[0]
+		})
+
+		AfterEach(func() {
+			cleanupLocalVolumes(config, []*localTestVolume{testVol})
+			cleanupStorageClass(config)
+		})
+
+		It("should not be able to mount due to different NodeAffinity", func() {
+			testPodWithNodeConflict(config, volumeType, config.nodes[1].Name, makeLocalPodWithNodeAffinity, immediateMode)
+		})
+
+		It("should not be able to mount due to different NodeSelector", func() {
+			testPodWithNodeConflict(config, volumeType, config.nodes[1].Name, makeLocalPodWithNodeSelector, immediateMode)
+		})
+	})
 
 	Context("when using local volume provisioner", func() {
 		var volumePath string
@@ -424,7 +441,7 @@ var _ = utils.SIGDescribe("PersistentVolumes-local [Feature:LocalPersistentVolum
 
 type makeLocalPodWith func(config *localTestConfig, volume *localTestVolume, nodeName string) *v1.Pod
 
-func testPodWithNodeName(config *localTestConfig, testVolType localVolumeType, ep *eventPatterns, nodeName string, makeLocalPodFunc makeLocalPodWith, bindingMode storagev1.VolumeBindingMode) {
+func testPodWithNodeConflict(config *localTestConfig, testVolType localVolumeType, nodeName string, makeLocalPodFunc makeLocalPodWith, bindingMode storagev1.VolumeBindingMode) {
 	By(fmt.Sprintf("local-volume-type: %s", testVolType))
 	testVols := setupLocalVolumesPVCsPVs(config, testVolType, config.node0, 1, bindingMode)
 	testVol := testVols[0]
@@ -432,9 +449,9 @@ func testPodWithNodeName(config *localTestConfig, testVolType localVolumeType, e
 	pod := makeLocalPodFunc(config, testVol, nodeName)
 	pod, err := config.client.CoreV1().Pods(config.ns).Create(pod)
 	Expect(err).NotTo(HaveOccurred())
-	err = framework.WaitForPodRunningInNamespace(config.client, pod)
-	Expect(err).To(HaveOccurred())
-	checkPodEvents(config, pod.Name, ep)
+
+	err = framework.WaitForPodNameUnschedulableInNamespace(config.client, pod.Name, pod.Namespace)
+	Expect(err).NotTo(HaveOccurred())
 
 	cleanupLocalVolumes(config, []*localTestVolume{testVol})
 }
@@ -1071,7 +1088,7 @@ func createProvisionerDaemonset(config *localTestConfig) {
 								},
 								{
 									Name:      "local-disks",
-									MountPath: "/mnt/local-storage",
+									MountPath: provisionerDefaultMountRoot,
 								},
 							},
 						},
@@ -1193,7 +1210,7 @@ func findLocalPersistentVolume(c clientset.Interface, volumePath string) (*v1.Pe
 	return nil, fmt.Errorf("Unable to find local persistent volume with path %v", volumePath)
 }
 
-func createStatefulSet(config *localTestConfig, ssReplicas int32, volumeCount int) *appsv1beta1.StatefulSet {
+func createStatefulSet(config *localTestConfig, ssReplicas int32, volumeCount int) *appsv1.StatefulSet {
 	mounts := []v1.VolumeMount{}
 	claims := []v1.PersistentVolumeClaim{}
 	for i := 0; i < volumeCount; i++ {
@@ -1223,12 +1240,12 @@ func createStatefulSet(config *localTestConfig, ssReplicas int32, volumeCount in
 	}
 
 	labels := map[string]string{"app": "local-volume-test"}
-	spec := &appsv1beta1.StatefulSet{
+	spec := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "local-volume-statefulset",
 			Namespace: config.ns,
 		},
-		Spec: appsv1beta1.StatefulSetSpec{
+		Spec: appsv1.StatefulSetSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": "local-volume-test"},
 			},
@@ -1253,14 +1270,14 @@ func createStatefulSet(config *localTestConfig, ssReplicas int32, volumeCount in
 		},
 	}
 
-	ss, err := config.client.AppsV1beta1().StatefulSets(config.ns).Create(spec)
+	ss, err := config.client.AppsV1().StatefulSets(config.ns).Create(spec)
 	Expect(err).NotTo(HaveOccurred())
 
 	config.ssTester.WaitForRunningAndReady(ssReplicas, ss)
 	return ss
 }
 
-func validateStatefulSet(config *localTestConfig, ss *appsv1beta1.StatefulSet) {
+func validateStatefulSet(config *localTestConfig, ss *appsv1.StatefulSet) {
 	pods := config.ssTester.GetPodList(ss)
 
 	// Verify that each pod is on a different node

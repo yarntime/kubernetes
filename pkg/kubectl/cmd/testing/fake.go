@@ -50,6 +50,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubectl/resource"
 	"k8s.io/kubernetes/pkg/kubectl/validation"
 	"k8s.io/kubernetes/pkg/printers"
+	metricsclientset "k8s.io/metrics/pkg/client/clientset_generated/clientset"
 )
 
 // +k8s:deepcopy-gen=true
@@ -245,6 +246,7 @@ type TestFactory struct {
 	TmpDir             string
 	CategoryExpander   categories.CategoryExpander
 	SkipDiscovery      bool
+	MetricsClientSet   metricsclientset.Interface
 
 	ClientForMappingFunc             func(mapping *meta.RESTMapping) (resource.RESTClient, error)
 	UnstructuredClientForMappingFunc func(mapping *meta.RESTMapping) (resource.RESTClient, error)
@@ -315,6 +317,10 @@ func (f *FakeFactory) KubernetesClientSet() (*kubernetes.Clientset, error) {
 	return nil, nil
 }
 
+func (f *FakeFactory) MetricsClientSet() (metricsclientset.Interface, error) {
+	return f.tf.MetricsClientSet, f.tf.Err
+}
+
 func (f *FakeFactory) ClientSet() (internalclientset.Interface, error) {
 	return nil, nil
 }
@@ -370,8 +376,7 @@ func (f *FakeFactory) PrintResourceInfoForCommand(cmd *cobra.Command, info *reso
 	return printer.PrintObj(info.Object, out)
 }
 
-func (f *FakeFactory) PrintSuccess(mapper meta.RESTMapper, shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string) {
-	resource, _ = mapper.ResourceSingularizer(resource)
+func (f *FakeFactory) PrintSuccess(shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string) {
 	dryRunMsg := ""
 	if dryRun {
 		dryRunMsg = " (dry run)"
@@ -675,6 +680,10 @@ func (f *fakeAPIFactory) KubernetesClientSet() (*kubernetes.Clientset, error) {
 	return clientset, f.tf.Err
 }
 
+func (f *fakeAPIFactory) MetricsClientSet() (metricsclientset.Interface, error) {
+	return f.tf.MetricsClientSet, f.tf.Err
+}
+
 func (f *fakeAPIFactory) ClientSet() (internalclientset.Interface, error) {
 	// Swap the HTTP client out of the REST client with the fake
 	// version.
@@ -762,8 +771,7 @@ func (f *fakeAPIFactory) PrintResourceInfoForCommand(cmd *cobra.Command, info *r
 	return printer.PrintObj(info.Object, out)
 }
 
-func (f *fakeAPIFactory) PrintSuccess(mapper meta.RESTMapper, shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string) {
-	resource, _ = mapper.ResourceSingularizer(resource)
+func (f *fakeAPIFactory) PrintSuccess(shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string) {
 	dryRunMsg := ""
 	if dryRun {
 		dryRunMsg = " (dry run)"

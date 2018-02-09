@@ -33,7 +33,7 @@ import (
 	"k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	api "k8s.io/kubernetes/pkg/apis/core"
-	nodepkg "k8s.io/kubernetes/pkg/controller/node"
+	nodepkg "k8s.io/kubernetes/pkg/controller/nodelifecycle"
 	"k8s.io/kubernetes/test/e2e/common"
 	"k8s.io/kubernetes/test/e2e/framework"
 	testutils "k8s.io/kubernetes/test/utils"
@@ -371,7 +371,7 @@ var _ = SIGDescribe("Network Partition [Disruptive] [Slow]", func() {
 			petMounts := []v1.VolumeMount{{Name: "datadir", MountPath: "/data/"}}
 			podMounts := []v1.VolumeMount{{Name: "home", MountPath: "/home"}}
 			ps := framework.NewStatefulSet(psName, ns, headlessSvcName, 3, petMounts, podMounts, labels)
-			_, err := c.AppsV1beta1().StatefulSets(ns).Create(ps)
+			_, err := c.AppsV1().StatefulSets(ns).Create(ps)
 			Expect(err).NotTo(HaveOccurred())
 
 			pst := framework.NewStatefulSetTester(c)
@@ -387,7 +387,7 @@ var _ = SIGDescribe("Network Partition [Disruptive] [Slow]", func() {
 
 		It("should not reschedule stateful pods if there is a network partition [Slow] [Disruptive]", func() {
 			ps := framework.NewStatefulSet(psName, ns, headlessSvcName, 3, []v1.VolumeMount{}, []v1.VolumeMount{}, labels)
-			_, err := c.AppsV1beta1().StatefulSets(ns).Create(ps)
+			_, err := c.AppsV1().StatefulSets(ns).Create(ps)
 			Expect(err).NotTo(HaveOccurred())
 
 			pst := framework.NewStatefulSetTester(c)

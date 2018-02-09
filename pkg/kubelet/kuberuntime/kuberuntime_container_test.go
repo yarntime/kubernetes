@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/api/core/v1"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
@@ -221,8 +221,8 @@ func makeExpectedConfig(m *kubeGenericRuntimeManager, pod *v1.Pod, containerInde
 		Command:     container.Command,
 		Args:        []string(nil),
 		WorkingDir:  container.WorkingDir,
-		Labels:      newContainerLabels(container, pod),
-		Annotations: newContainerAnnotations(container, pod, restartCount),
+		Labels:      newContainerLabels(container, pod, kubecontainer.ContainerTypeRegular),
+		Annotations: newContainerAnnotations(container, pod, restartCount, opts),
 		Devices:     makeDevices(opts),
 		Mounts:      m.makeMounts(opts, container),
 		LogPath:     containerLogsPath,
@@ -259,7 +259,7 @@ func TestGenerateContainerConfig(t *testing.T) {
 	}
 
 	expectedConfig := makeExpectedConfig(m, pod, 0)
-	containerConfig, err := m.generateContainerConfig(&pod.Spec.Containers[0], pod, 0, "", pod.Spec.Containers[0].Image)
+	containerConfig, err := m.generateContainerConfig(&pod.Spec.Containers[0], pod, 0, "", pod.Spec.Containers[0].Image, kubecontainer.ContainerTypeRegular)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedConfig, containerConfig, "generate container config for kubelet runtime v1.")
 
@@ -288,7 +288,7 @@ func TestGenerateContainerConfig(t *testing.T) {
 		},
 	}
 
-	_, err = m.generateContainerConfig(&podWithContainerSecurityContext.Spec.Containers[0], podWithContainerSecurityContext, 0, "", podWithContainerSecurityContext.Spec.Containers[0].Image)
+	_, err = m.generateContainerConfig(&podWithContainerSecurityContext.Spec.Containers[0], podWithContainerSecurityContext, 0, "", podWithContainerSecurityContext.Spec.Containers[0].Image, kubecontainer.ContainerTypeRegular)
 	assert.Error(t, err)
 
 	imageId, _ := imageService.PullImage(&runtimeapi.ImageSpec{Image: "busybox"}, nil)
@@ -300,7 +300,7 @@ func TestGenerateContainerConfig(t *testing.T) {
 	podWithContainerSecurityContext.Spec.Containers[0].SecurityContext.RunAsUser = nil
 	podWithContainerSecurityContext.Spec.Containers[0].SecurityContext.RunAsNonRoot = &runAsNonRootTrue
 
-	_, err = m.generateContainerConfig(&podWithContainerSecurityContext.Spec.Containers[0], podWithContainerSecurityContext, 0, "", podWithContainerSecurityContext.Spec.Containers[0].Image)
+	_, err = m.generateContainerConfig(&podWithContainerSecurityContext.Spec.Containers[0], podWithContainerSecurityContext, 0, "", podWithContainerSecurityContext.Spec.Containers[0].Image, kubecontainer.ContainerTypeRegular)
 	assert.Error(t, err, "RunAsNonRoot should fail for non-numeric username")
 }
 
@@ -424,7 +424,7 @@ func TestLifeCycleHook(t *testing.T) {
 		}
 
 		// Now try to create a container, which should in turn invoke PostStart Hook
-		_, err := m.startContainer(fakeSandBox.Id, fakeSandBoxConfig, testContainer, testPod, fakePodStatus, nil, "")
+		_, err := m.startContainer(fakeSandBox.Id, fakeSandBoxConfig, testContainer, testPod, fakePodStatus, nil, "", kubecontainer.ContainerTypeRegular)
 		if err != nil {
 			t.Errorf("startContainer erro =%v", err)
 		}

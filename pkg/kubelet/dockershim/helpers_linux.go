@@ -30,7 +30,7 @@ import (
 	"github.com/blang/semver"
 	dockertypes "github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 )
 
 func DefaultMemorySwap() int64 {
@@ -144,4 +144,8 @@ func getNetworkNamespace(c *dockertypes.ContainerJSON) (string, error) {
 		return "", fmt.Errorf("cannot find network namespace for the terminated container %q", c.ID)
 	}
 	return fmt.Sprintf(dockerNetNSFmt, c.State.Pid), nil
+}
+
+// applyExperimentalCreateConfig applys experimental configures from sandbox annotations.
+func applyExperimentalCreateConfig(createConfig *dockertypes.ContainerCreateConfig, annotations map[string]string) {
 }

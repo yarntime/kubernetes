@@ -10,6 +10,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "client_ca_hook.go",
+        "client_util.go",
         "controller.go",
         "doc.go",
         "import_known_versions.go",
@@ -112,6 +113,7 @@ go_library(
 
 go_test(
     name = "go_default_test",
+    size = "medium",
     srcs = [
         "client_ca_hook_test.go",
         "controller_test.go",
@@ -132,6 +134,7 @@ go_test(
         "//pkg/apis/core:go_default_library",
         "//pkg/apis/extensions:go_default_library",
         "//pkg/apis/rbac:go_default_library",
+        "//pkg/apis/storage:go_default_library",
         "//pkg/client/clientset_generated/internalclientset/fake:go_default_library",
         "//pkg/generated/openapi:go_default_library",
         "//pkg/kubelet/client:go_default_library",
@@ -145,13 +148,8 @@ go_test(
         "//vendor/github.com/go-openapi/strfmt:go_default_library",
         "//vendor/github.com/go-openapi/validate:go_default_library",
         "//vendor/github.com/stretchr/testify/assert:go_default_library",
-        "//vendor/k8s.io/api/apps/v1beta1:go_default_library",
-        "//vendor/k8s.io/api/autoscaling/v1:go_default_library",
-        "//vendor/k8s.io/api/batch/v1:go_default_library",
-        "//vendor/k8s.io/api/batch/v1beta1:go_default_library",
         "//vendor/k8s.io/api/certificates/v1beta1:go_default_library",
         "//vendor/k8s.io/api/core/v1:go_default_library",
-        "//vendor/k8s.io/api/extensions/v1beta1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/runtime:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",

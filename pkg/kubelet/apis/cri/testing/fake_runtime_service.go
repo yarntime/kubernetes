@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 )
 
 var (
@@ -458,4 +458,12 @@ func (r *FakeRuntimeService) ListContainerStats(filter *runtimeapi.ContainerStat
 	}
 
 	return result, nil
+}
+
+func (r *FakeRuntimeService) ReopenContainerLog(containerID string) error {
+	r.Lock()
+	defer r.Unlock()
+
+	r.Called = append(r.Called, "ReopenContainerLog")
+	return nil
 }

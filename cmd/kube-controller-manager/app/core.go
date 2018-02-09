@@ -41,8 +41,9 @@ import (
 	endpointcontroller "k8s.io/kubernetes/pkg/controller/endpoint"
 	"k8s.io/kubernetes/pkg/controller/garbagecollector"
 	namespacecontroller "k8s.io/kubernetes/pkg/controller/namespace"
-	nodecontroller "k8s.io/kubernetes/pkg/controller/node"
-	"k8s.io/kubernetes/pkg/controller/node/ipam"
+	nodeipamcontroller "k8s.io/kubernetes/pkg/controller/nodeipam"
+	"k8s.io/kubernetes/pkg/controller/nodeipam/ipam"
+	lifecyclecontroller "k8s.io/kubernetes/pkg/controller/nodelifecycle"
 	"k8s.io/kubernetes/pkg/controller/podgc"
 	replicationcontroller "k8s.io/kubernetes/pkg/controller/replication"
 	resourcequotacontroller "k8s.io/kubernetes/pkg/controller/resourcequota"
@@ -54,6 +55,7 @@ import (
 	"k8s.io/kubernetes/pkg/controller/volume/expand"
 	persistentvolumecontroller "k8s.io/kubernetes/pkg/controller/volume/persistentvolume"
 	"k8s.io/kubernetes/pkg/controller/volume/pvcprotection"
+	"k8s.io/kubernetes/pkg/controller/volume/pvprotection"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/quota/generic"
 	quotainstall "k8s.io/kubernetes/pkg/quota/install"
@@ -77,7 +79,7 @@ func startServiceController(ctx ControllerContext) (bool, error) {
 	return true, nil
 }
 
-func startNodeController(ctx ControllerContext) (bool, error) {
+func startNodeIpamController(ctx ControllerContext) (bool, error) {
 	var clusterCIDR *net.IPNet = nil
 	var serviceCIDR *net.IPNet = nil
 	if ctx.Options.AllocateNodeCIDRs {
@@ -97,25 +99,38 @@ func startNodeController(ctx ControllerContext) (bool, error) {
 		}
 	}
 
-	nodeController, err := nodecontroller.NewNodeController(
-		ctx.InformerFactory.Core().V1().Pods(),
+	nodeIpamController, err := nodeipamcontroller.NewNodeIpamController(
 		ctx.InformerFactory.Core().V1().Nodes(),
-		ctx.InformerFactory.Extensions().V1beta1().DaemonSets(),
 		ctx.Cloud,
 		ctx.ClientBuilder.ClientOrDie("node-controller"),
-		ctx.Options.PodEvictionTimeout.Duration,
-		ctx.Options.NodeEvictionRate,
-		ctx.Options.SecondaryNodeEvictionRate,
-		ctx.Options.LargeClusterSizeThreshold,
-		ctx.Options.UnhealthyZoneThreshold,
-		ctx.Options.NodeMonitorGracePeriod.Duration,
-		ctx.Options.NodeStartupGracePeriod.Duration,
-		ctx.Options.NodeMonitorPeriod.Duration,
 		clusterCIDR,
 		serviceCIDR,
 		int(ctx.Options.NodeCIDRMaskSize),
 		ctx.Options.AllocateNodeCIDRs,
 		ipam.CIDRAllocatorType(ctx.Options.CIDRAllocatorType),
+	)
+	if err != nil {
+		return true, err
+	}
+	go nodeIpamController.Run(ctx.Stop)
+	return true, nil
+}
+
+func startNodeLifecycleController(ctx ControllerContext) (bool, error) {
+	lifecycleController, err := lifecyclecontroller.NewNodeLifecycleController(
+		ctx.InformerFactory.Core().V1().Pods(),
+		ctx.InformerFactory.Core().V1().Nodes(),
+		ctx.InformerFactory.Extensions().V1beta1().DaemonSets(),
+		ctx.Cloud,
+		ctx.ClientBuilder.ClientOrDie("node-controller"),
+		ctx.Options.NodeMonitorPeriod.Duration,
+		ctx.Options.NodeStartupGracePeriod.Duration,
+		ctx.Options.NodeMonitorGracePeriod.Duration,
+		ctx.Options.PodEvictionTimeout.Duration,
+		ctx.Options.NodeEvictionRate,
+		ctx.Options.SecondaryNodeEvictionRate,
+		ctx.Options.LargeClusterSizeThreshold,
+		ctx.Options.UnhealthyZoneThreshold,
 		ctx.Options.EnableTaintManager,
 		utilfeature.DefaultFeatureGate.Enabled(features.TaintBasedEvictions),
 		utilfeature.DefaultFeatureGate.Enabled(features.TaintNodesByCondition),
@@ -123,7 +138,7 @@ func startNodeController(ctx ControllerContext) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	go nodeController.Run(ctx.Stop)
+	go lifecycleController.Run(ctx.Stop)
 	return true, nil
 }
 
@@ -160,6 +175,7 @@ func startPersistentVolumeBinderController(ctx ControllerContext) (bool, error) 
 		VolumeInformer:            ctx.InformerFactory.Core().V1().PersistentVolumes(),
 		ClaimInformer:             ctx.InformerFactory.Core().V1().PersistentVolumeClaims(),
 		ClassInformer:             ctx.InformerFactory.Storage().V1().StorageClasses(),
+		PodInformer:               ctx.InformerFactory.Core().V1().Pods(),
 		EnableDynamicProvisioning: ctx.Options.VolumeConfiguration.EnableDynamicProvisioning,
 	}
 	volumeController, volumeControllerErr := persistentvolumecontroller.NewController(params)
@@ -344,7 +360,7 @@ func startGarbageCollectorController(ctx ControllerContext) (bool, error) {
 	// TODO: Make NewMetadataCodecFactory support arbitrary (non-compiled)
 	// resource types. Otherwise we'll be storing full Unstructured data in our
 	// caches for custom resources. Consider porting it to work with
-	// metav1alpha1.PartialObjectMetadata.
+	// metav1beta1.PartialObjectMetadata.
 	metaOnlyClientPool := dynamic.NewClientPool(config, restMapper, dynamic.LegacyAPIPathResolverFunc)
 	clientPool := dynamic.NewClientPool(config, restMapper, dynamic.LegacyAPIPathResolverFunc)
 
@@ -379,11 +395,22 @@ func startGarbageCollectorController(ctx ControllerContext) (bool, error) {
 }
 
 func startPVCProtectionController(ctx ControllerContext) (bool, error) {
-	if utilfeature.DefaultFeatureGate.Enabled(features.PVCProtection) {
+	if utilfeature.DefaultFeatureGate.Enabled(features.StorageProtection) {
 		go pvcprotection.NewPVCProtectionController(
 			ctx.InformerFactory.Core().V1().PersistentVolumeClaims(),
 			ctx.InformerFactory.Core().V1().Pods(),
 			ctx.ClientBuilder.ClientOrDie("pvc-protection-controller"),
+		).Run(1, ctx.Stop)
+		return true, nil
+	}
+	return false, nil
+}
+
+func startPVProtectionController(ctx ControllerContext) (bool, error) {
+	if utilfeature.DefaultFeatureGate.Enabled(features.StorageProtection) {
+		go pvprotection.NewPVProtectionController(
+			ctx.InformerFactory.Core().V1().PersistentVolumes(),
+			ctx.ClientBuilder.ClientOrDie("pv-protection-controller"),
 		).Run(1, ctx.Stop)
 		return true, nil
 	}

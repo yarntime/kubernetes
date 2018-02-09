@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/validation/path"
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	metav1alpha1 "k8s.io/apimachinery/pkg/apis/meta/v1alpha1"
+	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/apiserver/pkg/endpoints/request"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/registry/rest"
@@ -681,7 +680,7 @@ func (e *Store) Get(ctx genericapirequest.Context, name string, options *metav1.
 // qualifiedResourceFromContext attempts to retrieve a GroupResource from the context's request info.
 // If the context has no request info, DefaultQualifiedResource is used.
 func (e *Store) qualifiedResourceFromContext(ctx genericapirequest.Context) schema.GroupResource {
-	if info, ok := request.RequestInfoFrom(ctx); ok {
+	if info, ok := genericapirequest.RequestInfoFrom(ctx); ok {
 		return schema.GroupResource{Group: info.APIGroup, Resource: info.Resource}
 	}
 	// some implementations access storage directly and thus the context has no RequestInfo
@@ -1369,7 +1368,7 @@ func (e *Store) CompleteWithOptions(options *generic.StoreOptions) error {
 	return nil
 }
 
-func (e *Store) ConvertToTable(ctx genericapirequest.Context, object runtime.Object, tableOptions runtime.Object) (*metav1alpha1.Table, error) {
+func (e *Store) ConvertToTable(ctx genericapirequest.Context, object runtime.Object, tableOptions runtime.Object) (*metav1beta1.Table, error) {
 	if e.TableConvertor != nil {
 		return e.TableConvertor.ConvertToTable(ctx, object, tableOptions)
 	}

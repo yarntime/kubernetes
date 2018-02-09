@@ -67,12 +67,8 @@ func SetDefaults_KubeletConfiguration(obj *KubeletConfiguration) {
 	if obj.Authorization.Webhook.CacheUnauthorizedTTL == zeroDuration {
 		obj.Authorization.Webhook.CacheUnauthorizedTTL = metav1.Duration{Duration: 30 * time.Second}
 	}
-
 	if obj.Address == "" {
 		obj.Address = "0.0.0.0"
-	}
-	if obj.CAdvisorPort == nil {
-		obj.CAdvisorPort = utilpointer.Int32Ptr(4194)
 	}
 	if obj.VolumeStatsAggPeriod == zeroDuration {
 		obj.VolumeStatsAggPeriod = metav1.Duration{Duration: time.Minute}
@@ -108,15 +104,6 @@ func SetDefaults_KubeletConfiguration(obj *KubeletConfiguration) {
 	if obj.HealthzPort == nil {
 		obj.HealthzPort = utilpointer.Int32Ptr(10248)
 	}
-	if obj.HostNetworkSources == nil {
-		obj.HostNetworkSources = []string{kubetypes.AllSource}
-	}
-	if obj.HostPIDSources == nil {
-		obj.HostPIDSources = []string{kubetypes.AllSource}
-	}
-	if obj.HostIPCSources == nil {
-		obj.HostIPCSources = []string{kubetypes.AllSource}
-	}
 	if obj.HTTPCheckFrequency == zeroDuration {
 		obj.HTTPCheckFrequency = metav1.Duration{Duration: 20 * time.Second}
 	}
@@ -137,6 +124,10 @@ func SetDefaults_KubeletConfiguration(obj *KubeletConfiguration) {
 	}
 	if obj.MaxPods == 0 {
 		obj.MaxPods = 110
+	}
+	if obj.PodPidsLimit == nil {
+		temp := int64(-1)
+		obj.PodPidsLimit = &temp
 	}
 	if obj.NodeStatusUpdateFrequency == zeroDuration {
 		obj.NodeStatusUpdateFrequency = metav1.Duration{Duration: 10 * time.Second}
@@ -210,6 +201,9 @@ func SetDefaults_KubeletConfiguration(obj *KubeletConfiguration) {
 	if obj.IPTablesDropBit == nil {
 		temp := int32(DefaultIPTablesDropBit)
 		obj.IPTablesDropBit = &temp
+	}
+	if obj.FailSwapOn == nil {
+		obj.FailSwapOn = utilpointer.BoolPtr(true)
 	}
 	if obj.CgroupsPerQOS == nil {
 		temp := true

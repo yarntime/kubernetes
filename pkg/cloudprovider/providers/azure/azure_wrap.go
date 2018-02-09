@@ -27,6 +27,7 @@ import (
 	"github.com/golang/glog"
 
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
 // checkExistsFromError inspects an error and returns a true if err is nil,
@@ -71,9 +72,7 @@ type vmRequest struct {
 /// getVirtualMachine calls 'VirtualMachinesClient.Get' with a timed cache
 /// The service side has throttling control that delays responses if there're multiple requests onto certain vm
 /// resource request in short period.
-func (az *Cloud) getVirtualMachine(nodeName types.NodeName) (vm compute.VirtualMachine, exists bool, err error) {
-	var realErr error
-
+func (az *Cloud) getVirtualMachine(nodeName types.NodeName) (vm compute.VirtualMachine, err error) {
 	vmName := string(nodeName)
 
 	cachedRequest, err := vmCache.GetOrCreate(vmName, func() interface{} {
@@ -83,7 +82,7 @@ func (az *Cloud) getVirtualMachine(nodeName types.NodeName) (vm compute.VirtualM
 		}
 	})
 	if err != nil {
-		return compute.VirtualMachine{}, false, err
+		return compute.VirtualMachine{}, err
 	}
 	request := cachedRequest.(*vmRequest)
 
@@ -97,37 +96,29 @@ func (az *Cloud) getVirtualMachine(nodeName types.NodeName) (vm compute.VirtualM
 			// case we do get instance view every time to fulfill the azure_zones requirement without hitting
 			// throttling.
 			// Consider adding separate parameter for controlling 'InstanceView' once node update issue #56276 is fixed
-			az.operationPollRateLimiter.Accept()
-			glog.V(10).Infof("VirtualMachinesClient.Get(%s): start", vmName)
 			vm, err = az.VirtualMachinesClient.Get(az.ResourceGroup, vmName, compute.InstanceView)
-			glog.V(10).Infof("VirtualMachinesClient.Get(%s): end", vmName)
-
-			exists, realErr = checkResourceExistsFromError(err)
+			exists, realErr := checkResourceExistsFromError(err)
 			if realErr != nil {
-				return vm, false, realErr
+				return vm, realErr
 			}
 
 			if !exists {
-				return vm, false, nil
+				return vm, cloudprovider.InstanceNotFound
 			}
 
 			request.vm = &vm
 		}
-		return vm, exists, err
+		return *request.vm, nil
 	}
 
 	glog.V(6).Infof("getVirtualMachine hits cache for(%s)", vmName)
-	return *request.vm, true, nil
+	return *request.vm, nil
 }
 
 func (az *Cloud) getRouteTable() (routeTable network.RouteTable, exists bool, err error) {
 	var realErr error
 
-	az.operationPollRateLimiter.Accept()
-	glog.V(10).Infof("RouteTablesClient.Get(%s): start", az.RouteTableName)
 	routeTable, err = az.RouteTablesClient.Get(az.ResourceGroup, az.RouteTableName, "")
-	glog.V(10).Infof("RouteTablesClient.Get(%s): end", az.RouteTableName)
-
 	exists, realErr = checkResourceExistsFromError(err)
 	if realErr != nil {
 		return routeTable, false, realErr
@@ -140,64 +131,6 @@ func (az *Cloud) getRouteTable() (routeTable network.RouteTable, exists bool, er
 	return routeTable, exists, err
 }
 
-func (az *Cloud) getSecurityGroup() (sg network.SecurityGroup, exists bool, err error) {
-	var realErr error
-
-	az.operationPollRateLimiter.Accept()
-	glog.V(10).Infof("SecurityGroupsClient.Get(%s): start", az.SecurityGroupName)
-	sg, err = az.SecurityGroupsClient.Get(az.ResourceGroup, az.SecurityGroupName, "")
-	glog.V(10).Infof("SecurityGroupsClient.Get(%s): end", az.SecurityGroupName)
-
-	exists, realErr = checkResourceExistsFromError(err)
-	if realErr != nil {
-		return sg, false, realErr
-	}
-
-	if !exists {
-		return sg, false, nil
-	}
-
-	return sg, exists, err
-}
-
-func (az *Cloud) getAzureLoadBalancer(name string) (lb network.LoadBalancer, exists bool, err error) {
-	var realErr error
-	az.operationPollRateLimiter.Accept()
-	glog.V(10).Infof("LoadBalancerClient.Get(%s): start", name)
-	lb, err = az.LoadBalancerClient.Get(az.ResourceGroup, name, "")
-	glog.V(10).Infof("LoadBalancerClient.Get(%s): end", name)
-
-	exists, realErr = checkResourceExistsFromError(err)
-	if realErr != nil {
-		return lb, false, realErr
-	}
-
-	if !exists {
-		return lb, false, nil
-	}
-
-	return lb, exists, err
-}
-
-func (az *Cloud) listLoadBalancers() (lbListResult network.LoadBalancerListResult, exists bool, err error) {
-	var realErr error
-
-	az.operationPollRateLimiter.Accept()
-	glog.V(10).Infof("LoadBalancerClient.List(%s): start", az.ResourceGroup)
-	lbListResult, err = az.LoadBalancerClient.List(az.ResourceGroup)
-	glog.V(10).Infof("LoadBalancerClient.List(%s): end", az.ResourceGroup)
-	exists, realErr = checkResourceExistsFromError(err)
-	if realErr != nil {
-		return lbListResult, false, realErr
-	}
-
-	if !exists {
-		return lbListResult, false, nil
-	}
-
-	return lbListResult, exists, err
-}
-
 func (az *Cloud) getPublicIPAddress(pipResourceGroup string, pipName string) (pip network.PublicIPAddress, exists bool, err error) {
 	resourceGroup := az.ResourceGroup
 	if pipResourceGroup != "" {
@@ -205,11 +138,7 @@ func (az *Cloud) getPublicIPAddress(pipResourceGroup string, pipName string) (pi
 	}
 
 	var realErr error
-	az.operationPollRateLimiter.Accept()
-	glog.V(10).Infof("PublicIPAddressesClient.Get(%s, %s): start", resourceGroup, pipName)
 	pip, err = az.PublicIPAddressesClient.Get(resourceGroup, pipName, "")
-	glog.V(10).Infof("PublicIPAddressesClient.Get(%s, %s): end", resourceGroup, pipName)
-
 	exists, realErr = checkResourceExistsFromError(err)
 	if realErr != nil {
 		return pip, false, realErr
@@ -232,11 +161,7 @@ func (az *Cloud) getSubnet(virtualNetworkName string, subnetName string) (subnet
 		rg = az.ResourceGroup
 	}
 
-	az.operationPollRateLimiter.Accept()
-	glog.V(10).Infof("SubnetsClient.Get(%s): start", subnetName)
 	subnet, err = az.SubnetsClient.Get(rg, virtualNetworkName, subnetName, "")
-	glog.V(10).Infof("SubnetsClient.Get(%s): end", subnetName)
-
 	exists, realErr = checkResourceExistsFromError(err)
 	if realErr != nil {
 		return subnet, false, realErr
@@ -247,4 +172,20 @@ func (az *Cloud) getSubnet(virtualNetworkName string, subnetName string) (subnet
 	}
 
 	return subnet, exists, err
+}
+
+func (az *Cloud) getAzureLoadBalancer(name string) (lb network.LoadBalancer, exists bool, err error) {
+	var realErr error
+
+	lb, err = az.LoadBalancerClient.Get(az.ResourceGroup, name, "")
+	exists, realErr = checkResourceExistsFromError(err)
+	if realErr != nil {
+		return lb, false, realErr
+	}
+
+	if !exists {
+		return lb, false, nil
+	}
+
+	return lb, exists, err
 }

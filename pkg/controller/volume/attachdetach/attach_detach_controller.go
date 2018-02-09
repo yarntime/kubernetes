@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package volume implements a controller to manage volume attach and detach
+// Package attachdetach implements a controller to manage volume attach and detach
 // operations.
 package attachdetach
 
@@ -335,7 +335,7 @@ func (adc *attachDetachController) populateDesiredStateOfWorld() error {
 	}
 	for _, pod := range pods {
 		podToAdd := pod
-		adc.podAdd(&podToAdd)
+		adc.podAdd(podToAdd)
 		for _, podVolume := range podToAdd.Spec.Volumes {
 			// The volume specs present in the ActualStateOfWorld are nil, let's replace those
 			// with the correct ones found on pods. The present in the ASW with no corresponding

@@ -17,6 +17,7 @@ limitations under the License.
 package stats
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -31,7 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	internalapi "k8s.io/kubernetes/pkg/kubelet/apis/cri"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	statsapi "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/server/stats"
@@ -94,10 +95,10 @@ func (p *criStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		podSandboxMap[s.Id] = s
 	}
 
-	// uuidToFsInfo is a map from filesystem UUID to its stats. This will be
-	// used as a cache to avoid querying cAdvisor for the filesystem stats with
-	// the same UUID many times.
-	uuidToFsInfo := make(map[runtimeapi.StorageIdentifier]*cadvisorapiv2.FsInfo)
+	// fsIDtoInfo is a map from filesystem id to its stats. This will be used
+	// as a cache to avoid querying cAdvisor for the filesystem stats with the
+	// same filesystem id many times.
+	fsIDtoInfo := make(map[runtimeapi.FilesystemIdentifier]*cadvisorapiv2.FsInfo)
 
 	// sandboxIDToPodStats is a temporary map from sandbox ID to its pod stats.
 	sandboxIDToPodStats := make(map[string]*statsapi.PodStats)
@@ -123,14 +124,14 @@ func (p *criStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		containerID := stats.Attributes.Id
 		container, found := containerMap[containerID]
 		if !found {
-			glog.Errorf("Unknown id %q in container map.", containerID)
+			glog.Errorf("Unable to find container id %q in container stats list", containerID)
 			continue
 		}
 
 		podSandboxID := container.PodSandboxId
 		podSandbox, found := podSandboxMap[podSandboxID]
 		if !found {
-			glog.Errorf("Unknown id %q in pod sandbox map.", podSandboxID)
+			glog.Errorf("Unable to find pod sandbox id %q in pod stats list", podSandboxID)
 			continue
 		}
 
@@ -142,18 +143,18 @@ func (p *criStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 			// Fill stats from cadvisor is available for full set of required pod stats
 			caPodSandbox, found := caInfos[podSandboxID]
 			if !found {
-				glog.V(4).Info("Unable to find cadvisor stats for sandbox %q", podSandboxID)
+				glog.V(4).Infof("Unable to find cadvisor stats for sandbox %q", podSandboxID)
 			} else {
 				p.addCadvisorPodStats(ps, &caPodSandbox)
 			}
 			sandboxIDToPodStats[podSandboxID] = ps
 		}
-		cs := p.makeContainerStats(stats, container, &rootFsInfo, uuidToFsInfo)
+		cs := p.makeContainerStats(stats, container, &rootFsInfo, fsIDtoInfo)
 		// If cadvisor stats is available for the container, use it to populate
 		// container stats
 		caStats, caFound := caInfos[containerID]
 		if !caFound {
-			glog.V(4).Info("Unable to find cadvisor stats for %q", containerID)
+			glog.V(4).Infof("Unable to find cadvisor stats for %q", containerID)
 		} else {
 			p.addCadvisorContainerStats(cs, &caStats)
 		}
@@ -185,11 +186,11 @@ func (p *criStatsProvider) ImageFsStats() (*statsapi.FsStats, error) {
 			UsedBytes:  &fs.UsedBytes.Value,
 			InodesUsed: &fs.InodesUsed.Value,
 		}
-		imageFsInfo := p.getFsInfo(fs.StorageId)
+		imageFsInfo := p.getFsInfo(fs.GetFsId())
 		if imageFsInfo != nil {
-			// The image filesystem UUID is unknown to the local node or
-			// there's an error on retrieving the stats. In these cases, we
-			// omit those stats and return the best-effort partial result. See
+			// The image filesystem id is unknown to the local node or there's
+			// an error on retrieving the stats. In these cases, we omit those
+			// stats and return the best-effort partial result. See
 			// https://github.com/kubernetes/heapster/issues/1793.
 			s.AvailableBytes = &imageFsInfo.Available
 			s.CapacityBytes = &imageFsInfo.Capacity
@@ -202,17 +203,34 @@ func (p *criStatsProvider) ImageFsStats() (*statsapi.FsStats, error) {
 	return nil, fmt.Errorf("imageFs information is unavailable")
 }
 
+// ImageFsDevice returns name of the device where the image filesystem locates,
+// e.g. /dev/sda1.
+func (p *criStatsProvider) ImageFsDevice() (string, error) {
+	resp, err := p.imageService.ImageFsInfo()
+	if err != nil {
+		return "", err
+	}
+	for _, fs := range resp {
+		fsInfo := p.getFsInfo(fs.GetFsId())
+		if fsInfo != nil {
+			return fsInfo.Device, nil
+		}
+	}
+	return "", errors.New("imagefs device is not found")
+}
+
 // getFsInfo returns the information of the filesystem with the specified
-// storageID. If any error occurs, this function logs the error and returns
+// fsID. If any error occurs, this function logs the error and returns
 // nil.
-func (p *criStatsProvider) getFsInfo(storageID *runtimeapi.StorageIdentifier) *cadvisorapiv2.FsInfo {
-	if storageID == nil {
-		glog.V(2).Infof("Failed to get filesystem info: storageID is nil.")
+func (p *criStatsProvider) getFsInfo(fsID *runtimeapi.FilesystemIdentifier) *cadvisorapiv2.FsInfo {
+	if fsID == nil {
+		glog.V(2).Infof("Failed to get filesystem info: fsID is nil.")
 		return nil
 	}
-	fsInfo, err := p.cadvisor.GetFsInfoByFsUUID(storageID.Uuid)
+	mountpoint := fsID.GetMountpoint()
+	fsInfo, err := p.cadvisor.GetDirFsInfo(mountpoint)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to get the info of the filesystem with id %q: %v.", storageID.Uuid, err)
+		msg := fmt.Sprintf("Failed to get the info of the filesystem with mountpoint %q: %v.", mountpoint, err)
 		if err == cadvisorfs.ErrNoSuchDevice {
 			glog.V(2).Info(msg)
 		} else {
@@ -258,7 +276,7 @@ func (p *criStatsProvider) makeContainerStats(
 	stats *runtimeapi.ContainerStats,
 	container *runtimeapi.Container,
 	rootFsInfo *cadvisorapiv2.FsInfo,
-	uuidToFsInfo map[runtimeapi.StorageIdentifier]*cadvisorapiv2.FsInfo,
+	fsIDtoInfo map[runtimeapi.FilesystemIdentifier]*cadvisorapiv2.FsInfo,
 ) *statsapi.ContainerStats {
 	result := &statsapi.ContainerStats{
 		Name: stats.Attributes.Metadata.Name,
@@ -307,16 +325,16 @@ func (p *criStatsProvider) makeContainerStats(
 			result.Rootfs.InodesUsed = &stats.WritableLayer.InodesUsed.Value
 		}
 	}
-	storageID := stats.GetWritableLayer().GetStorageId()
-	if storageID != nil {
-		imageFsInfo, found := uuidToFsInfo[*storageID]
+	fsID := stats.GetWritableLayer().GetFsId()
+	if fsID != nil {
+		imageFsInfo, found := fsIDtoInfo[*fsID]
 		if !found {
-			imageFsInfo = p.getFsInfo(storageID)
-			uuidToFsInfo[*storageID] = imageFsInfo
+			imageFsInfo = p.getFsInfo(fsID)
+			fsIDtoInfo[*fsID] = imageFsInfo
 		}
 		if imageFsInfo != nil {
-			// The image filesystem UUID is unknown to the local node or there's an
-			// error on retrieving the stats. In these cases, we omit those stats
+			// The image filesystem id is unknown to the local node or there's
+			// an error on retrieving the stats. In these cases, we omit those stats
 			// and return the best-effort partial result. See
 			// https://github.com/kubernetes/heapster/issues/1793.
 			result.Rootfs.AvailableBytes = &imageFsInfo.Available

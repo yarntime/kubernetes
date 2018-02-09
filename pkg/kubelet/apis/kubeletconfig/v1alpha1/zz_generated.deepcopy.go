@@ -132,32 +132,13 @@ func (in *KubeletConfiguration) DeepCopyInto(out *KubeletConfiguration) {
 			**out = **in
 		}
 	}
+	if in.TLSCipherSuites != nil {
+		in, out := &in.TLSCipherSuites, &out.TLSCipherSuites
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Authentication.DeepCopyInto(&out.Authentication)
 	out.Authorization = in.Authorization
-	if in.AllowPrivileged != nil {
-		in, out := &in.AllowPrivileged, &out.AllowPrivileged
-		if *in == nil {
-			*out = nil
-		} else {
-			*out = new(bool)
-			**out = **in
-		}
-	}
-	if in.HostNetworkSources != nil {
-		in, out := &in.HostNetworkSources, &out.HostNetworkSources
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.HostPIDSources != nil {
-		in, out := &in.HostPIDSources, &out.HostPIDSources
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.HostIPCSources != nil {
-		in, out := &in.HostIPCSources, &out.HostIPCSources
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.RegistryPullQPS != nil {
 		in, out := &in.RegistryPullQPS, &out.RegistryPullQPS
 		if *in == nil {
@@ -182,15 +163,6 @@ func (in *KubeletConfiguration) DeepCopyInto(out *KubeletConfiguration) {
 			*out = nil
 		} else {
 			*out = new(bool)
-			**out = **in
-		}
-	}
-	if in.CAdvisorPort != nil {
-		in, out := &in.CAdvisorPort, &out.CAdvisorPort
-		if *in == nil {
-			*out = nil
-		} else {
-			*out = new(int32)
 			**out = **in
 		}
 	}
@@ -250,6 +222,15 @@ func (in *KubeletConfiguration) DeepCopyInto(out *KubeletConfiguration) {
 	}
 	out.CPUManagerReconcilePeriod = in.CPUManagerReconcilePeriod
 	out.RuntimeRequestTimeout = in.RuntimeRequestTimeout
+	if in.PodPidsLimit != nil {
+		in, out := &in.PodPidsLimit, &out.PodPidsLimit
+		if *in == nil {
+			*out = nil
+		} else {
+			*out = new(int64)
+			**out = **in
+		}
+	}
 	if in.CPUCFSQuota != nil {
 		in, out := &in.CPUCFSQuota, &out.CPUCFSQuota
 		if *in == nil {
@@ -347,6 +328,15 @@ func (in *KubeletConfiguration) DeepCopyInto(out *KubeletConfiguration) {
 		*out = make(map[string]bool, len(*in))
 		for key, val := range *in {
 			(*out)[key] = val
+		}
+	}
+	if in.FailSwapOn != nil {
+		in, out := &in.FailSwapOn, &out.FailSwapOn
+		if *in == nil {
+			*out = nil
+		} else {
+			*out = new(bool)
+			**out = **in
 		}
 	}
 	if in.SystemReserved != nil {

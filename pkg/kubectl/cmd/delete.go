@@ -32,7 +32,6 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
-	"k8s.io/kubernetes/pkg/printers"
 )
 
 var (
@@ -114,20 +113,11 @@ type DeleteOptions struct {
 
 func NewCmdDelete(f cmdutil.Factory, out, errOut io.Writer) *cobra.Command {
 	options := &DeleteOptions{}
-
-	// retrieve a list of handled resources from printer as valid args
-	validArgs, argAliases := []string{}, []string{}
-	p, err := f.Printer(nil, printers.PrintOptions{
-		ColumnLabels: []string{},
-	})
-	cmdutil.CheckErr(err)
-	if p != nil {
-		validArgs = p.HandledResources()
-		argAliases = kubectl.ResourceAliases(validArgs)
-	}
+	validArgs := cmdutil.ValidArgList(f)
 
 	cmd := &cobra.Command{
-		Use:     "delete ([-f FILENAME] | TYPE [(NAME | -l label | --all)])",
+		Use: "delete ([-f FILENAME] | TYPE [(NAME | -l label | --all)])",
+		DisableFlagsInUseLine: true,
 		Short:   i18n.T("Delete resources by filenames, stdin, resources and names, or by resources and label selector"),
 		Long:    delete_long,
 		Example: delete_example,
@@ -145,12 +135,12 @@ func NewCmdDelete(f cmdutil.Factory, out, errOut io.Writer) *cobra.Command {
 		},
 		SuggestFor: []string{"rm"},
 		ValidArgs:  validArgs,
-		ArgAliases: argAliases,
+		ArgAliases: kubectl.ResourceAliases(validArgs),
 	}
 	usage := "containing the resource to delete."
 	cmdutil.AddFilenameOptionFlags(cmd, &options.FilenameOptions, usage)
 	cmd.Flags().StringVarP(&options.Selector, "selector", "l", "", "Selector (label query) to filter on, not including uninitialized ones.")
-	cmd.Flags().BoolVar(&options.DeleteAll, "all", false, "Delete all resources, including uninitialized ones, in the namespace of the specified resource types.")
+	cmd.Flags().BoolVar(&options.DeleteAll, "all", options.DeleteAll, "Delete all resources, including uninitialized ones, in the namespace of the specified resource types.")
 	cmd.Flags().BoolVar(&options.IgnoreNotFound, "ignore-not-found", false, "Treat \"resource not found\" as a successful delete. Defaults to \"true\" when --all is specified.")
 	cmd.Flags().BoolVar(&options.Cascade, "cascade", true, "If true, cascade the deletion of the resources managed by this resource (e.g. Pods created by a ReplicationController).  Default true.")
 	cmd.Flags().IntVar(&options.GracePeriod, "grace-period", -1, "Period of time in seconds given to the resource to terminate gracefully. Ignored if negative.")
@@ -197,6 +187,9 @@ func (o *DeleteOptions) Complete(f cmdutil.Factory, out, errOut io.Writer, args 
 }
 
 func (o *DeleteOptions) Validate(cmd *cobra.Command) error {
+	if o.DeleteAll && len(o.Selector) > 0 {
+		return fmt.Errorf("cannot set --all and --selector at the same time")
+	}
 	if o.DeleteAll {
 		f := cmd.Flags().Lookup("ignore-not-found")
 		// The flag should never be missing
@@ -269,7 +262,7 @@ func ReapResult(r *resource.Result, f cmdutil.Factory, out io.Writer, isDefaultD
 			}
 		}
 		if !quiet {
-			f.PrintSuccess(mapper, shortOutput, out, info.Mapping.Resource, info.Name, false, "deleted")
+			f.PrintSuccess(shortOutput, out, info.Mapping.Resource, info.Name, false, "deleted")
 		}
 		return nil
 	})
@@ -321,7 +314,7 @@ func deleteResource(info *resource.Info, f cmdutil.Factory, out io.Writer, short
 	if err := resource.NewHelper(info.Client, info.Mapping).DeleteWithOptions(info.Namespace, info.Name, deleteOptions); err != nil {
 		return cmdutil.AddSourceToErr("deleting", info.Source, err)
 	}
-	f.PrintSuccess(mapper, shortOutput, out, info.Mapping.Resource, info.Name, false, "deleted")
+	f.PrintSuccess(shortOutput, out, info.Mapping.Resource, info.Name, false, "deleted")
 	return nil
 }
 

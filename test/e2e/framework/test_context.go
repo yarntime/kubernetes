@@ -57,14 +57,16 @@ type TestContextType struct {
 	Prefix         string
 	MinStartupPods int
 	// Timeout for waiting for system pods to be running
-	SystemPodsStartupTimeout time.Duration
-	UpgradeTarget            string
-	EtcdUpgradeStorage       string
-	EtcdUpgradeVersion       string
-	UpgradeImage             string
-	GCEUpgradeScript         string
-	ContainerRuntime         string
-	ContainerRuntimeEndpoint string
+	SystemPodsStartupTimeout    time.Duration
+	UpgradeTarget               string
+	EtcdUpgradeStorage          string
+	EtcdUpgradeVersion          string
+	UpgradeImage                string
+	GCEUpgradeScript            string
+	ContainerRuntime            string
+	ContainerRuntimeEndpoint    string
+	ContainerRuntimeProcessName string
+	ContainerRuntimePidFile     string
 	// SystemdServices are comma separated list of systemd services the test framework
 	// will dump logs for.
 	SystemdServices          string
@@ -83,6 +85,7 @@ type TestContextType struct {
 	GatherLogsSizes                   bool
 	GatherMetricsAfterTest            string
 	GatherSuiteMetricsAfterTest       bool
+	AllowGatheringProfiles            bool
 	// If set to 'true' framework will gather ClusterAutoscaler metrics when gathering them for other components.
 	IncludeClusterAutoscalerMetrics bool
 	// Currently supported values are 'hr' for human-readable and 'json'. It's a comma separated list.
@@ -188,6 +191,7 @@ func RegisterCommonFlags() {
 	flag.BoolVar(&TestContext.GatherLogsSizes, "gather-logs-sizes", false, "If set to true framework will be monitoring logs sizes on all machines running e2e tests.")
 	flag.StringVar(&TestContext.GatherMetricsAfterTest, "gather-metrics-at-teardown", "false", "If set to 'true' framework will gather metrics from all components after each test. If set to 'master' only master component metrics would be gathered.")
 	flag.BoolVar(&TestContext.GatherSuiteMetricsAfterTest, "gather-suite-metrics-at-teardown", false, "If set to true framwork will gather metrics from all components after the whole test suite completes.")
+	flag.BoolVar(&TestContext.AllowGatheringProfiles, "allow-gathering-profiles", true, "If set to true framework will allow to gather CPU/memory allocation pprof profiles from the master.")
 	flag.BoolVar(&TestContext.IncludeClusterAutoscalerMetrics, "include-cluster-autoscaler", false, "If set to true, framework will include Cluster Autoscaler when gathering metrics.")
 	flag.StringVar(&TestContext.OutputPrintType, "output-print-type", "json", "Format in which summaries should be printed: 'hr' for human readable, 'json' for JSON ones.")
 	flag.BoolVar(&TestContext.DumpLogsOnFailure, "dump-logs-on-failure", true, "If set to true test will dump data about the namespace in which test was running.")
@@ -203,7 +207,9 @@ func RegisterCommonFlags() {
 	flag.StringVar(&TestContext.FeatureGates, "feature-gates", "", "A set of key=value pairs that describe feature gates for alpha/experimental features.")
 	flag.StringVar(&TestContext.Viper, "viper-config", "e2e", "The name of the viper config i.e. 'e2e' will read values from 'e2e.json' locally.  All e2e parameters are meant to be configurable by viper.")
 	flag.StringVar(&TestContext.ContainerRuntime, "container-runtime", "docker", "The container runtime of cluster VM instances (docker/rkt/remote).")
-	flag.StringVar(&TestContext.ContainerRuntimeEndpoint, "container-runtime-endpoint", "", "The container runtime endpoint of cluster VM instances.")
+	flag.StringVar(&TestContext.ContainerRuntimeEndpoint, "container-runtime-endpoint", "unix:///var/run/dockershim.sock", "The container runtime endpoint of cluster VM instances.")
+	flag.StringVar(&TestContext.ContainerRuntimeProcessName, "container-runtime-process-name", "dockerd", "The name of the container runtime process.")
+	flag.StringVar(&TestContext.ContainerRuntimePidFile, "container-runtime-pid-file", "/var/run/docker.pid", "The pid file of the container runtime.")
 	flag.StringVar(&TestContext.SystemdServices, "systemd-services", "docker", "The comma separated list of systemd services the framework will dump logs for.")
 	flag.StringVar(&TestContext.ImageServiceEndpoint, "image-service-endpoint", "", "The image service endpoint of cluster VM instances.")
 	flag.StringVar(&TestContext.DockershimCheckpointDir, "dockershim-checkpoint-dir", "/var/lib/dockershim/sandbox", "The directory for dockershim to store sandbox checkpoints.")
@@ -221,7 +227,7 @@ func RegisterClusterFlags() {
 	flag.StringVar(&TestContext.KubeVolumeDir, "volume-dir", "/var/lib/kubelet", "Path to the directory containing the kubelet volumes.")
 	flag.StringVar(&TestContext.CertDir, "cert-dir", "", "Path to the directory containing the certs. Default is empty, which doesn't use certs.")
 	flag.StringVar(&TestContext.RepoRoot, "repo-root", "../../", "Root directory of kubernetes repository, for finding test files.")
-	flag.StringVar(&TestContext.Provider, "provider", "", "The name of the Kubernetes provider (gce, gke, local, vagrant, etc.)")
+	flag.StringVar(&TestContext.Provider, "provider", "", "The name of the Kubernetes provider (gce, gke, local, etc.)")
 	flag.StringVar(&TestContext.KubectlPath, "kubectl-path", "kubectl", "The kubectl binary to use. For development, you might use 'cluster/kubectl.sh' here.")
 	flag.StringVar(&TestContext.OutputDir, "e2e-output-dir", "/tmp", "Output directory for interesting/useful test data, like performance data, benchmarks, and other metrics.")
 	flag.StringVar(&TestContext.Prefix, "prefix", "e2e", "A prefix to be added to cloud resources created during testing.")

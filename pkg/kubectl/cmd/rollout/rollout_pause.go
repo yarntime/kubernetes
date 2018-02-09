@@ -45,7 +45,7 @@ type PauseConfig struct {
 	Encoder runtime.Encoder
 	Infos   []*resource.Info
 
-	PrintSuccess func(mapper meta.RESTMapper, shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string)
+	PrintSuccess func(shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string)
 	Out          io.Writer
 }
 
@@ -71,7 +71,8 @@ func NewCmdRolloutPause(f cmdutil.Factory, out io.Writer) *cobra.Command {
 	argAliases := kubectl.ResourceAliases(validArgs)
 
 	cmd := &cobra.Command{
-		Use:     "pause RESOURCE",
+		Use: "pause RESOURCE",
+		DisableFlagsInUseLine: true,
 		Short:   i18n.T("Mark the provided resource as paused"),
 		Long:    pause_long,
 		Example: pause_example,
@@ -144,7 +145,7 @@ func (o PauseConfig) RunPause() error {
 		}
 
 		if string(patch.Patch) == "{}" || len(patch.Patch) == 0 {
-			o.PrintSuccess(o.Mapper, false, o.Out, info.Mapping.Resource, info.Name, false, "already paused")
+			o.PrintSuccess(false, o.Out, info.Mapping.Resource, info.Name, false, "already paused")
 			continue
 		}
 
@@ -155,7 +156,7 @@ func (o PauseConfig) RunPause() error {
 		}
 
 		info.Refresh(obj, true)
-		o.PrintSuccess(o.Mapper, false, o.Out, info.Mapping.Resource, info.Name, false, "paused")
+		o.PrintSuccess(false, o.Out, info.Mapping.Resource, info.Name, false, "paused")
 	}
 
 	return utilerrors.NewAggregate(allErrs)
