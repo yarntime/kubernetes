@@ -270,7 +270,7 @@ def password_changed():
     elif password == "":
         # Password not initialised
         password = token_generator()
-    setup_basic_auth(password, "admin", "admin")
+    setup_basic_auth(password, "admin", "admin", "system:masters")
     set_state('reconfigure.authentication.setup')
     remove_state('authentication.setup')
     set_state('client.password.initialised')
@@ -463,7 +463,7 @@ def start_master(etcd):
 def etcd_data_change(etcd):
     ''' Etcd scale events block master reconfiguration due to the
         kubernetes-master.components.started state. We need a way to
-        handle these events consistenly only when the number of etcd
+        handle these events consistently only when the number of etcd
         units has actually changed '''
 
     # key off of the connection string
@@ -1076,6 +1076,7 @@ def configure_kubernetes_service(service, base_args, extra_args_key):
     args = {}
     for arg in prev_args:
         # remove previous args by setting to null
+        # note this is so we remove them from the snap's config
         args[arg] = 'null'
     for k, v in base_args.items():
         args[k] = v
@@ -1099,6 +1100,14 @@ def configure_apiserver(etcd_connection_string, leader_etcd_version):
     server_cert_path = layer_options.get('server_certificate_path')
     server_key_path = layer_options.get('server_key_path')
 
+    # at one point in time, this code would set ca-client-cert,
+    # but this was removed. This was before configure_kubernetes_service
+    # kept track of old arguments and removed them, so client-ca-cert
+    # was able to hang around forever stored in the snap configuration.
+    # This removes that stale configuration from the snap if it still
+    # exists.
+    api_opts['client-ca-file'] = 'null'
+    
     if is_privileged():
         api_opts['allow-privileged'] = 'true'
         set_state('kubernetes-master.privileged')
@@ -1135,7 +1144,7 @@ def configure_apiserver(etcd_connection_string, leader_etcd_version):
     api_opts['etcd-certfile'] = etcd_cert
     api_opts['etcd-servers'] = etcd_connection_string
 
-    admission_control = [
+    admission_control_pre_1_9 = [
         'Initializers',
         'NamespaceLifecycle',
         'LimitRanger',
@@ -1144,19 +1153,35 @@ def configure_apiserver(etcd_connection_string, leader_etcd_version):
         'DefaultTolerationSeconds'
     ]
 
+    admission_control = [
+        'NamespaceLifecycle',
+        'LimitRanger',
+        'ServiceAccount',
+        'PersistentVolumeLabel',
+        'DefaultStorageClass',
+        'DefaultTolerationSeconds',
+        'MutatingAdmissionWebhook',
+        'ValidatingAdmissionWebhook',
+        'ResourceQuota'
+    ]
+
     auth_mode = hookenv.config('authorization-mode')
     if 'Node' in auth_mode:
         admission_control.append('NodeRestriction')
 
     api_opts['authorization-mode'] = auth_mode
 
-    if get_version('kube-apiserver') < (1, 6):
+    kube_version = get_version('kube-apiserver')
+    if kube_version < (1, 6):
         hookenv.log('Removing DefaultTolerationSeconds from admission-control')
-        admission_control.remove('DefaultTolerationSeconds')
-    if get_version('kube-apiserver') < (1, 7):
+        admission_control_pre_1_9.remove('DefaultTolerationSeconds')
+    if kube_version < (1, 7):
         hookenv.log('Removing Initializers from admission-control')
-        admission_control.remove('Initializers')
-    api_opts['admission-control'] = ','.join(admission_control)
+        admission_control_pre_1_9.remove('Initializers')
+    if kube_version < (1, 9):
+        api_opts['admission-control'] = ','.join(admission_control_pre_1_9)
+    else:
+        api_opts['admission-control'] = ','.join(admission_control)
 
     configure_kubernetes_service('kube-apiserver', api_opts, 'api-extra-args')
     restart_apiserver()
@@ -1169,7 +1194,7 @@ def configure_controller_manager():
     layer_options = layer.options('tls-client')
     ca_cert_path = layer_options.get('ca_certificate_path')
 
-    # Default to 3 minute resync. TODO: Make this configureable?
+    # Default to 3 minute resync. TODO: Make this configurable?
     controller_opts['min-resync-period'] = '3m'
     controller_opts['v'] = '2'
     controller_opts['root-ca-file'] = ca_cert_path

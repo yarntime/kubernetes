@@ -1,10 +1,4 @@
-package(default_visibility = ["//visibility:public"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_library",
-    "go_test",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
@@ -83,6 +77,7 @@ go_library(
         "//conditions:default": [],
     }),
     importpath = "k8s.io/kubernetes/pkg/kubelet/dockershim",
+    visibility = ["//visibility:public"],
     deps = [
         "//pkg/credentialprovider:go_default_library",
         "//pkg/kubelet/apis/cri/runtime/v1alpha2:go_default_library",
@@ -117,7 +112,6 @@ go_library(
         "//vendor/github.com/docker/docker/pkg/jsonmessage:go_default_library",
         "//vendor/github.com/docker/go-connections/nat:go_default_library",
         "//vendor/github.com/golang/glog:go_default_library",
-        "//vendor/golang.org/x/net/context:go_default_library",
         "//vendor/k8s.io/api/core/v1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/types:go_default_library",
@@ -126,8 +120,8 @@ go_library(
         "//vendor/k8s.io/utils/exec:go_default_library",
     ] + select({
         "@io_bazel_rules_go//go/platform:windows": [
-            "//pkg/features:go_default_library",
-            "//vendor/k8s.io/apiserver/pkg/util/feature:go_default_library",
+            "//pkg/kubelet/apis:go_default_library",
+            "//pkg/kubelet/winstats:go_default_library",
         ],
         "//conditions:default": [],
     }),
@@ -152,10 +146,7 @@ go_test(
         ],
         "//conditions:default": [],
     }),
-    data = [
-    ],
     embed = [":go_default_library"],
-    importpath = "k8s.io/kubernetes/pkg/kubelet/dockershim",
     deps = [
         "//pkg/kubelet/apis/cri/runtime/v1alpha2:go_default_library",
         "//pkg/kubelet/container:go_default_library",
@@ -175,7 +166,6 @@ go_test(
         "//vendor/github.com/golang/mock/gomock:go_default_library",
         "//vendor/github.com/stretchr/testify/assert:go_default_library",
         "//vendor/github.com/stretchr/testify/require:go_default_library",
-        "//vendor/golang.org/x/net/context:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/util/clock:go_default_library",
     ],
 )
@@ -198,4 +188,5 @@ filegroup(
         "//pkg/kubelet/dockershim/testing:all-srcs",
     ],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

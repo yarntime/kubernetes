@@ -166,11 +166,19 @@ type resettableRESTMapper interface {
 // Note that discoveryClient should NOT be shared with gc.restMapper, otherwise
 // the mapper's underlying discovery client will be unnecessarily reset during
 // the course of detecting new resources.
-func (gc *GarbageCollector) Sync(discoveryClient discovery.DiscoveryInterface, period time.Duration, stopCh <-chan struct{}) {
+func (gc *GarbageCollector) Sync(discoveryClient discovery.ServerResourcesInterface, period time.Duration, stopCh <-chan struct{}) {
 	oldResources := make(map[schema.GroupVersionResource]struct{})
 	wait.Until(func() {
 		// Get the current resource list from discovery.
 		newResources := GetDeletableResources(discoveryClient)
+
+		// This can occur if there is an internal error in GetDeletableResources.
+		// If the gc attempts to sync with 0 resources it will block forever.
+		// TODO: Implement a more complete solution for the garbage collector hanging.
+		if len(newResources) == 0 {
+			glog.V(5).Infof("no resources reported by discovery, skipping garbage collector sync")
+			return
+		}
 
 		// Decide whether discovery has reported a change.
 		if reflect.DeepEqual(oldResources, newResources) {
@@ -197,7 +205,7 @@ func (gc *GarbageCollector) Sync(discoveryClient discovery.DiscoveryInterface, p
 		// discovered by restMapper during the call to Reset, since they are
 		// distinct discovery clients invalidated at different times. For example,
 		// newResources may contain resources not returned in the restMapper's
-		// discovery call if the resources appeared inbetween the calls. In that
+		// discovery call if the resources appeared in-between the calls. In that
 		// case, the restMapper will fail to map some of newResources until the next
 		// sync period.
 		if err := gc.resyncMonitors(newResources); err != nil {
@@ -214,7 +222,7 @@ func (gc *GarbageCollector) Sync(discoveryClient discovery.DiscoveryInterface, p
 
 		// Finally, keep track of our new state. Do this after all preceding steps
 		// have succeeded to ensure we'll retry on subsequent syncs if an error
-		// occured.
+		// occurred.
 		oldResources = newResources
 		glog.V(2).Infof("synced garbage collector")
 	}, period, stopCh)

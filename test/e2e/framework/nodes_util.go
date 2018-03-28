@@ -67,24 +67,28 @@ func etcdUpgradeGCE(target_storage, target_version string) error {
 		os.Environ(),
 		"TEST_ETCD_VERSION="+target_version,
 		"STORAGE_BACKEND="+target_storage,
-		"TEST_ETCD_IMAGE=3.2.14")
+		"TEST_ETCD_IMAGE=3.1.12")
 
 	_, _, err := RunCmdEnv(env, gceUpgradeScript(), "-l", "-M")
 	return err
 }
 
 func ingressUpgradeGCE(isUpgrade bool) error {
-	// Flip glbc image from latest release image to HEAD to simulate an upgrade.
-	// Flip from HEAD to latest release image to simulate a downgrade.
-	// Kubelet should restart glbc automatically.
 	var command string
 	if isUpgrade {
-		// Upgrade
-		command = "sudo sed -i -re 's/(image:)(.*)/\\1 gcr.io\\/k8s-ingress-image-push\\/ingress-gce-e2e-glbc-amd64:latest/' /etc/kubernetes/manifests/glbc.manifest"
+		// User specified image to upgrade to.
+		targetImage := TestContext.IngressUpgradeImage
+		if targetImage != "" {
+			command = fmt.Sprintf("sudo sed -i -re 's|(image:)(.*)|\\1 %s|' /etc/kubernetes/manifests/glbc.manifest", targetImage)
+		} else {
+			// Upgrade to latest HEAD image.
+			command = "sudo sed -i -re 's/(image:)(.*)/\\1 gcr.io\\/k8s-ingress-image-push\\/ingress-gce-e2e-glbc-amd64:latest/' /etc/kubernetes/manifests/glbc.manifest"
+		}
 	} else {
-		// Downgrade
-		command = "sudo sed -i -re 's/(image:)(.*)/\\1 k8s.gcr.io\\/glbc:0.9.7/' /etc/kubernetes/manifests/glbc.manifest"
+		// Downgrade to latest release image.
+		command = "sudo sed -i -re 's/(image:)(.*)/\\1 k8s.gcr.io\\/ingress-gce-glbc-amd64:1.0.0/' /etc/kubernetes/manifests/glbc.manifest"
 	}
+	// Kubelet should restart glbc automatically.
 	sshResult, err := NodeExec(GetMasterHost(), command)
 	LogSSHResult(sshResult)
 	return err
@@ -103,7 +107,7 @@ func masterUpgradeGCE(rawV string, enableKubeProxyDaemonSet bool) error {
 		env = append(env,
 			"TEST_ETCD_VERSION="+TestContext.EtcdUpgradeVersion,
 			"STORAGE_BACKEND="+TestContext.EtcdUpgradeStorage,
-			"TEST_ETCD_IMAGE=3.2.14")
+			"TEST_ETCD_IMAGE=3.1.12")
 	} else {
 		// In e2e tests, we skip the confirmation prompt about
 		// implicit etcd upgrades to simulate the user entering "y".
@@ -115,17 +119,35 @@ func masterUpgradeGCE(rawV string, enableKubeProxyDaemonSet bool) error {
 	return err
 }
 
+func locationParamGKE() string {
+	if TestContext.CloudConfig.Zone != "" {
+		return fmt.Sprintf("--zone=%s", TestContext.CloudConfig.Zone)
+	}
+	return fmt.Sprintf("--region=%s", TestContext.CloudConfig.Region)
+}
+
+func appendContainerCommandGroupIfNeeded(args []string) []string {
+	if TestContext.CloudConfig.Region != "" {
+		// TODO(wojtek-t): Get rid of it once Regional Clusters go to GA.
+		return append([]string{"beta"}, args...)
+	}
+	return args
+}
+
 func masterUpgradeGKE(v string) error {
 	Logf("Upgrading master to %q", v)
-	_, _, err := RunCmd("gcloud", "container",
+	args := []string{
+		"container",
 		"clusters",
 		fmt.Sprintf("--project=%s", TestContext.CloudConfig.ProjectID),
-		fmt.Sprintf("--zone=%s", TestContext.CloudConfig.Zone),
+		locationParamGKE(),
 		"upgrade",
 		TestContext.CloudConfig.Cluster,
 		"--master",
 		fmt.Sprintf("--cluster-version=%s", v),
-		"--quiet")
+		"--quiet",
+	}
+	_, _, err := RunCmd("gcloud", appendContainerCommandGroupIfNeeded(args)...)
 	if err != nil {
 		return err
 	}
@@ -231,7 +253,7 @@ func nodeUpgradeGKE(v string, img string) error {
 		"container",
 		"clusters",
 		fmt.Sprintf("--project=%s", TestContext.CloudConfig.ProjectID),
-		fmt.Sprintf("--zone=%s", TestContext.CloudConfig.Zone),
+		locationParamGKE(),
 		"upgrade",
 		TestContext.CloudConfig.Cluster,
 		fmt.Sprintf("--cluster-version=%s", v),
@@ -240,7 +262,7 @@ func nodeUpgradeGKE(v string, img string) error {
 	if len(img) > 0 {
 		args = append(args, fmt.Sprintf("--image-type=%s", img))
 	}
-	_, _, err := RunCmd("gcloud", args...)
+	_, _, err := RunCmd("gcloud", appendContainerCommandGroupIfNeeded(args)...)
 
 	if err != nil {
 		return err
@@ -295,8 +317,7 @@ func CheckNodesReady(c clientset.Interface, nt time.Duration, expect int) ([]str
 		go func() { result <- WaitForNodeToBeReady(c, n, timeout) }()
 	}
 	failed := false
-	// TODO(mbforbes): Change to `for range` syntax once we support only Go
-	// >= 1.4.
+
 	for i := range nodeList.Items {
 		_ = i
 		if !<-result {

@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1alpha"
+	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
 )
 
 var (
@@ -47,11 +47,13 @@ func TestRun(t *testing.T) {
 	devs := []*pluginapi.Device{
 		{ID: "ADeviceId", Health: pluginapi.Healthy},
 		{ID: "AnotherDeviceId", Health: pluginapi.Healthy},
+		{ID: "AThirdDeviceId", Health: pluginapi.Unhealthy},
 	}
 
 	updated := []*pluginapi.Device{
 		{ID: "ADeviceId", Health: pluginapi.Unhealthy},
 		{ID: "AThirdDeviceId", Health: pluginapi.Healthy},
+		{ID: "AFourthDeviceId", Health: pluginapi.Healthy},
 	}
 
 	callbackCount := 0
@@ -65,7 +67,7 @@ func TestRun(t *testing.T) {
 
 		// Check plugin registration
 		if callbackCount == 0 {
-			require.Len(t, a, 2)
+			require.Len(t, a, 3)
 			require.Len(t, u, 0)
 			require.Len(t, r, 0)
 		}
@@ -73,12 +75,14 @@ func TestRun(t *testing.T) {
 		// Check plugin update
 		if callbackCount == 1 {
 			require.Len(t, a, 1)
-			require.Len(t, u, 1)
+			require.Len(t, u, 2)
 			require.Len(t, r, 1)
 
-			require.Equal(t, a[0].ID, updated[1].ID)
+			require.Equal(t, a[0].ID, updated[2].ID)
 			require.Equal(t, u[0].ID, updated[0].ID)
 			require.Equal(t, u[0].Health, updated[0].Health)
+			require.Equal(t, u[1].ID, updated[1].ID)
+			require.Equal(t, u[1].Health, updated[1].Health)
 			require.Equal(t, r[0].ID, devs[1].ID)
 		}
 
@@ -101,7 +105,7 @@ func TestRun(t *testing.T) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	require.Len(t, e.devices, 2)
+	require.Len(t, e.devices, 3)
 	for _, dref := range updated {
 		d, ok := e.devices[dref.ID]
 
@@ -126,23 +130,26 @@ func TestAllocate(t *testing.T) {
 	defer ecleanup(t, p, e)
 
 	resp := new(pluginapi.AllocateResponse)
-	resp.Devices = append(resp.Devices, &pluginapi.DeviceSpec{
+	contResp := new(pluginapi.ContainerAllocateResponse)
+	contResp.Devices = append(contResp.Devices, &pluginapi.DeviceSpec{
 		ContainerPath: "/dev/aaa",
 		HostPath:      "/dev/aaa",
 		Permissions:   "mrw",
 	})
 
-	resp.Devices = append(resp.Devices, &pluginapi.DeviceSpec{
+	contResp.Devices = append(contResp.Devices, &pluginapi.DeviceSpec{
 		ContainerPath: "/dev/bbb",
 		HostPath:      "/dev/bbb",
 		Permissions:   "mrw",
 	})
 
-	resp.Mounts = append(resp.Mounts, &pluginapi.Mount{
+	contResp.Mounts = append(contResp.Mounts, &pluginapi.Mount{
 		ContainerPath: "/container_dir1/file1",
 		HostPath:      "host_dir1/file1",
 		ReadOnly:      true,
 	})
+
+	resp.ContainerResponses = append(resp.ContainerResponses, contResp)
 
 	p.SetAllocFunc(func(r *pluginapi.AllocateRequest, devs map[string]pluginapi.Device) (*pluginapi.AllocateResponse, error) {
 		return resp, nil

@@ -19,9 +19,7 @@ package printers
 import (
 	"fmt"
 	"io/ioutil"
-	"os"
 
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -29,24 +27,35 @@ import (
 // a printer or an error. The printer is agnostic to schema versions, so you must
 // send arguments to PrintObj in the version you wish them to be shown using a
 // VersionedPrinter (typically when generic is true).
-func GetStandardPrinter(mapper meta.RESTMapper, typer runtime.ObjectTyper, encoder runtime.Encoder, decoders []runtime.Decoder, options PrintOptions) (ResourcePrinter, error) {
+func GetStandardPrinter(typer runtime.ObjectTyper, encoder runtime.Encoder, decoders []runtime.Decoder, options PrintOptions) (ResourcePrinter, error) {
 	format, formatArgument, allowMissingTemplateKeys := options.OutputFormatType, options.OutputFormatArgument, options.AllowMissingKeys
 
 	var printer ResourcePrinter
 	switch format {
 
-	case "json":
-		printer = &JSONPrinter{}
+	case "json", "yaml":
+		jsonYamlFlags := NewJSONYamlPrintFlags()
+		p, matched, err := jsonYamlFlags.ToPrinter(format)
+		if !matched {
+			return nil, fmt.Errorf("unable to match a printer to handle current print options")
+		}
+		if err != nil {
+			return nil, err
+		}
 
-	case "yaml":
-		printer = &YAMLPrinter{}
+		printer = p
 
 	case "name":
-		printer = &NamePrinter{
-			Typer:    typer,
-			Decoders: decoders,
-			Mapper:   mapper,
+		nameFlags := NewNamePrintFlags("", false)
+		namePrinter, matched, err := nameFlags.ToPrinter(format)
+		if !matched {
+			return nil, fmt.Errorf("unable to match a name printer to handle current print options")
 		}
+		if err != nil {
+			return nil, err
+		}
+
+		printer = namePrinter
 
 	case "template", "go-template":
 		if len(formatArgument) == 0 {
@@ -100,21 +109,20 @@ func GetStandardPrinter(mapper meta.RESTMapper, typer runtime.ObjectTyper, encod
 		jsonpathPrinter.AllowMissingKeys(allowMissingTemplateKeys)
 		printer = jsonpathPrinter
 
-	case "custom-columns":
-		var err error
-		if printer, err = NewCustomColumnsPrinterFromSpec(formatArgument, decoders[0], options.NoHeaders); err != nil {
+	case "custom-columns", "custom-columns-file":
+		customColumnsFlags := &CustomColumnsPrintFlags{
+			NoHeaders:        options.NoHeaders,
+			TemplateArgument: formatArgument,
+		}
+		customColumnsPrinter, matched, err := customColumnsFlags.ToPrinter(format)
+		if !matched {
+			return nil, fmt.Errorf("unable to match a name printer to handle current print options")
+		}
+		if err != nil {
 			return nil, err
 		}
 
-	case "custom-columns-file":
-		file, err := os.Open(formatArgument)
-		if err != nil {
-			return nil, fmt.Errorf("error reading template %s, %v\n", formatArgument, err)
-		}
-		defer file.Close()
-		if printer, err = NewCustomColumnsPrinterFromTemplate(file, decoders[0]); err != nil {
-			return nil, err
-		}
+		printer = customColumnsPrinter
 
 	case "wide":
 		fallthrough

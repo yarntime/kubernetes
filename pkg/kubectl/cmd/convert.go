@@ -62,7 +62,7 @@ var (
 // NewCmdConvert creates a command object for the generic "convert" action, which
 // translates the config file into a given version.
 func NewCmdConvert(f cmdutil.Factory, out io.Writer) *cobra.Command {
-	options := &ConvertOptions{}
+	options := NewConvertOptions()
 
 	cmd := &cobra.Command{
 		Use: "convert -f FILENAME",
@@ -83,7 +83,7 @@ func NewCmdConvert(f cmdutil.Factory, out io.Writer) *cobra.Command {
 	cmd.MarkFlagRequired("filename")
 	cmdutil.AddValidateFlags(cmd)
 	cmdutil.AddNonDeprecatedPrinterFlags(cmd)
-	cmd.Flags().BoolVar(&options.local, "local", true, "If true, convert will NOT try to contact api-server but run locally.")
+	cmd.Flags().BoolVar(&options.local, "local", options.local, "If true, convert will NOT try to contact api-server but run locally.")
 	cmd.Flags().String("output-version", "", i18n.T("Output the formatted object with the given group version (for ex: 'extensions/v1beta1').)"))
 	cmdutil.AddInclude3rdPartyFlags(cmd)
 	return cmd
@@ -96,11 +96,14 @@ type ConvertOptions struct {
 	builder *resource.Builder
 	local   bool
 
-	encoder runtime.Encoder
 	out     io.Writer
 	printer printers.ResourcePrinter
 
 	specifiedOutputVersion schema.GroupVersion
+}
+
+func NewConvertOptions() *ConvertOptions {
+	return &ConvertOptions{local: true}
 }
 
 // outputVersion returns the preferred output version for generic content (JSON, YAML, or templates)
@@ -155,8 +158,7 @@ func (o *ConvertOptions) Complete(f cmdutil.Factory, out io.Writer, cmd *cobra.C
 		// TODO: once printing is abstracted, this should be handled at flag declaration time
 		cmd.Flags().Set("output", outputFormat)
 	}
-	o.encoder = f.JSONEncoder()
-	o.printer, err = f.PrinterForOptions(cmdutil.ExtractCmdPrintOptions(cmd, false))
+	o.printer, err = cmdutil.PrinterForOptions(cmdutil.ExtractCmdPrintOptions(cmd, false))
 	return err
 }
 
@@ -178,21 +180,17 @@ func (o *ConvertOptions) RunConvert() error {
 		return fmt.Errorf("no objects passed to convert")
 	}
 
-	objects, err := asVersionedObject(infos, !singleItemImplied, o.specifiedOutputVersion, o.encoder)
+	objects, err := asVersionedObject(infos, !singleItemImplied, o.specifiedOutputVersion, cmdutil.InternalVersionJSONEncoder())
 	if err != nil {
 		return err
 	}
 
 	if meta.IsListType(objects) {
-		_, items, err := cmdutil.FilterResourceList(objects, nil, nil)
+		obj, err := objectListToVersionedObject([]runtime.Object{objects}, o.specifiedOutputVersion)
 		if err != nil {
 			return err
 		}
-		filteredObj, err := objectListToVersionedObject(items, o.specifiedOutputVersion)
-		if err != nil {
-			return err
-		}
-		return o.printer.PrintObj(filteredObj, o.out)
+		return o.printer.PrintObj(obj, o.out)
 	}
 
 	return o.printer.PrintObj(objects, o.out)

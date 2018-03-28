@@ -355,6 +355,11 @@ func hasCondition(conditions []metav1beta1.TableRowCondition, t metav1beta1.RowC
 // DecorateTable if you receive a table from a remote server before calling PrintTable.
 func PrintTable(table *metav1beta1.Table, output io.Writer, options PrintOptions) error {
 	if !options.NoHeaders {
+		// avoid printing headers if we have no rows to display
+		if len(table.Rows) == 0 {
+			return nil
+		}
+
 		first := true
 		for _, column := range table.ColumnDefinitions {
 			if !options.Wide && column.Priority != 0 {
@@ -370,9 +375,6 @@ func PrintTable(table *metav1beta1.Table, output io.Writer, options PrintOptions
 		fmt.Fprintln(output)
 	}
 	for _, row := range table.Rows {
-		if !options.ShowAll && hasCondition(row.Conditions, metav1beta1.RowCompleted) {
-			continue
-		}
 		first := true
 		for i, cell := range row.Cells {
 			column := table.ColumnDefinitions[i]
@@ -413,7 +415,6 @@ func DecorateTable(table *metav1beta1.Table, options PrintOptions) error {
 		for i := range columns {
 			if columns[i].Format == "name" && columns[i].Type == "string" {
 				nameColumn = i
-				fmt.Printf("found name column: %d\n", i)
 				break
 			}
 		}

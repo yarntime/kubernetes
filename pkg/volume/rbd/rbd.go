@@ -35,7 +35,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 	volutil "k8s.io/kubernetes/pkg/volume/util"
-	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
+	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
 )
 
 var (
@@ -101,11 +101,7 @@ func (plugin *rbdPlugin) GetVolumeName(spec *volume.Spec) (string, error) {
 }
 
 func (plugin *rbdPlugin) CanSupport(spec *volume.Spec) bool {
-	if (spec.Volume != nil && spec.Volume.RBD == nil) || (spec.PersistentVolume != nil && spec.PersistentVolume.Spec.RBD == nil) {
-		return false
-	}
-
-	return true
+	return (spec.Volume != nil && spec.Volume.RBD != nil) || (spec.PersistentVolume != nil && spec.PersistentVolume.Spec.RBD != nil)
 }
 
 func (plugin *rbdPlugin) RequiresRemount() bool {
@@ -331,7 +327,7 @@ func (plugin *rbdPlugin) newMounterInternal(spec *volume.Spec, podUID types.UID,
 		Keyring:      keyring,
 		Secret:       secret,
 		fsType:       fstype,
-		mountOptions: volume.MountOptionFromSpec(spec),
+		mountOptions: volutil.MountOptionFromSpec(spec),
 	}, nil
 }
 
@@ -393,7 +389,7 @@ func (plugin *rbdPlugin) ConstructVolumeSpec(volumeName, mountPath string) (*vol
 
 func (plugin *rbdPlugin) ConstructBlockVolumeSpec(podUID types.UID, volumeName, mapPath string) (*volume.Spec, error) {
 	pluginDir := plugin.host.GetVolumeDevicePluginDir(rbdPluginName)
-	blkutil := volutil.NewBlockVolumePathHandler()
+	blkutil := volumepathhandler.NewBlockVolumePathHandler()
 
 	globalMapPathUUID, err := blkutil.FindGlobalMapPathUUIDFromPod(pluginDir, mapPath, podUID)
 	if err != nil {
@@ -402,13 +398,13 @@ func (plugin *rbdPlugin) ConstructBlockVolumeSpec(podUID types.UID, volumeName, 
 	glog.V(5).Infof("globalMapPathUUID: %v, err: %v", globalMapPathUUID, err)
 	globalMapPath := filepath.Dir(globalMapPathUUID)
 	if len(globalMapPath) == 1 {
-		return nil, fmt.Errorf("failed to retreive volume plugin information from globalMapPathUUID: %v", globalMapPathUUID)
+		return nil, fmt.Errorf("failed to retrieve volume plugin information from globalMapPathUUID: %v", globalMapPathUUID)
 	}
 	return getVolumeSpecFromGlobalMapPath(globalMapPath)
 }
 
 func getVolumeSpecFromGlobalMapPath(globalMapPath string) (*volume.Spec, error) {
-	// Retreive volume spec information from globalMapPath
+	// Retrieve volume spec information from globalMapPath
 	// globalMapPath example:
 	//   plugins/kubernetes.io/{PluginName}/{DefaultKubeletVolumeDevicesDirName}/{volumePluginDependentPath}
 	pool, image, err := getPoolAndImageFromMapPath(globalMapPath)
@@ -573,7 +569,7 @@ type rbdVolumeProvisioner struct {
 var _ volume.Provisioner = &rbdVolumeProvisioner{}
 
 func (r *rbdVolumeProvisioner) Provision() (*v1.PersistentVolume, error) {
-	if !volume.AccessModesContainedInAll(r.plugin.GetAccessModes(), r.options.PVC.Spec.AccessModes) {
+	if !volutil.AccessModesContainedInAll(r.plugin.GetAccessModes(), r.options.PVC.Spec.AccessModes) {
 		return nil, fmt.Errorf("invalid AccessModes %v: only AccessModes %v are supported", r.options.PVC.Spec.AccessModes, r.plugin.GetAccessModes())
 	}
 
@@ -594,9 +590,7 @@ func (r *rbdVolumeProvisioner) Provision() (*v1.PersistentVolume, error) {
 		switch dstrings.ToLower(k) {
 		case "monitors":
 			arr := dstrings.Split(v, ",")
-			for _, m := range arr {
-				r.Mon = append(r.Mon, m)
-			}
+			r.Mon = append(r.Mon, arr...)
 		case "adminid":
 			r.adminId = v
 		case "adminsecretname":
@@ -669,7 +663,7 @@ func (r *rbdVolumeProvisioner) Provision() (*v1.PersistentVolume, error) {
 	}
 	glog.Infof("successfully created rbd image %q", image)
 	pv := new(v1.PersistentVolume)
-	metav1.SetMetaDataAnnotation(&pv.ObjectMeta, volumehelper.VolumeDynamicallyCreatedByKey, "rbd-dynamic-provisioner")
+	metav1.SetMetaDataAnnotation(&pv.ObjectMeta, volutil.VolumeDynamicallyCreatedByKey, "rbd-dynamic-provisioner")
 
 	if secretName != "" {
 		rbd.SecretRef = new(v1.SecretReference)
@@ -745,7 +739,7 @@ func newRBD(podUID types.UID, volName string, image string, pool string, readOnl
 		Pool:            pool,
 		ReadOnly:        readOnly,
 		plugin:          plugin,
-		mounter:         volumehelper.NewSafeFormatAndMountFromHost(plugin.GetPluginName(), plugin.host),
+		mounter:         volutil.NewSafeFormatAndMountFromHost(plugin.GetPluginName(), plugin.host),
 		exec:            plugin.host.GetExec(plugin.GetPluginName()),
 		manager:         manager,
 		MetricsProvider: volume.NewMetricsStatFS(getPath(podUID, volName, plugin.host)),
@@ -941,13 +935,13 @@ func (rbd *rbdDiskUnmapper) TearDownDevice(mapPath, _ string) error {
 	// GenerateUnmapDeviceFunc() in operation_generator. As a result, these plugins fail to get
 	// and remove loopback device then it will be remained on kubelet node. To avoid the problem,
 	// local attach plugins needs to remove loopback device during TearDownDevice().
-	blkUtil := volutil.NewBlockVolumePathHandler()
-	loop, err := volutil.BlockVolumePathHandler.GetLoopDevice(blkUtil, device)
+	blkUtil := volumepathhandler.NewBlockVolumePathHandler()
+	loop, err := volumepathhandler.BlockVolumePathHandler.GetLoopDevice(blkUtil, device)
 	if err != nil {
 		return fmt.Errorf("rbd: failed to get loopback for device: %v, err: %v", device, err)
 	}
 	// Remove loop device before detaching volume since volume detach operation gets busy if volume is opened by loopback.
-	err = volutil.BlockVolumePathHandler.RemoveLoopDevice(blkUtil, loop)
+	err = volumepathhandler.BlockVolumePathHandler.RemoveLoopDevice(blkUtil, loop)
 	if err != nil {
 		return fmt.Errorf("rbd: failed to remove loopback :%v, err: %v", loop, err)
 	}

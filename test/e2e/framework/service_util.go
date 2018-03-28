@@ -47,6 +47,7 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	scaleclient "k8s.io/client-go/scale"
 )
 
 const (
@@ -209,6 +210,20 @@ func (j *ServiceTestJig) CreateExternalNameServiceOrFail(namespace string, tweak
 		Failf("Failed to create ExternalName Service %q: %v", svc.Name, err)
 	}
 	return result
+}
+
+// CreateServiceWithServicePort creates a new Service with ServicePort.
+func (j *ServiceTestJig) CreateServiceWithServicePort(labels map[string]string, namespace string, ports []v1.ServicePort) (*v1.Service, error) {
+	service := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: j.Name,
+		},
+		Spec: v1.ServiceSpec{
+			Selector: labels,
+			Ports:    ports,
+		},
+	}
+	return j.Client.CoreV1().Services(namespace).Create(service)
 }
 
 func (j *ServiceTestJig) ChangeServiceType(namespace, name string, newType v1.ServiceType, timeout time.Duration) {
@@ -1255,8 +1270,8 @@ func StartServeHostnameService(c clientset.Interface, internalClient internalcli
 	return podNames, serviceIP, nil
 }
 
-func StopServeHostnameService(clientset clientset.Interface, internalClientset internalclientset.Interface, ns, name string) error {
-	if err := DeleteRCAndPods(clientset, internalClientset, ns, name); err != nil {
+func StopServeHostnameService(clientset clientset.Interface, internalClientset internalclientset.Interface, scaleClient scaleclient.ScalesGetter, ns, name string) error {
+	if err := DeleteRCAndPods(clientset, internalClientset, scaleClient, ns, name); err != nil {
 		return err
 	}
 	if err := clientset.CoreV1().Services(ns).Delete(name, nil); err != nil {
@@ -1368,17 +1383,17 @@ func VerifyServeHostnameServiceDown(c clientset.Interface, host string, serviceI
 	return fmt.Errorf("waiting for service to be down timed out")
 }
 
-func CleanupServiceResources(c clientset.Interface, loadBalancerName, zone string) {
+func CleanupServiceResources(c clientset.Interface, loadBalancerName, region, zone string) {
 	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
-		CleanupServiceGCEResources(c, loadBalancerName, zone)
+		CleanupServiceGCEResources(c, loadBalancerName, region, zone)
 	}
 
 	// TODO: we need to add this function with other cloud providers, if there is a need.
 }
 
-func CleanupServiceGCEResources(c clientset.Interface, loadBalancerName, zone string) {
+func CleanupServiceGCEResources(c clientset.Interface, loadBalancerName, region, zone string) {
 	if pollErr := wait.Poll(5*time.Second, LoadBalancerCleanupTimeout, func() (bool, error) {
-		if err := CleanupGCEResources(c, loadBalancerName, zone); err != nil {
+		if err := CleanupGCEResources(c, loadBalancerName, region, zone); err != nil {
 			Logf("Still waiting for glbc to cleanup: %v", err)
 			return false, nil
 		}

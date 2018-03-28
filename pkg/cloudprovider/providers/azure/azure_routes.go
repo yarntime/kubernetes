@@ -98,10 +98,9 @@ func (az *Cloud) createRouteTable() error {
 		return err
 	}
 
-	glog.V(10).Infof("RouteTablesClient.Get(%q): start", az.RouteTableName)
-	_, err = az.RouteTablesClient.Get(az.ResourceGroup, az.RouteTableName, "")
-	glog.V(10).Infof("RouteTablesClient.Get(%q): end", az.RouteTableName)
-	return err
+	// Invalidate the cache right after updating
+	az.rtCache.Delete(az.RouteTableName)
+	return nil
 }
 
 // CreateRoute creates the described managed route
@@ -112,7 +111,7 @@ func (az *Cloud) CreateRoute(ctx context.Context, clusterName string, nameHint s
 	if err := az.createRouteTableIfNotExists(clusterName, kubeRoute); err != nil {
 		return err
 	}
-	targetIP, err := az.getIPForMachine(kubeRoute.TargetNode)
+	targetIP, _, err := az.getIPForMachine(kubeRoute.TargetNode)
 	if err != nil {
 		return err
 	}

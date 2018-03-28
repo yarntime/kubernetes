@@ -19,6 +19,7 @@ package dockershim
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"testing"
 	"time"
@@ -96,10 +97,8 @@ func TestSandboxStatus(t *testing.T) {
 	labels := map[string]string{"label": "foobar1"}
 	annotations := map[string]string{"annotation": "abc"}
 	config := makeSandboxConfigWithLabelsAndAnnotations("foo", "bar", "1", 0, labels, annotations)
-
-	// TODO: The following variables depend on the internal
-	// implementation of FakeDockerClient, and should be fixed.
-	fakeIP := "2.3.4.5"
+	r := rand.New(rand.NewSource(0)).Uint32()
+	podIP := fmt.Sprintf("10.%d.%d.%d", byte(r>>16), byte(r>>8), byte(r))
 
 	state := runtimeapi.PodSandboxState_SANDBOX_READY
 	ct := int64(0)
@@ -107,7 +106,7 @@ func TestSandboxStatus(t *testing.T) {
 		State:     state,
 		CreatedAt: ct,
 		Metadata:  config.Metadata,
-		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: fakeIP},
+		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: podIP},
 		Linux: &runtimeapi.LinuxPodSandboxStatus{
 			Namespaces: &runtimeapi.Namespace{
 				Options: &runtimeapi.NamespaceOption{
@@ -160,10 +159,8 @@ func TestSandboxStatus(t *testing.T) {
 func TestSandboxStatusAfterRestart(t *testing.T) {
 	ds, _, fClock := newTestDockerService()
 	config := makeSandboxConfig("foo", "bar", "1", 0)
-
-	// TODO: The following variables depend on the internal
-	// implementation of FakeDockerClient, and should be fixed.
-	fakeIP := "2.3.4.5"
+	r := rand.New(rand.NewSource(0)).Uint32()
+	podIP := fmt.Sprintf("10.%d.%d.%d", byte(r>>16), byte(r>>8), byte(r))
 
 	state := runtimeapi.PodSandboxState_SANDBOX_READY
 	ct := int64(0)
@@ -171,7 +168,7 @@ func TestSandboxStatusAfterRestart(t *testing.T) {
 		State:     state,
 		CreatedAt: ct,
 		Metadata:  config.Metadata,
-		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: fakeIP},
+		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: podIP},
 		Linux: &runtimeapi.LinuxPodSandboxStatus{
 			Namespaces: &runtimeapi.Namespace{
 				Options: &runtimeapi.NamespaceOption{
@@ -222,9 +219,6 @@ func TestNetworkPluginInvocation(t *testing.T) {
 
 	mockPlugin.EXPECT().Name().Return("mockNetworkPlugin").AnyTimes()
 	setup := mockPlugin.EXPECT().SetUpPod(ns, name, cID)
-	// StopPodSandbox performs a lookup on status to figure out if the sandbox
-	// is running with hostnetworking, as all its given is the ID.
-	mockPlugin.EXPECT().GetPodNetworkStatus(ns, name, cID)
 	mockPlugin.EXPECT().TearDownPod(ns, name, cID).After(setup)
 
 	_, err := ds.RunPodSandbox(getTestCTX(), &runtimeapi.RunPodSandboxRequest{Config: c})

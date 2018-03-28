@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/apimachinery/pkg/util/sets"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
@@ -41,10 +42,10 @@ import (
 	priorityutil "k8s.io/kubernetes/pkg/scheduler/algorithm/priorities/util"
 	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
+	"k8s.io/kubernetes/pkg/scheduler/volumebinder"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/scheduler/volumebinder"
 )
 
 const (
@@ -68,12 +69,14 @@ const (
 	NoDiskConflictPred = "NoDiskConflict"
 	// PodToleratesNodeTaintsPred defines the name of predicate PodToleratesNodeTaints.
 	PodToleratesNodeTaintsPred = "PodToleratesNodeTaints"
+	// CheckNodeUnschedulablePred defines the name of predicate CheckNodeUnschedulablePredicate.
+	CheckNodeUnschedulablePred = "CheckNodeUnschedulable"
 	// PodToleratesNodeNoExecuteTaintsPred defines the name of predicate PodToleratesNodeNoExecuteTaints.
 	PodToleratesNodeNoExecuteTaintsPred = "PodToleratesNodeNoExecuteTaints"
 	// CheckNodeLabelPresencePred defines the name of predicate CheckNodeLabelPresence.
 	CheckNodeLabelPresencePred = "CheckNodeLabelPresence"
-	// checkServiceAffinityPred defines the name of predicate checkServiceAffinity.
-	checkServiceAffinityPred = "checkServiceAffinity"
+	// CheckServiceAffinityPred defines the name of predicate checkServiceAffinity.
+	CheckServiceAffinityPred = "CheckServiceAffinity"
 	// MaxEBSVolumeCountPred defines the name of predicate MaxEBSVolumeCount.
 	MaxEBSVolumeCountPred = "MaxEBSVolumeCount"
 	// MaxGCEPDVolumeCountPred defines the name of predicate MaxGCEPDVolumeCount.
@@ -124,11 +127,11 @@ const (
 // The order is based on the restrictiveness & complexity of predicates.
 // Design doc: https://github.com/kubernetes/community/blob/master/contributors/design-proposals/scheduling/predicates-ordering.md
 var (
-	predicatesOrdering = []string{CheckNodeConditionPred,
+	predicatesOrdering = []string{CheckNodeConditionPred, CheckNodeUnschedulablePred,
 		GeneralPred, HostNamePred, PodFitsHostPortsPred,
 		MatchNodeSelectorPred, PodFitsResourcesPred, NoDiskConflictPred,
 		PodToleratesNodeTaintsPred, PodToleratesNodeNoExecuteTaintsPred, CheckNodeLabelPresencePred,
-		checkServiceAffinityPred, MaxEBSVolumeCountPred, MaxGCEPDVolumeCountPred,
+		CheckServiceAffinityPred, MaxEBSVolumeCountPred, MaxGCEPDVolumeCountPred,
 		MaxAzureDiskVolumeCountPred, CheckVolumeBindingPred, NoVolumeZoneConflictPred,
 		CheckNodeMemoryPressurePred, CheckNodeDiskPressurePred, MatchInterPodAffinityPred}
 )
@@ -383,7 +386,7 @@ func (c *MaxPDVolumeCountChecker) filterVolumes(volumes []v1.Volume, namespace s
 			pvName := pvc.Spec.VolumeName
 			if pvName == "" {
 				// PVC is not bound. It was either deleted and created again or
-				// it was forcefuly unbound by admin. The pod can still use the
+				// it was forcefully unbound by admin. The pod can still use the
 				// original PV where it was bound to -> log the error and count
 				// the PV towards the PV limit
 				glog.V(4).Infof("PVC %s/%s is not bound, assuming PVC matches predicate when counting limits", namespace, pvcName)
@@ -712,9 +715,15 @@ func PodFitsResources(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *s
 		predicateFails = append(predicateFails, NewInsufficientResourceError(v1.ResourcePods, 1, int64(len(nodeInfo.Pods())), int64(allowedPodNumber)))
 	}
 
+	// No extended resources should be ignored by default.
+	ignoredExtendedResources := sets.NewString()
+
 	var podRequest *schedulercache.Resource
 	if predicateMeta, ok := meta.(*predicateMetadata); ok {
 		podRequest = predicateMeta.podRequest
+		if predicateMeta.ignoredExtendedResources != nil {
+			ignoredExtendedResources = predicateMeta.ignoredExtendedResources
+		}
 	} else {
 		// We couldn't parse metadata - fallback to computing it.
 		podRequest = GetResourceRequest(pod)
@@ -743,6 +752,13 @@ func PodFitsResources(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *s
 	}
 
 	for rName, rQuant := range podRequest.ScalarResources {
+		if v1helper.IsExtendedResourceName(rName) {
+			// If this resource is one of the extended resources that should be
+			// ignored, we will skip checking it.
+			if ignoredExtendedResources.Has(string(rName)) {
+				continue
+			}
+		}
 		if allocatable.ScalarResources[rName] < rQuant+nodeInfo.RequestedResource().ScalarResources[rName] {
 			predicateFails = append(predicateFails, NewInsufficientResourceError(rName, podRequest.ScalarResources[rName], nodeInfo.RequestedResource().ScalarResources[rName], allocatable.ScalarResources[rName]))
 		}
@@ -1432,14 +1448,23 @@ func (c *PodAffinityChecker) satisfiesPodsAffinityAntiAffinity(pod *v1.Pod, node
 	return nil, nil
 }
 
-// PodToleratesNodeTaints checks if a pod tolerations can tolerate the node taints
-func PodToleratesNodeTaints(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *schedulercache.NodeInfo) (bool, []algorithm.PredicateFailureReason, error) {
+// CheckNodeUnschedulablePredicate checks if a pod can be scheduled on a node with Unschedulable spec.
+func CheckNodeUnschedulablePredicate(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *schedulercache.NodeInfo) (bool, []algorithm.PredicateFailureReason, error) {
 	if nodeInfo == nil || nodeInfo.Node() == nil {
 		return false, []algorithm.PredicateFailureReason{ErrNodeUnknownCondition}, nil
 	}
 
 	if nodeInfo.Node().Spec.Unschedulable {
 		return false, []algorithm.PredicateFailureReason{ErrNodeUnschedulable}, nil
+	}
+
+	return true, nil, nil
+}
+
+// PodToleratesNodeTaints checks if a pod tolerations can tolerate the node taints
+func PodToleratesNodeTaints(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *schedulercache.NodeInfo) (bool, []algorithm.PredicateFailureReason, error) {
+	if nodeInfo == nil || nodeInfo.Node() == nil {
+		return false, []algorithm.PredicateFailureReason{ErrNodeUnknownCondition}, nil
 	}
 
 	return podToleratesNodeTaints(pod, nodeInfo, func(t *v1.Taint) bool {

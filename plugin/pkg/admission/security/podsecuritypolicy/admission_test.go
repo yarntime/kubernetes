@@ -37,6 +37,7 @@ import (
 	kapi "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/core/helper"
 	"k8s.io/kubernetes/pkg/apis/extensions"
+	"k8s.io/kubernetes/pkg/apis/policy"
 	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/security/apparmor"
@@ -71,6 +72,11 @@ type TestAuthorizer struct {
 	// usernameToNamespaceToAllowedPSPs contains the map of allowed PSPs.
 	// if nil, all PSPs are allowed.
 	usernameToNamespaceToAllowedPSPs map[string]map[string]map[string]bool
+	// allowedAPIGroupName specifies an API Group name that contains PSP resources.
+	// In order to be authorized, AttributesRecord must have this group name.
+	// When empty, API Group name isn't taken into account.
+	// TODO: remove this when PSP will be completely moved out of the extensions and we'll lookup only in "policy" group.
+	allowedAPIGroupName string
 }
 
 func (t *TestAuthorizer) Authorize(a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
@@ -79,7 +85,8 @@ func (t *TestAuthorizer) Authorize(a authorizer.Attributes) (authorized authoriz
 	}
 	allowedInNamespace := t.usernameToNamespaceToAllowedPSPs[a.GetUser().GetName()][a.GetNamespace()][a.GetName()]
 	allowedClusterWide := t.usernameToNamespaceToAllowedPSPs[a.GetUser().GetName()][""][a.GetName()]
-	if allowedInNamespace || allowedClusterWide {
+	allowedAPIGroup := len(t.allowedAPIGroupName) == 0 || a.GetAPIGroup() == t.allowedAPIGroupName
+	if allowedAPIGroup && (allowedInNamespace || allowedClusterWide) {
 		return authorizer.DecisionAllow, "", nil
 	}
 	return authorizer.DecisionNoOpinion, "", nil
@@ -1947,7 +1954,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 					},
 				}
 			},
-			expectedErr: "MustRunAsRange requires at least one range",
+			expectedErr: "MustRunAs requires at least one range",
 		},
 	}
 
@@ -1996,8 +2003,9 @@ func TestPolicyAuthorization(t *testing.T) {
 		expectedPolicy string
 		inPolicies     []*extensions.PodSecurityPolicy
 		allowed        map[string]map[string]map[string]bool
+		allowedGroup   string
 	}{
-		"policy allowed by user": {
+		"policy allowed by user (extensions API Group)": {
 			user: &user.DefaultInfo{Name: "user"},
 			sa:   "sa",
 			ns:   "test",
@@ -2009,7 +2017,7 @@ func TestPolicyAuthorization(t *testing.T) {
 			inPolicies:     []*extensions.PodSecurityPolicy{policyWithName("policy")},
 			expectedPolicy: "policy",
 		},
-		"policy allowed by sa": {
+		"policy allowed by sa (extensions API Group)": {
 			user: &user.DefaultInfo{Name: "user"},
 			sa:   "sa",
 			ns:   "test",
@@ -2020,6 +2028,32 @@ func TestPolicyAuthorization(t *testing.T) {
 			},
 			inPolicies:     []*extensions.PodSecurityPolicy{policyWithName("policy")},
 			expectedPolicy: "policy",
+		},
+		"policy allowed by user (policy API Group)": {
+			user: &user.DefaultInfo{Name: "user"},
+			sa:   "sa",
+			ns:   "test",
+			allowed: map[string]map[string]map[string]bool{
+				"user": {
+					"test": {"policy": true},
+				},
+			},
+			inPolicies:     []*extensions.PodSecurityPolicy{policyWithName("policy")},
+			expectedPolicy: "policy",
+			allowedGroup:   policy.GroupName,
+		},
+		"policy allowed by sa (policy API Group)": {
+			user: &user.DefaultInfo{Name: "user"},
+			sa:   "sa",
+			ns:   "test",
+			allowed: map[string]map[string]map[string]bool{
+				serviceaccount.MakeUsername("test", "sa"): {
+					"test": {"policy": true},
+				},
+			},
+			inPolicies:     []*extensions.PodSecurityPolicy{policyWithName("policy")},
+			expectedPolicy: "policy",
+			allowedGroup:   policy.GroupName,
 		},
 		"no policies allowed": {
 			user:           &user.DefaultInfo{Name: "user"},
@@ -2122,7 +2156,7 @@ func TestPolicyAuthorization(t *testing.T) {
 		var (
 			oldPod     *kapi.Pod
 			shouldPass = v.expectedPolicy != ""
-			authz      = &TestAuthorizer{usernameToNamespaceToAllowedPSPs: v.allowed}
+			authz      = &TestAuthorizer{usernameToNamespaceToAllowedPSPs: v.allowed, allowedAPIGroupName: v.allowedGroup}
 			canMutate  = true
 		)
 		pod := goodPod()
@@ -2201,14 +2235,11 @@ func TestPolicyAuthorizationErrors(t *testing.T) {
 	}
 	for desc, tc := range tests {
 		t.Run(desc, func(t *testing.T) {
-			var (
-				authz      = &TestAuthorizer{usernameToNamespaceToAllowedPSPs: tc.allowed}
-				privileged = true
-			)
+			authz := &TestAuthorizer{usernameToNamespaceToAllowedPSPs: tc.allowed}
 			pod := goodPod()
 			pod.Namespace = ns
 			pod.Spec.ServiceAccountName = sa
-			pod.Spec.Containers[0].SecurityContext.Privileged = &privileged
+			pod.Spec.SecurityContext.HostPID = true
 
 			plugin := NewTestAdmission(tc.inPolicies, authz)
 			attrs := kadmission.NewAttributesRecord(pod, nil, kapi.Kind("Pod").WithVersion("version"), ns, "", kapi.Resource("pods").WithVersion("version"), "", kadmission.Create, &user.DefaultInfo{Name: userName})
@@ -2252,7 +2283,7 @@ func TestPreferValidatedPSP(t *testing.T) {
 			validatedPSPHint:     "",
 			expectedPSP:          "001permissive",
 		},
-		"policy saved in annotations is prefered": {
+		"policy saved in annotations is preferred": {
 			inPolicies: []*extensions.PodSecurityPolicy{
 				restrictivePSPWithName("001restrictive"),
 				restrictivePSPWithName("002restrictive"),

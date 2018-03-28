@@ -22,6 +22,12 @@ limitations under the License.
 package nodelifecycle
 
 import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/golang/glog"
+
 	"k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,12 +56,6 @@ import (
 	"k8s.io/kubernetes/pkg/util/system"
 	taintutils "k8s.io/kubernetes/pkg/util/taints"
 	utilversion "k8s.io/kubernetes/pkg/util/version"
-
-	"fmt"
-	"sync"
-	"time"
-
-	"github.com/golang/glog"
 )
 
 func init() {
@@ -84,6 +84,7 @@ var (
 		v1.NodeOutOfDisk:          algorithm.TaintNodeOutOfDisk,
 		v1.NodeDiskPressure:       algorithm.TaintNodeDiskPressure,
 		v1.NodeNetworkUnavailable: algorithm.TaintNodeNetworkUnavailable,
+		v1.NodePIDPressure:        algorithm.TaintNodePIDPressure,
 	}
 
 	taintKeyToNodeConditionMap = map[string]v1.NodeConditionType{
@@ -91,6 +92,7 @@ var (
 		algorithm.TaintNodeMemoryPressure:     v1.NodeMemoryPressure,
 		algorithm.TaintNodeOutOfDisk:          v1.NodeOutOfDisk,
 		algorithm.TaintNodeDiskPressure:       v1.NodeDiskPressure,
+		algorithm.TaintNodePIDPressure:        v1.NodePIDPressure,
 	}
 )
 
@@ -105,8 +107,6 @@ const (
 )
 
 const (
-	// The amount of time the nodecontroller polls on the list nodes endpoint.
-	apiserverStartupGracePeriod = 10 * time.Minute
 	// The amount of time the nodecontroller should sleep between retrying NodeStatus updates
 	retrySleepTime = 20 * time.Millisecond
 )
@@ -436,7 +436,21 @@ func (nc *Controller) doNoScheduleTaintingPass(node *v1.Node) error {
 			}
 		}
 	}
+	if node.Spec.Unschedulable {
+		// If unschedulable, append related taint.
+		taints = append(taints, v1.Taint{
+			Key:    algorithm.TaintNodeUnschedulable,
+			Effect: v1.TaintEffectNoSchedule,
+		})
+	}
+
+	// Get exist taints of node.
 	nodeTaints := taintutils.TaintSetFilter(node.Spec.Taints, func(t *v1.Taint) bool {
+		// Find unschedulable taint of node.
+		if t.Key == algorithm.TaintNodeUnschedulable {
+			return true
+		}
+		// Find node condition taints of node.
 		_, found := taintKeyToNodeConditionMap[t.Key]
 		return found
 	})
@@ -1040,6 +1054,8 @@ func (nc *Controller) ReducedQPSFunc(nodeNum int) float32 {
 
 // addPodEvictorForNewZone checks if new zone appeared, and if so add new evictor.
 func (nc *Controller) addPodEvictorForNewZone(node *v1.Node) {
+	nc.evictorLock.Lock()
+	defer nc.evictorLock.Unlock()
 	zone := utilnode.GetZoneKey(node)
 	if _, found := nc.zoneStates[zone]; !found {
 		nc.zoneStates[zone] = stateInitial

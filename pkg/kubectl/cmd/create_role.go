@@ -43,7 +43,7 @@ var (
 		kubectl create role pod-reader --verb=get --verb=list --verb=watch --resource=pods
 
 		# Create a Role named "pod-reader" with ResourceName specified
-		kubectl create role pod-reader --verb=get,list,watch --resource=pods --resource-name=readablepod --resource-name=anotherpod
+		kubectl create role pod-reader --verb=get --resource=pods --resource-name=readablepod --resource-name=anotherpod
 
 		# Create a Role named "foo" with API Group specified
 		kubectl create role foo --verb=get,list,watch --resource=rs.extensions
@@ -112,7 +112,6 @@ type CreateRoleOptions struct {
 	Mapper       meta.RESTMapper
 	Out          io.Writer
 	PrintObject  func(obj runtime.Object) error
-	PrintSuccess func(shortOutput bool, out io.Writer, resource, name string, dryRun bool, operation string)
 }
 
 // Role is a command to ease creating Roles.
@@ -136,9 +135,9 @@ func NewCmdCreateRole(f cmdutil.Factory, cmdOut io.Writer) *cobra.Command {
 	cmdutil.AddValidateFlags(cmd)
 	cmdutil.AddPrinterFlags(cmd)
 	cmdutil.AddDryRunFlag(cmd)
-	cmd.Flags().StringSliceVar(&c.Verbs, "verb", []string{}, "Verb that applies to the resources contained in the rule")
+	cmd.Flags().StringSliceVar(&c.Verbs, "verb", c.Verbs, "Verb that applies to the resources contained in the rule")
 	cmd.Flags().StringSlice("resource", []string{}, "Resource that the rule applies to")
-	cmd.Flags().StringArrayVar(&c.ResourceNames, "resource-name", []string{}, "Resource in the white list that the rule applies to, repeat this flag for multiple items")
+	cmd.Flags().StringArrayVar(&c.ResourceNames, "resource-name", c.ResourceNames, "Resource in the white list that the rule applies to, repeat this flag for multiple items")
 
 	return cmd
 }
@@ -163,7 +162,6 @@ func (c *CreateRoleOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args
 		}
 	}
 	c.Verbs = verbs
-	c.PrintSuccess = f.PrintSuccess
 
 	// Support resource.group pattern. If no API Group specified, use "" as core API Group.
 	// e.g. --resource=pods,deployments.extensions
@@ -206,7 +204,7 @@ func (c *CreateRoleOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args
 	}
 
 	c.PrintObject = func(obj runtime.Object) error {
-		return f.PrintObject(cmd, false, c.Mapper, obj, c.Out)
+		return cmdutil.PrintObject(cmd, obj, c.Out)
 	}
 
 	clientset, err := f.KubernetesClientSet()
@@ -288,14 +286,14 @@ func (c *CreateRoleOptions) RunCreateRole() error {
 
 	// Create role.
 	if !c.DryRun {
-		_, err = c.Client.Roles(c.Namespace).Create(role)
+		role, err = c.Client.Roles(c.Namespace).Create(role)
 		if err != nil {
 			return err
 		}
 	}
 
 	if useShortOutput := c.OutputFormat == "name"; useShortOutput || len(c.OutputFormat) == 0 {
-		c.PrintSuccess(useShortOutput, c.Out, "roles", c.Name, c.DryRun, "created")
+		cmdutil.PrintSuccess(useShortOutput, c.Out, role, c.DryRun, "created")
 		return nil
 	}
 

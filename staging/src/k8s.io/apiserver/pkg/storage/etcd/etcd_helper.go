@@ -17,6 +17,7 @@ limitations under the License.
 package etcd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -25,7 +26,6 @@ import (
 
 	etcd "github.com/coreos/etcd/client"
 	"github.com/golang/glog"
-	"golang.org/x/net/context"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/conversion"
@@ -584,6 +584,10 @@ func (h *etcdHelper) GuaranteedUpdate(
 		_, _, _, err = h.extractObj(response, err, ptrToType, false, false)
 		return toStorageErr(err, key, int64(index))
 	}
+}
+
+func (*etcdHelper) Count(pathPerfix string) (int64, error) {
+	return 0, fmt.Errorf("Count is unimplemented for etcd2!")
 }
 
 // etcdCache defines interface used for caching objects stored in etcd. Objects are keyed by

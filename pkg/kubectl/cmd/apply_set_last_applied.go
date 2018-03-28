@@ -36,6 +36,7 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/cmd/util/editor"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
+	"k8s.io/kubernetes/pkg/kubectl/scheme"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
 )
 
@@ -51,7 +52,6 @@ type SetLastAppliedOptions struct {
 	ShortOutput      bool
 	CreateAnnotation bool
 	Output           string
-	Codec            runtime.Encoder
 	PatchBufferList  []PatchBuffer
 	Factory          cmdutil.Factory
 	Out              io.Writer
@@ -99,7 +99,7 @@ func NewCmdApplySetLastApplied(f cmdutil.Factory, out, err io.Writer) *cobra.Com
 	cmdutil.AddDryRunFlag(cmd)
 	cmdutil.AddRecordFlag(cmd)
 	cmdutil.AddPrinterFlags(cmd)
-	cmd.Flags().BoolVar(&options.CreateAnnotation, "create-annotation", false, "Will create 'last-applied-configuration' annotations if current objects doesn't have one")
+	cmd.Flags().BoolVar(&options.CreateAnnotation, "create-annotation", options.CreateAnnotation, "Will create 'last-applied-configuration' annotations if current objects doesn't have one")
 	usage := "that contains the last-applied-configuration annotations"
 	kubectl.AddJsonFilenameFlag(cmd, &options.FilenameOptions.Filenames, "Filename, directory, or URL to files "+usage)
 
@@ -110,7 +110,6 @@ func (o *SetLastAppliedOptions) Complete(f cmdutil.Factory, cmd *cobra.Command) 
 	o.DryRun = cmdutil.GetDryRunFlag(cmd)
 	o.Output = cmdutil.GetFlagString(cmd, "output")
 	o.ShortOutput = o.Output == "name"
-	o.Codec = f.JSONEncoder()
 
 	var err error
 	o.Mapper, o.Typer = f.Object()
@@ -134,7 +133,7 @@ func (o *SetLastAppliedOptions) Validate(f cmdutil.Factory, cmd *cobra.Command) 
 		if err != nil {
 			return err
 		}
-		patchBuf, diffBuf, patchType, err := editor.GetApplyPatch(info.Object, o.Codec)
+		patchBuf, diffBuf, patchType, err := editor.GetApplyPatch(info.Object, scheme.DefaultJSONEncoder())
 		if err != nil {
 			return err
 		}
@@ -144,12 +143,12 @@ func (o *SetLastAppliedOptions) Validate(f cmdutil.Factory, cmd *cobra.Command) 
 			if errors.IsNotFound(err) {
 				return err
 			} else {
-				return cmdutil.AddSourceToErr(fmt.Sprintf("retrieving current configuration of:\n%v\nfrom server for:", info), info.Source, err)
+				return cmdutil.AddSourceToErr(fmt.Sprintf("retrieving current configuration of:\n%s\nfrom server for:", info.String()), info.Source, err)
 			}
 		}
 		originalBuf, err := kubectl.GetOriginalConfiguration(info.Mapping, info.Object)
 		if err != nil {
-			return cmdutil.AddSourceToErr(fmt.Sprintf("retrieving current configuration of:\n%v\nfrom server for:", info), info.Source, err)
+			return cmdutil.AddSourceToErr(fmt.Sprintf("retrieving current configuration of:\n%s\nfrom server for:", info.String()), info.Source, err)
 		}
 		if originalBuf == nil && !o.CreateAnnotation {
 			return cmdutil.UsageErrorf(cmd, "no last-applied-configuration annotation found on resource: %s, to create the annotation, run the command with --create-annotation", info.Name)
@@ -186,16 +185,16 @@ func (o *SetLastAppliedOptions) RunSetLastApplied(f cmdutil.Factory, cmd *cobra.
 
 			if len(o.Output) > 0 && !o.ShortOutput {
 				info.Refresh(patchedObj, false)
-				return f.PrintResourceInfoForCommand(cmd, info, o.Out)
+				return cmdutil.PrintObject(cmd, info.Object, o.Out)
 			}
-			f.PrintSuccess(o.ShortOutput, o.Out, info.Mapping.Resource, info.Name, o.DryRun, "configured")
+			cmdutil.PrintSuccess(o.ShortOutput, o.Out, info.Object, o.DryRun, "configured")
 
 		} else {
 			err := o.formatPrinter(o.Output, patch.Patch, o.Out)
 			if err != nil {
 				return err
 			}
-			f.PrintSuccess(o.ShortOutput, o.Out, info.Mapping.Resource, info.Name, o.DryRun, "configured")
+			cmdutil.PrintSuccess(o.ShortOutput, o.Out, info.Object, o.DryRun, "configured")
 		}
 	}
 	return nil
@@ -224,7 +223,7 @@ func (o *SetLastAppliedOptions) getPatch(info *resource.Info) ([]byte, []byte, e
 	objMap := map[string]map[string]map[string]string{}
 	metadataMap := map[string]map[string]string{}
 	annotationsMap := map[string]string{}
-	localFile, err := runtime.Encode(o.Codec, info.Object)
+	localFile, err := runtime.Encode(scheme.DefaultJSONEncoder(), info.Object)
 	if err != nil {
 		return nil, localFile, err
 	}

@@ -32,7 +32,6 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
 
-	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 )
 
@@ -142,7 +141,7 @@ __kubectl_get_containers()
 {
     local template
     template="{{ range .spec.containers  }}{{ .name }} {{ end }}"
-    __debug "${FUNCNAME} nouns are ${nouns[*]}"
+    __kubectl_debug "${FUNCNAME} nouns are ${nouns[*]}"
 
     local len="${#nouns[@]}"
     if [[ ${len} -ne 1 ]]; then
@@ -169,7 +168,8 @@ __kubectl_require_pod_and_container()
 __custom_func() {
     case ${last_command} in
         kubectl_get | kubectl_describe | kubectl_delete | kubectl_label | kubectl_edit | kubectl_patch |\
-        kubectl_annotate | kubectl_expose | kubectl_scale | kubectl_autoscale | kubectl_taint | kubectl_rollout_*)
+        kubectl_annotate | kubectl_expose | kubectl_scale | kubectl_autoscale | kubectl_taint | kubectl_rollout_* |\
+        kubectl_apply_edit-last-applied | kubectl_apply_view-last-applied)
             __kubectl_get_resource
             return
             ;;
@@ -270,7 +270,7 @@ func NewKubectlCommand(f cmdutil.Factory, in io.Reader, out, err io.Writer) *cob
 			Commands: []*cobra.Command{
 				rollout.NewCmdRollout(f, out, err),
 				NewCmdRollingUpdate(f, out),
-				NewCmdScale(f, out),
+				NewCmdScale(f, out, err),
 				NewCmdAutoscale(f, out),
 			},
 		},
@@ -290,7 +290,7 @@ func NewKubectlCommand(f cmdutil.Factory, in io.Reader, out, err io.Writer) *cob
 			Message: "Troubleshooting and Debugging Commands:",
 			Commands: []*cobra.Command{
 				NewCmdDescribe(f, out, err),
-				NewCmdLogs(f, out),
+				NewCmdLogs(f, out, err),
 				NewCmdAttach(f, in, out, err),
 				NewCmdExec(f, in, out, err),
 				NewCmdPortForward(f, out, err),
@@ -311,7 +311,7 @@ func NewKubectlCommand(f cmdutil.Factory, in io.Reader, out, err io.Writer) *cob
 		{
 			Message: "Settings Commands:",
 			Commands: []*cobra.Command{
-				NewCmdLabel(f, out),
+				NewCmdLabel(f, out, err),
 				NewCmdAnnotate(f, out),
 				NewCmdCompletion(out, ""),
 			},
@@ -355,8 +355,8 @@ func runHelp(cmd *cobra.Command, args []string) {
 	cmd.Help()
 }
 
-func printDeprecationWarning(command, alias string) {
-	glog.Warningf("%s is DEPRECATED and will be removed in a future version. Use %s instead.", alias, command)
+func printDeprecationWarning(errOut io.Writer, command, alias string) {
+	fmt.Fprintf(errOut, "%s is DEPRECATED and will be removed in a future version. Use %s instead.\n", alias, command)
 }
 
 // deprecatedAlias is intended to be used to create a "wrapper" command around

@@ -19,17 +19,28 @@ package printers
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 // NamePrinter is an implementation of ResourcePrinter which outputs "resource/name" pair of an object.
 type NamePrinter struct {
+	// DryRun indicates whether the "(dry run)" message
+	// should be appended to the finalized "successful"
+	// message printed about an action on an object.
+	DryRun bool
+	// Operation describes the name of the action that
+	// took place on an object, to be included in the
+	// finalized "successful" message.
+	Operation string
+
 	Decoders []runtime.Decoder
 	Typer    runtime.ObjectTyper
-	Mapper   meta.RESTMapper
 }
 
 func (p *NamePrinter) AfterPrint(w io.Writer, res string) error {
@@ -62,24 +73,55 @@ func (p *NamePrinter) PrintObj(obj runtime.Object, w io.Writer) error {
 		}
 	}
 
+	return printObj(w, name, p.Operation, p.DryRun, GetObjectGroupKind(obj, p.Typer))
+}
+
+func GetObjectGroupKind(obj runtime.Object, typer runtime.ObjectTyper) schema.GroupKind {
+	if obj == nil {
+		return schema.GroupKind{Kind: "<unknown>"}
+	}
 	groupVersionKind := obj.GetObjectKind().GroupVersionKind()
 	if len(groupVersionKind.Kind) > 0 {
-		if mappings, err := p.Mapper.RESTMappings(groupVersionKind.GroupKind(), groupVersionKind.Version); err == nil && len(mappings) > 0 {
-			fmt.Fprintf(w, "%s/%s\n", mappings[0].Resource, name)
-			return nil
-		}
+		return groupVersionKind.GroupKind()
 	}
 
-	if gvks, _, err := p.Typer.ObjectKinds(obj); err == nil {
+	if gvks, _, err := typer.ObjectKinds(obj); err == nil {
 		for _, gvk := range gvks {
-			if mappings, err := p.Mapper.RESTMappings(gvk.GroupKind(), gvk.Version); err == nil && len(mappings) > 0 {
-				fmt.Fprintf(w, "%s/%s\n", mappings[0].Resource, name)
-				return nil
+			if len(gvk.Kind) == 0 {
+				continue
 			}
+			return gvk.GroupKind()
 		}
 	}
 
-	fmt.Fprintf(w, "<unknown>/%s\n", name)
+	if uns, ok := obj.(*unstructured.Unstructured); ok {
+		if len(uns.GroupVersionKind().Kind) > 0 {
+			return uns.GroupVersionKind().GroupKind()
+		}
+	}
+
+	return schema.GroupKind{Kind: "<unknown>"}
+}
+
+func printObj(w io.Writer, name string, operation string, dryRun bool, groupKind schema.GroupKind) error {
+	if len(groupKind.Kind) == 0 {
+		return fmt.Errorf("missing kind for resource with name %v", name)
+	}
+
+	dryRunMsg := ""
+	if dryRun {
+		dryRunMsg = " (dry run)"
+	}
+	if len(operation) > 0 {
+		operation = " " + operation
+	}
+
+	if len(groupKind.Group) == 0 {
+		fmt.Fprintf(w, "%s/%s%s%s\n", strings.ToLower(groupKind.Kind), name, operation, dryRunMsg)
+		return nil
+	}
+
+	fmt.Fprintf(w, "%s.%s/%s%s%s\n", strings.ToLower(groupKind.Kind), groupKind.Group, name, operation, dryRunMsg)
 	return nil
 }
 

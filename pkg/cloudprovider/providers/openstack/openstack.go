@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -414,12 +415,9 @@ func foreachServer(client *gophercloud.ServiceClient, opts servers.ListOptsBuild
 	return err
 }
 
-func getServerByName(client *gophercloud.ServiceClient, name types.NodeName, showOnlyActive bool) (*servers.Server, error) {
+func getServerByName(client *gophercloud.ServiceClient, name types.NodeName) (*servers.Server, error) {
 	opts := servers.ListOpts{
 		Name: fmt.Sprintf("^%s$", regexp.QuoteMeta(mapNodeNameToServerName(name))),
-	}
-	if showOnlyActive {
-		opts.Status = "ACTIVE"
 	}
 
 	pager := servers.List(client, opts)
@@ -503,7 +501,7 @@ func nodeAddresses(srv *servers.Server) ([]v1.NodeAddress, error) {
 }
 
 func getAddressesByName(client *gophercloud.ServiceClient, name types.NodeName) ([]v1.NodeAddress, error) {
-	srv, err := getServerByName(client, name, true)
+	srv, err := getServerByName(client, name)
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +509,7 @@ func getAddressesByName(client *gophercloud.ServiceClient, name types.NodeName) 
 	return nodeAddresses(srv)
 }
 
-func getAddressByName(client *gophercloud.ServiceClient, name types.NodeName) (string, error) {
+func getAddressByName(client *gophercloud.ServiceClient, name types.NodeName, needIPv6 bool) (string, error) {
 	addrs, err := getAddressesByName(client, name)
 	if err != nil {
 		return "", err
@@ -520,12 +518,20 @@ func getAddressByName(client *gophercloud.ServiceClient, name types.NodeName) (s
 	}
 
 	for _, addr := range addrs {
-		if addr.Type == v1.NodeInternalIP {
+		isIPv6 := net.ParseIP(addr.Address).To4() == nil
+		if (addr.Type == v1.NodeInternalIP) && (isIPv6 == needIPv6) {
 			return addr.Address, nil
 		}
 	}
 
-	return addrs[0].Address, nil
+	for _, addr := range addrs {
+		isIPv6 := net.ParseIP(addr.Address).To4() == nil
+		if (addr.Type == v1.NodeExternalIP) && (isIPv6 == needIPv6) {
+			return addr.Address, nil
+		}
+	}
+	// It should never return an address from a different IP Address family than the one needed
+	return "", ErrNoAddressFound
 }
 
 // getAttachedInterfacesByID returns the node interfaces of the specified instance.
@@ -596,8 +602,17 @@ func (os *OpenStack) LoadBalancer() (cloudprovider.LoadBalancer, bool) {
 }
 
 func isNotFound(err error) bool {
-	e, ok := err.(*gophercloud.ErrUnexpectedResponseCode)
-	return ok && e.Actual == http.StatusNotFound
+	if _, ok := err.(gophercloud.ErrDefault404); ok {
+		return true
+	}
+
+	if errCode, ok := err.(gophercloud.ErrUnexpectedResponseCode); ok {
+		if errCode.Actual == http.StatusNotFound {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Zones indicates that we support zones
@@ -657,7 +672,7 @@ func (os *OpenStack) GetZoneByNodeName(ctx context.Context, nodeName types.NodeN
 		return cloudprovider.Zone{}, err
 	}
 
-	srv, err := getServerByName(compute, nodeName, true)
+	srv, err := getServerByName(compute, nodeName)
 	if err != nil {
 		if err == ErrNotFound {
 			return cloudprovider.Zone{}, cloudprovider.InstanceNotFound

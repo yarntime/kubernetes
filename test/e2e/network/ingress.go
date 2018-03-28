@@ -18,6 +18,7 @@ package network
 
 import (
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -90,7 +91,8 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 				Client: jig.Client,
 				Cloud:  framework.TestContext.CloudConfig,
 			}
-			gceController.Init()
+			err := gceController.Init()
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		// Platform specific cleanup
@@ -106,7 +108,7 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 			jig.TryDeleteIngress()
 
 			By("Cleaning up cloud resources")
-			framework.CleanupGCEIngressController(gceController)
+			Expect(gceController.CleanupGCEIngressController()).NotTo(HaveOccurred())
 		})
 
 		It("should conform to Ingress spec", func() {
@@ -329,7 +331,9 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 				// We would not be able to delete the cert until ingress controller
 				// cleans up the target proxy that references it.
 				By("Deleting ingress before deleting ssl certificate")
-				jig.TryDeleteIngress()
+				if jig.Ingress != nil {
+					jig.TryDeleteIngress()
+				}
 				By(fmt.Sprintf("Deleting ssl certificate %q on GCE", preSharedCertName))
 				err := wait.Poll(framework.LoadBalancerPollInterval, framework.LoadBalancerCleanupTimeout, func() (bool, error) {
 					if err := gceCloud.DeleteSslCertificate(preSharedCertName); err != nil && !errors.IsNotFound(err) {
@@ -356,7 +360,40 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 			}, map[string]string{})
 
 			By("Test that ingress works with the pre-shared certificate")
-			jig.WaitForIngressWithCert(true, []string{testHostname}, cert)
+			err = jig.WaitForIngressWithCert(true, []string{testHostname}, cert)
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Unexpected error while waiting for ingress: %v", err))
+		})
+
+		It("should create ingress with backside re-encryption", func() {
+			By("Creating a set of ingress, service and deployment that have backside re-encryption configured")
+			deployCreated, svcCreated, ingCreated, err := framework.CreateReencryptionIngress(f.ClientSet, f.Namespace.Name)
+			defer func() {
+				By("Cleaning up re-encryption ingress, service and deployment")
+				if errs := framework.CleanupReencryptionIngress(f.ClientSet, deployCreated, svcCreated, ingCreated); len(errs) > 0 {
+					framework.Failf("Failed to cleanup re-encryption ingress: %v", errs)
+				}
+			}()
+			Expect(err).NotTo(HaveOccurred(), "Failed to create re-encryption ingress")
+
+			By(fmt.Sprintf("Waiting for ingress %s to come up", ingCreated.Name))
+			ingIP, err := jig.WaitForIngressAddress(f.ClientSet, f.Namespace.Name, ingCreated.Name, framework.LoadBalancerPollTimeout)
+			Expect(err).NotTo(HaveOccurred(), "Failed to wait for ingress IP")
+
+			By(fmt.Sprintf("Polling on address %s and verify the backend is serving HTTPS", ingIP))
+			timeoutClient := &http.Client{Timeout: framework.IngressReqTimeout}
+			err = wait.PollImmediate(framework.LoadBalancerPollInterval, framework.LoadBalancerPollTimeout, func() (bool, error) {
+				resp, err := framework.SimpleGET(timeoutClient, fmt.Sprintf("http://%s", ingIP), "")
+				if err != nil {
+					framework.Logf("SimpleGET failed: %v", err)
+					return false, nil
+				}
+				if !strings.Contains(resp, "request_scheme=https") {
+					return false, fmt.Errorf("request wasn't served by HTTPS, response body: %s", resp)
+				}
+				framework.Logf("Poll succeeded, request was served by HTTPS")
+				return true, nil
+			})
+			Expect(err).NotTo(HaveOccurred(), "Failed to verify backside re-encryption ingress")
 		})
 
 		It("multicluster ingress should get instance group annotation", func() {
@@ -398,7 +435,8 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 				Client: jig.Client,
 				Cloud:  framework.TestContext.CloudConfig,
 			}
-			gceController.Init()
+			err := gceController.Init()
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		// Platform specific cleanup
@@ -414,7 +452,7 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 			jig.TryDeleteIngress()
 
 			By("Cleaning up cloud resources")
-			framework.CleanupGCEIngressController(gceController)
+			Expect(gceController.CleanupGCEIngressController()).NotTo(HaveOccurred())
 		})
 
 		It("should conform to Ingress spec", func() {
@@ -560,6 +598,58 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 					return false, nil
 				}
 			})
+		})
+	})
+
+	Describe("GCE [Slow] [Feature:kubemci]", func() {
+		var gceController *framework.GCEIngressController
+
+		// Platform specific setup
+		BeforeEach(func() {
+			framework.SkipUnlessProviderIs("gce", "gke")
+			jig.Class = framework.MulticlusterIngressClassValue
+			By("Initializing gce controller")
+			gceController = &framework.GCEIngressController{
+				Ns:     ns,
+				Client: jig.Client,
+				Cloud:  framework.TestContext.CloudConfig,
+			}
+			err := gceController.Init()
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		// Platform specific cleanup
+		AfterEach(func() {
+			if CurrentGinkgoTestDescription().Failed {
+				framework.DescribeIng(ns)
+			}
+			if jig.Ingress == nil {
+				By("No ingress created, no cleanup necessary")
+				return
+			}
+			By("Deleting ingress")
+			jig.TryDeleteIngress()
+
+			By("Cleaning up cloud resources")
+			Expect(gceController.CleanupGCEIngressController()).NotTo(HaveOccurred())
+		})
+
+		It("should conform to Ingress spec", func() {
+			jig.PollInterval = 5 * time.Second
+			// Use the randomly generated namespace name as the ip address name.
+			ipName := ns
+			// ip released when the rest of lb resources are deleted in CleanupGCEIngressController
+			ipAddress := gceController.CreateStaticIP(ipName)
+			By(fmt.Sprintf("allocated static ip %v: %v through the GCE cloud provider", ipName, ipAddress))
+			conformanceTests = framework.CreateIngressComformanceTests(jig, ns, map[string]string{
+				framework.IngressStaticIPKey: ipName,
+			})
+			for _, t := range conformanceTests {
+				By(t.EntryLog)
+				t.Execute()
+				By(t.ExitLog)
+				jig.WaitForIngress(false /*waitForNodePort*/)
+			}
 		})
 	})
 

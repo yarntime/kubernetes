@@ -101,8 +101,8 @@ func TestNodeAuthorizer(t *testing.T) {
 
 	// Start the server
 	masterConfig := framework.NewIntegrationTestMasterConfig()
-	masterConfig.GenericConfig.Authenticator = authenticator
-	masterConfig.GenericConfig.Authorizer = nodeRBACAuthorizer
+	masterConfig.GenericConfig.Authentication.Authenticator = authenticator
+	masterConfig.GenericConfig.Authorization.Authorizer = nodeRBACAuthorizer
 	masterConfig.GenericConfig.AdmissionControl = nodeRestrictionAdmission
 
 	_, _, closeFn := framework.RunAMasterUsingServer(masterConfig, apiServer, h)
@@ -448,6 +448,8 @@ func TestNodeAuthorizer(t *testing.T) {
 	defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSIPersistentVolume, true)()
 	expectForbidden(t, getVolumeAttachment(node1ClientExternal))
 	expectAllowed(t, getVolumeAttachment(node2ClientExternal))
+
+	//TODO(mikedanese): integration test node restriction of TokenRequest
 }
 
 // expect executes a function a set number of times until it either returns the

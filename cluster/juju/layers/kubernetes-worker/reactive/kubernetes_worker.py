@@ -24,7 +24,7 @@ import time
 from shlex import split
 from subprocess import check_call, check_output
 from subprocess import CalledProcessError
-from socket import gethostname
+from socket import gethostname, getfqdn
 
 from charms import layer
 from charms.layer import snap
@@ -78,20 +78,22 @@ def upgrade_charm():
     set_state('kubernetes-worker.restart-needed')
 
 
+def get_snap_resource_paths():
+    resources = ['kubectl', 'kubelet', 'kube-proxy']
+    return [hookenv.resource_get(resource) for resource in resources]
+
+
 def check_resources_for_upgrade_needed():
     hookenv.status_set('maintenance', 'Checking resources')
-    resources = ['kubectl', 'kubelet', 'kube-proxy']
-    paths = [hookenv.resource_get(resource) for resource in resources]
-    if any_file_changed(paths):
+    if any_file_changed(get_snap_resource_paths()):
         set_upgrade_needed()
 
 
 def set_upgrade_needed():
     set_state('kubernetes-worker.snaps.upgrade-needed')
     config = hookenv.config()
-    previous_channel = config.previous('channel')
     require_manual = config.get('require-manual-upgrade')
-    if previous_channel is None or not require_manual:
+    if not require_manual:
         set_state('kubernetes-worker.snaps.upgrade-specified')
 
 
@@ -127,21 +129,34 @@ def cleanup_pre_snap_services():
             os.remove(file)
 
 
+@when_not('kubernetes-worker.snap.resources-available')
+def check_snap_resources():
+    for path in get_snap_resource_paths():
+        if not path or not os.path.exists(path):
+            msg = 'Missing snap resources.'
+            hookenv.status_set('blocked', msg)
+            return
+    set_state('kubernetes-worker.snap.resources-available')
+    set_state('kubernetes-worker.snaps.upgrade-specified')
+
+
 @when('config.changed.channel')
 def channel_changed():
     set_upgrade_needed()
 
 
-@when('kubernetes-worker.snaps.upgrade-needed')
+@when('kubernetes-worker.snaps.upgrade-needed',
+      'kubernetes-worker.snap.resources-available')
 @when_not('kubernetes-worker.snaps.upgrade-specified')
 def upgrade_needed_status():
     msg = 'Needs manual upgrade, run the upgrade action'
     hookenv.status_set('blocked', msg)
 
 
-@when('kubernetes-worker.snaps.upgrade-specified')
+@when('kubernetes-worker.snap.resources-available',
+      'kubernetes-worker.snaps.upgrade-specified')
 def install_snaps():
-    check_resources_for_upgrade_needed()
+    any_file_changed(get_snap_resource_paths())
     channel = hookenv.config('channel')
     hookenv.status_set('maintenance', 'Installing kubectl snap')
     snap.install('kubectl', channel=channel, classic=True)
@@ -365,7 +380,7 @@ def start_worker(kube_api, kube_control, auth_control, cni):
     set_state('kubernetes-worker.config.created')
     restart_unit_services()
     update_kubelet_status()
-    apply_node_labels()
+    set_state('kubernetes-worker.label-config-required')
     remove_state('kubernetes-worker.restart-needed')
 
 
@@ -412,37 +427,54 @@ def render_and_launch_ingress():
         hookenv.close_port(443)
 
 
-@when('config.changed.labels', 'kubernetes-worker.config.created')
+@when('config.changed.labels')
+def handle_labels_changed():
+    set_state('kubernetes-worker.label-config-required')
+
+
+@when('kubernetes-worker.label-config-required',
+      'kubernetes-worker.config.created')
 def apply_node_labels():
-    ''' Parse the labels configuration option and apply the labels to the node.
-    '''
-    # scrub and try to format an array from the configuration option
+    ''' Parse the labels configuration option and apply the labels to the
+        node. '''
+    # Get the user's configured labels.
     config = hookenv.config()
-    user_labels = _parse_labels(config.get('labels'))
-
-    # For diffing sake, iterate the previous label set
-    if config.previous('labels'):
-        previous_labels = _parse_labels(config.previous('labels'))
-        hookenv.log('previous labels: {}'.format(previous_labels))
-    else:
-        # this handles first time run if there is no previous labels config
-        previous_labels = _parse_labels("")
-
-    # Calculate label removal
-    for label in previous_labels:
-        if label not in user_labels:
-            hookenv.log('Deleting node label {}'.format(label))
-            _apply_node_label(label, delete=True)
-        # if the label is in user labels we do nothing here, it will get set
-        # during the atomic update below.
-
-    # Atomically set a label
-    for label in user_labels:
-        _apply_node_label(label, overwrite=True)
-
-    # Set label for application name
-    _apply_node_label('juju-application={}'.format(hookenv.service_name()),
-                      overwrite=True)
+    user_labels = {}
+    for item in config.get('labels').split(' '):
+        if '=' in item:
+            key, val = item.split('=')
+            user_labels[key] = val
+        else:
+            hookenv.log('Skipping malformed option: {}.'.format(item))
+    # Collect the current label state.
+    current_labels = db.get('current_labels') or {}
+    # Remove any labels that the user has removed from the config.
+    for key in list(current_labels.keys()):
+        if key not in user_labels:
+            try:
+                remove_label(key)
+                del current_labels[key]
+                db.set('current_labels', current_labels)
+            except ApplyNodeLabelFailed as e:
+                hookenv.log(str(e))
+                return
+    # Add any new labels.
+    for key, val in user_labels.items():
+        try:
+            set_label(key, val)
+            current_labels[key] = val
+            db.set('current_labels', current_labels)
+        except ApplyNodeLabelFailed as e:
+            hookenv.log(str(e))
+            return
+    # Set the juju-application label.
+    try:
+        set_label('juju-application', hookenv.service_name())
+    except ApplyNodeLabelFailed as e:
+        hookenv.log(str(e))
+        return
+    # Label configuration complete.
+    remove_state('kubernetes-worker.label-config-required')
 
 
 @when_any('config.changed.kubelet-extra-args',
@@ -614,6 +646,7 @@ def configure_kube_proxy(api_servers, cluster_cidr):
     kube_proxy_opts['logtostderr'] = 'true'
     kube_proxy_opts['v'] = '0'
     kube_proxy_opts['master'] = random.choice(api_servers)
+    kube_proxy_opts['hostname-override'] = get_node_name()
 
     if b'lxc' in check_output('virt-what', shell=True):
         kube_proxy_opts['conntrack-max-per-core'] = '0'
@@ -880,8 +913,8 @@ def enable_gpu():
         return
 
     # Apply node labels
-    _apply_node_label('gpu=true', overwrite=True)
-    _apply_node_label('cuda=true', overwrite=True)
+    set_label('gpu', 'true')
+    set_label('cuda', 'true')
 
     set_state('kubernetes-worker.gpu.enabled')
     set_state('kubernetes-worker.restart-needed')
@@ -901,8 +934,8 @@ def disable_gpu():
     hookenv.log('Disabling gpu mode')
 
     # Remove node labels
-    _apply_node_label('gpu', delete=True)
-    _apply_node_label('cuda', delete=True)
+    remove_label('gpu')
+    remove_label('cuda')
 
     remove_state('kubernetes-worker.gpu.enabled')
     set_state('kubernetes-worker.restart-needed')
@@ -934,24 +967,23 @@ def request_kubelet_and_proxy_credentials(kube_control):
     # The kube-cotrol interface is created to support RBAC.
     # At this point we might as well do the right thing and return the hostname
     # even if it will only be used when we enable RBAC
-    nodeuser = 'system:node:{}'.format(gethostname().lower())
+    nodeuser = 'system:node:{}'.format(get_node_name().lower())
     kube_control.set_auth_request(nodeuser)
 
 
 @when('kube-control.connected')
 def catch_change_in_creds(kube_control):
     """Request a service restart in case credential updates were detected."""
-    nodeuser = 'system:node:{}'.format(gethostname().lower())
+    nodeuser = 'system:node:{}'.format(get_node_name().lower())
     creds = kube_control.get_auth_credentials(nodeuser)
-    if creds \
-            and data_changed('kube-control.creds', creds) \
-            and creds['user'] == nodeuser:
+    if creds and creds['user'] == nodeuser:
         # We need to cache the credentials here because if the
         # master changes (master leader dies and replaced by a new one)
         # the new master will have no recollection of our certs.
         db.set('credentials', creds)
         set_state('worker.auth.bootstrapped')
-        set_state('kubernetes-worker.restart-needed')
+        if data_changed('kube-control.creds', creds):
+            set_state('kubernetes-worker.restart-needed')
 
 
 @when_not('kube-control.connected')
@@ -989,87 +1021,46 @@ def _systemctl_is_active(application):
         return False
 
 
-class GetNodeNameFailed(Exception):
-    pass
-
-
 def get_node_name():
-    # Get all the nodes in the cluster
-    cmd = 'kubectl --kubeconfig={} get no -o=json'.format(kubeconfig_path)
-    cmd = cmd.split()
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        try:
-            raw = check_output(cmd)
-        except CalledProcessError:
-            hookenv.log('Failed to get node name for node %s.'
-                        ' Will retry.' % (gethostname()))
-            time.sleep(1)
-            continue
-
-        result = json.loads(raw.decode('utf-8'))
-        if 'items' in result:
-            for node in result['items']:
-                if 'status' not in node:
-                    continue
-                if 'addresses' not in node['status']:
-                    continue
-
-                # find the hostname
-                for address in node['status']['addresses']:
-                    if address['type'] == 'Hostname':
-                        if address['address'] == gethostname():
-                            return node['metadata']['name']
-
-                        # if we didn't match, just bail to the next node
-                        break
-        time.sleep(1)
-
-    msg = 'Failed to get node name for node %s' % gethostname()
-    raise GetNodeNameFailed(msg)
+    kubelet_extra_args = parse_extra_args('kubelet-extra-args')
+    cloud_provider = kubelet_extra_args.get('cloud-provider', '')
+    if cloud_provider == 'aws':
+        return getfqdn()
+    else:
+        return gethostname()
 
 
 class ApplyNodeLabelFailed(Exception):
     pass
 
 
-def _apply_node_label(label, delete=False, overwrite=False):
-    ''' Invoke kubectl to apply node label changes '''
-    nodename = get_node_name()
-
-    # TODO: Make this part of the kubectl calls instead of a special string
-    cmd_base = 'kubectl --kubeconfig={0} label node {1} {2}'
-
-    if delete is True:
-        label_key = label.split('=')[0]
-        cmd = cmd_base.format(kubeconfig_path, nodename, label_key)
-        cmd = cmd + '-'
-    else:
-        cmd = cmd_base.format(kubeconfig_path, nodename, label)
-        if overwrite:
-            cmd = '{} --overwrite'.format(cmd)
-    cmd = cmd.split()
-
+def persistent_call(cmd, retry_message):
     deadline = time.time() + 180
     while time.time() < deadline:
         code = subprocess.call(cmd)
         if code == 0:
-            break
-        hookenv.log('Failed to apply label %s, exit code %d. Will retry.' % (
-            label, code))
+            return True
+        hookenv.log(retry_message)
         time.sleep(1)
     else:
-        msg = 'Failed to apply label %s' % label
-        raise ApplyNodeLabelFailed(msg)
+        return False
 
 
-def _parse_labels(labels):
-    ''' Parse labels from a key=value string separated by space.'''
-    label_array = labels.split(' ')
-    sanitized_labels = []
-    for item in label_array:
-        if '=' in item:
-            sanitized_labels.append(item)
-        else:
-            hookenv.log('Skipping malformed option: {}'.format(item))
-    return sanitized_labels
+def set_label(label, value):
+    nodename = get_node_name()
+    cmd = 'kubectl --kubeconfig={0} label node {1} {2}={3} --overwrite'
+    cmd = cmd.format(kubeconfig_path, nodename, label, value)
+    cmd = cmd.split()
+    retry = 'Failed to apply label %s=%s. Will retry.' % (label, value)
+    if not persistent_call(cmd, retry):
+        raise ApplyNodeLabelFailed(retry)
+
+
+def remove_label(label):
+    nodename = get_node_name()
+    cmd = 'kubectl --kubeconfig={0} label node {1} {2}-'
+    cmd = cmd.format(kubeconfig_path, nodename, label)
+    cmd = cmd.split()
+    retry = 'Failed to remove label {0}. Will retry.'.format(label)
+    if not persistent_call(cmd, retry):
+        raise ApplyNodeLabelFailed(retry)

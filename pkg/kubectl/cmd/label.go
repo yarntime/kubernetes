@@ -62,7 +62,8 @@ type LabelOptions struct {
 	removeLabels []string
 
 	// Common shared fields
-	out io.Writer
+	out    io.Writer
+	errout io.Writer
 }
 
 var (
@@ -95,8 +96,11 @@ var (
 		kubectl label pods foo bar-`))
 )
 
-func NewCmdLabel(f cmdutil.Factory, out io.Writer) *cobra.Command {
-	options := &LabelOptions{}
+func NewCmdLabel(f cmdutil.Factory, out, errout io.Writer) *cobra.Command {
+	options := &LabelOptions{
+		errout: errout,
+	}
+
 	validArgs := cmdutil.ValidArgList(f)
 
 	cmd := &cobra.Command{
@@ -118,7 +122,7 @@ func NewCmdLabel(f cmdutil.Factory, out io.Writer) *cobra.Command {
 		ArgAliases: kubectl.ResourceAliases(validArgs),
 	}
 	cmdutil.AddPrinterFlags(cmd)
-	cmd.Flags().BoolVar(&options.overwrite, "overwrite", false, "If true, allow labels to be overwritten, otherwise reject label updates that overwrite existing labels.")
+	cmd.Flags().BoolVar(&options.overwrite, "overwrite", options.overwrite, "If true, allow labels to be overwritten, otherwise reject label updates that overwrite existing labels.")
 	cmd.Flags().BoolVar(&options.list, "list", options.list, "If true, display the labels for a given resource.")
 	cmd.Flags().BoolVar(&options.local, "local", options.local, "If true, label will NOT contact api-server but run locally.")
 	cmd.Flags().StringVarP(&options.selector, "selector", "l", options.selector, "Selector (label query) to filter on, not including uninitialized ones, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2).")
@@ -280,17 +284,22 @@ func (o *LabelOptions) RunLabel(f cmdutil.Factory, cmd *cobra.Command) error {
 				return err
 			}
 
+			indent := ""
+			if !one {
+				indent = " "
+				fmt.Fprintf(o.errout, "Listing labels for %s.%s/%s:\n", info.Mapping.GroupVersionKind.Kind, info.Mapping.GroupVersionKind.Group, info.Name)
+			}
 			for k, v := range accessor.GetLabels() {
-				fmt.Fprintf(o.out, "%s=%s\n", k, v)
+				fmt.Fprintf(o.out, "%s%s=%s\n", indent, k, v)
 			}
 
 			return nil
 		}
 
-		if o.outputFormat != "" {
-			return f.PrintObject(cmd, o.local, r.Mapper().RESTMapper, outputObj, o.out)
+		if len(o.outputFormat) > 0 {
+			return cmdutil.PrintObject(cmd, outputObj, o.out)
 		}
-		f.PrintSuccess(false, o.out, info.Mapping.Resource, info.Name, o.dryrun, dataChangeMsg)
+		cmdutil.PrintSuccess(false, o.out, info.Object, o.dryrun, dataChangeMsg)
 		return nil
 	})
 }

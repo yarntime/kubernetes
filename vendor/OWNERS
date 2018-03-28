@@ -1,4 +1,2 @@
-reviewers:
-  - vendor-reviewers
 approvers:
-  - vendor-approvers
+- dep-approvers

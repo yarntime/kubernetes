@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/golang/glog"
 	"github.com/gophercloud/gophercloud"
@@ -60,7 +61,7 @@ func (i *Instances) CurrentNodeName(ctx context.Context, hostname string) (types
 	if err != nil {
 		return "", err
 	}
-	return types.NodeName(md.Hostname), nil
+	return types.NodeName(strings.Split(md.Hostname, ".")[0]), nil
 }
 
 // AddSSHKeyToAllInstances is not implemented for OpenStack
@@ -107,7 +108,7 @@ func (i *Instances) NodeAddressesByProviderID(ctx context.Context, providerID st
 
 // ExternalID returns the cloud provider ID of the specified instance (deprecated).
 func (i *Instances) ExternalID(ctx context.Context, name types.NodeName) (string, error) {
-	srv, err := getServerByName(i.compute, name, true)
+	srv, err := getServerByName(i.compute, name)
 	if err != nil {
 		if err == ErrNotFound {
 			return "", cloudprovider.InstanceNotFound
@@ -155,7 +156,7 @@ func (os *OpenStack) InstanceID() (string, error) {
 
 // InstanceID returns the cloud provider ID of the specified instance.
 func (i *Instances) InstanceID(ctx context.Context, name types.NodeName) (string, error) {
-	srv, err := getServerByName(i.compute, name, true)
+	srv, err := getServerByName(i.compute, name)
 	if err != nil {
 		if err == ErrNotFound {
 			return "", cloudprovider.InstanceNotFound
@@ -188,7 +189,7 @@ func (i *Instances) InstanceTypeByProviderID(ctx context.Context, providerID str
 
 // InstanceType returns the type of the specified instance.
 func (i *Instances) InstanceType(ctx context.Context, name types.NodeName) (string, error) {
-	srv, err := getServerByName(i.compute, name, true)
+	srv, err := getServerByName(i.compute, name)
 
 	if err != nil {
 		return "", err

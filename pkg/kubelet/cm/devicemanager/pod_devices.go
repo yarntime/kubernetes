@@ -20,7 +20,7 @@ import (
 	"github.com/golang/glog"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1alpha"
+	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 )
 
@@ -28,7 +28,7 @@ type deviceAllocateInfo struct {
 	// deviceIds contains device Ids allocated to this container for the given resourceName.
 	deviceIds sets.String
 	// allocResp contains cached rpc AllocateResponse.
-	allocResp *pluginapi.AllocateResponse
+	allocResp *pluginapi.ContainerAllocateResponse
 }
 
 type resourceAllocateInfo map[string]deviceAllocateInfo // Keyed by resourceName.
@@ -43,7 +43,7 @@ func (pdev podDevices) pods() sets.String {
 	return ret
 }
 
-func (pdev podDevices) insert(podUID, contName, resource string, devices sets.String, resp *pluginapi.AllocateResponse) {
+func (pdev podDevices) insert(podUID, contName, resource string, devices sets.String, resp *pluginapi.ContainerAllocateResponse) {
 	if _, podExists := pdev[podUID]; !podExists {
 		pdev[podUID] = make(containerDevices)
 	}
@@ -117,7 +117,9 @@ func (pdev podDevices) devices() map[string]sets.String {
 				if _, exists := ret[resource]; !exists {
 					ret[resource] = sets.NewString()
 				}
-				ret[resource] = ret[resource].Union(devices.deviceIds)
+				if devices.allocResp != nil {
+					ret[resource] = ret[resource].Union(devices.deviceIds)
+				}
 			}
 		}
 	}
@@ -166,7 +168,7 @@ func (pdev podDevices) fromCheckpointData(data []podDevicesCheckpointEntry) {
 		for _, devID := range entry.DeviceIDs {
 			devIDs.Insert(devID)
 		}
-		allocResp := &pluginapi.AllocateResponse{}
+		allocResp := &pluginapi.ContainerAllocateResponse{}
 		err := allocResp.Unmarshal(entry.AllocResp)
 		if err != nil {
 			glog.Errorf("Can't unmarshal allocResp for %v %v %v: %v", entry.PodUID, entry.ContainerName, entry.ResourceName, err)

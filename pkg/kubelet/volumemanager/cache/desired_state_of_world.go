@@ -26,9 +26,9 @@ import (
 
 	"k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 	"k8s.io/kubernetes/pkg/volume/util/types"
-	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
 )
 
 // DesiredStateOfWorld defines a set of thread-safe operations for the kubelet
@@ -206,7 +206,7 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 		// For attachable volumes, use the unique volume name as reported by
 		// the plugin.
 		volumeName, err =
-			volumehelper.GetUniqueVolumeNameFromSpec(volumePlugin, volumeSpec)
+			util.GetUniqueVolumeNameFromSpec(volumePlugin, volumeSpec)
 		if err != nil {
 			return "", fmt.Errorf(
 				"failed to GetUniqueVolumeNameFromSpec for volumeSpec %q using volume plugin %q err=%v",
@@ -217,19 +217,17 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 	} else {
 		// For non-attachable volumes, generate a unique name based on the pod
 		// namespace and name and the name of the volume within the pod.
-		volumeName = volumehelper.GetUniqueVolumeNameForNonAttachableVolume(podName, volumePlugin, volumeSpec)
+		volumeName = util.GetUniqueVolumeNameForNonAttachableVolume(podName, volumePlugin, volumeSpec)
 	}
 
-	volumeObj, volumeExists := dsw.volumesToMount[volumeName]
-	if !volumeExists {
-		volumeObj = volumeToMount{
+	if _, volumeExists := dsw.volumesToMount[volumeName]; !volumeExists {
+		dsw.volumesToMount[volumeName] = volumeToMount{
 			volumeName:         volumeName,
 			podsToMount:        make(map[types.UniquePodName]podToMount),
 			pluginIsAttachable: attachable,
 			volumeGidValue:     volumeGidValue,
 			reportedInUse:      false,
 		}
-		dsw.volumesToMount[volumeName] = volumeObj
 	}
 
 	// Create new podToMount object. If it already exists, it is refreshed with

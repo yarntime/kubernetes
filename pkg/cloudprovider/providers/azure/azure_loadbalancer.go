@@ -63,14 +63,24 @@ const (
 	// to specify that the service should be exposed using an Azure security rule
 	// that may be shared with other service, trading specificity of rules for an
 	// increase in the number of services that can be exposed. This relies on the
-	// Azure "augmented security rules" feature which at the time of writing is in
-	// preview and available only in certain regions.
+	// Azure "augmented security rules" feature.
 	ServiceAnnotationSharedSecurityRule = "service.beta.kubernetes.io/azure-shared-securityrule"
+
+	// ServiceAnnotationLoadBalancerResourceGroup is the annotation used on the service
+	// to specify the resource group of load balancer objects that are not in the same resource group as the cluster.
+	ServiceAnnotationLoadBalancerResourceGroup = "service.beta.kubernetes.io/azure-load-balancer-resource-group"
+
+	// ServiceAnnotationAllowedServiceTag is the annotation used on the service
+	// to specify a list of allowed service tags separated by comma
+	ServiceAnnotationAllowedServiceTag = "service.beta.kubernetes.io/azure-allowed-service-tags"
 )
 
-// ServiceAnnotationLoadBalancerResourceGroup is the annotation used on the service
-// to specify the resource group of load balancer objects that are not in the same resource group as the cluster.
-const ServiceAnnotationLoadBalancerResourceGroup = "service.beta.kubernetes.io/azure-load-balancer-resource-group"
+var (
+	// supportedServiceTags holds a list of supported service tags on Azure.
+	// Refer https://docs.microsoft.com/en-us/azure/virtual-network/security-overview#service-tags for more information.
+	supportedServiceTags = sets.NewString("VirtualNetwork", "VIRTUAL_NETWORK", "AzureLoadBalancer", "AZURE_LOADBALANCER",
+		"Internet", "INTERNET", "AzureTrafficManager", "Storage", "Sql")
+)
 
 // GetLoadBalancer returns whether the specified load balancer exists, and
 // if so, what its status is.
@@ -233,7 +243,7 @@ func (az *Cloud) getServiceLoadBalancer(service *v1.Service, clusterName string,
 }
 
 // selectLoadBalancer selects load balancer for the service in the cluster.
-// The selection algorithm selects the the load balancer with currently has
+// The selection algorithm selects the load balancer which currently has
 // the minimum lb rules. If there are multiple LBs with same number of rules,
 // then selects the first one (sorted based on name).
 func (az *Cloud) selectLoadBalancer(clusterName string, service *v1.Service, existingLBs *[]network.LoadBalancer, nodes []*v1.Node) (selectedLB *network.LoadBalancer, existsLb bool, err error) {
@@ -819,7 +829,7 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 		ports = []v1.ServicePort{}
 	}
 
-	sg, err := az.SecurityGroupsClient.Get(az.ResourceGroup, az.SecurityGroupName, "")
+	sg, err := az.getSecurityGroup()
 	if err != nil {
 		return nil, err
 	}
@@ -839,14 +849,21 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 	if err != nil {
 		return nil, err
 	}
+	serviceTags, err := getServiceTags(service)
+	if err != nil {
+		return nil, err
+	}
 	var sourceAddressPrefixes []string
-	if sourceRanges == nil || serviceapi.IsAllowAll(sourceRanges) {
+	if (sourceRanges == nil || serviceapi.IsAllowAll(sourceRanges)) && len(serviceTags) == 0 {
 		if !requiresInternalLoadBalancer(service) {
 			sourceAddressPrefixes = []string{"Internet"}
 		}
 	} else {
 		for _, ip := range sourceRanges {
 			sourceAddressPrefixes = append(sourceAddressPrefixes, ip.String())
+		}
+		for _, serviceTag := range serviceTags {
+			sourceAddressPrefixes = append(sourceAddressPrefixes, serviceTag)
 		}
 	}
 	expectedSecurityRules := []network.SecurityRule{}
@@ -1319,4 +1336,24 @@ func useSharedSecurityRule(service *v1.Service) bool {
 	}
 
 	return false
+}
+
+func getServiceTags(service *v1.Service) ([]string, error) {
+	if serviceTags, found := service.Annotations[ServiceAnnotationAllowedServiceTag]; found {
+		tags := strings.Split(strings.TrimSpace(serviceTags), ",")
+		for _, tag := range tags {
+			// Storage and Sql service tags support setting regions with suffix ".Region"
+			if strings.HasPrefix(tag, "Storage.") || strings.HasPrefix(tag, "Sql.") {
+				continue
+			}
+
+			if !supportedServiceTags.Has(tag) {
+				return nil, fmt.Errorf("only %q are allowed in service tags", supportedServiceTags.List())
+			}
+		}
+
+		return tags, nil
+	}
+
+	return nil, nil
 }

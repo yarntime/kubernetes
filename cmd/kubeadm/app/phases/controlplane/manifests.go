@@ -77,31 +77,34 @@ func GetStaticPodSpecs(cfg *kubeadmapi.MasterConfiguration, k8sVersion *version.
 	// Prepare static pod specs
 	staticPodSpecs := map[string]v1.Pod{
 		kubeadmconstants.KubeAPIServer: staticpodutil.ComponentPod(v1.Container{
-			Name:          kubeadmconstants.KubeAPIServer,
-			Image:         images.GetCoreImage(kubeadmconstants.KubeAPIServer, cfg.GetControlPlaneImageRepository(), cfg.KubernetesVersion, cfg.UnifiedControlPlaneImage),
-			Command:       getAPIServerCommand(cfg, k8sVersion),
-			VolumeMounts:  staticpodutil.VolumeMountMapToSlice(mounts.GetVolumeMounts(kubeadmconstants.KubeAPIServer)),
-			LivenessProbe: staticpodutil.ComponentProbe(cfg, kubeadmconstants.KubeAPIServer, int(cfg.API.BindPort), "/healthz", v1.URISchemeHTTPS),
-			Resources:     staticpodutil.ComponentResources("250m"),
-			Env:           getProxyEnvVars(),
+			Name:            kubeadmconstants.KubeAPIServer,
+			Image:           images.GetCoreImage(kubeadmconstants.KubeAPIServer, cfg.GetControlPlaneImageRepository(), cfg.KubernetesVersion, cfg.UnifiedControlPlaneImage),
+			ImagePullPolicy: cfg.ImagePullPolicy,
+			Command:         getAPIServerCommand(cfg, k8sVersion),
+			VolumeMounts:    staticpodutil.VolumeMountMapToSlice(mounts.GetVolumeMounts(kubeadmconstants.KubeAPIServer)),
+			LivenessProbe:   staticpodutil.ComponentProbe(cfg, kubeadmconstants.KubeAPIServer, int(cfg.API.BindPort), "/healthz", v1.URISchemeHTTPS),
+			Resources:       staticpodutil.ComponentResources("250m"),
+			Env:             getProxyEnvVars(),
 		}, mounts.GetVolumes(kubeadmconstants.KubeAPIServer)),
 		kubeadmconstants.KubeControllerManager: staticpodutil.ComponentPod(v1.Container{
-			Name:          kubeadmconstants.KubeControllerManager,
-			Image:         images.GetCoreImage(kubeadmconstants.KubeControllerManager, cfg.GetControlPlaneImageRepository(), cfg.KubernetesVersion, cfg.UnifiedControlPlaneImage),
-			Command:       getControllerManagerCommand(cfg, k8sVersion),
-			VolumeMounts:  staticpodutil.VolumeMountMapToSlice(mounts.GetVolumeMounts(kubeadmconstants.KubeControllerManager)),
-			LivenessProbe: staticpodutil.ComponentProbe(cfg, kubeadmconstants.KubeControllerManager, 10252, "/healthz", v1.URISchemeHTTP),
-			Resources:     staticpodutil.ComponentResources("200m"),
-			Env:           getProxyEnvVars(),
+			Name:            kubeadmconstants.KubeControllerManager,
+			Image:           images.GetCoreImage(kubeadmconstants.KubeControllerManager, cfg.GetControlPlaneImageRepository(), cfg.KubernetesVersion, cfg.UnifiedControlPlaneImage),
+			ImagePullPolicy: cfg.ImagePullPolicy,
+			Command:         getControllerManagerCommand(cfg, k8sVersion),
+			VolumeMounts:    staticpodutil.VolumeMountMapToSlice(mounts.GetVolumeMounts(kubeadmconstants.KubeControllerManager)),
+			LivenessProbe:   staticpodutil.ComponentProbe(cfg, kubeadmconstants.KubeControllerManager, 10252, "/healthz", v1.URISchemeHTTP),
+			Resources:       staticpodutil.ComponentResources("200m"),
+			Env:             getProxyEnvVars(),
 		}, mounts.GetVolumes(kubeadmconstants.KubeControllerManager)),
 		kubeadmconstants.KubeScheduler: staticpodutil.ComponentPod(v1.Container{
-			Name:          kubeadmconstants.KubeScheduler,
-			Image:         images.GetCoreImage(kubeadmconstants.KubeScheduler, cfg.GetControlPlaneImageRepository(), cfg.KubernetesVersion, cfg.UnifiedControlPlaneImage),
-			Command:       getSchedulerCommand(cfg),
-			VolumeMounts:  staticpodutil.VolumeMountMapToSlice(mounts.GetVolumeMounts(kubeadmconstants.KubeScheduler)),
-			LivenessProbe: staticpodutil.ComponentProbe(cfg, kubeadmconstants.KubeScheduler, 10251, "/healthz", v1.URISchemeHTTP),
-			Resources:     staticpodutil.ComponentResources("100m"),
-			Env:           getProxyEnvVars(),
+			Name:            kubeadmconstants.KubeScheduler,
+			Image:           images.GetCoreImage(kubeadmconstants.KubeScheduler, cfg.GetControlPlaneImageRepository(), cfg.KubernetesVersion, cfg.UnifiedControlPlaneImage),
+			ImagePullPolicy: cfg.ImagePullPolicy,
+			Command:         getSchedulerCommand(cfg),
+			VolumeMounts:    staticpodutil.VolumeMountMapToSlice(mounts.GetVolumeMounts(kubeadmconstants.KubeScheduler)),
+			LivenessProbe:   staticpodutil.ComponentProbe(cfg, kubeadmconstants.KubeScheduler, 10251, "/healthz", v1.URISchemeHTTP),
+			Resources:       staticpodutil.ComponentResources("100m"),
+			Env:             getProxyEnvVars(),
 		}, mounts.GetVolumes(kubeadmconstants.KubeScheduler)),
 	}
 
@@ -187,21 +190,37 @@ func getAPIServerCommand(cfg *kubeadmapi.MasterConfiguration, k8sVersion *versio
 	command = append(command, kubeadmutil.BuildArgumentListFromMap(defaultArguments, cfg.APIServerExtraArgs)...)
 	command = append(command, getAuthzParameters(cfg.AuthorizationModes)...)
 
-	// Check if the user decided to use an external etcd cluster
+	// If the user set endpoints for an external etcd cluster
 	if len(cfg.Etcd.Endpoints) > 0 {
 		command = append(command, fmt.Sprintf("--etcd-servers=%s", strings.Join(cfg.Etcd.Endpoints, ",")))
-	} else {
-		command = append(command, "--etcd-servers=http://127.0.0.1:2379")
-	}
 
-	// Is etcd secured?
-	if cfg.Etcd.CAFile != "" {
-		command = append(command, fmt.Sprintf("--etcd-cafile=%s", cfg.Etcd.CAFile))
-	}
-	if cfg.Etcd.CertFile != "" && cfg.Etcd.KeyFile != "" {
-		etcdClientFileArg := fmt.Sprintf("--etcd-certfile=%s", cfg.Etcd.CertFile)
-		etcdKeyFileArg := fmt.Sprintf("--etcd-keyfile=%s", cfg.Etcd.KeyFile)
-		command = append(command, etcdClientFileArg, etcdKeyFileArg)
+		// Use any user supplied etcd certificates
+		if cfg.Etcd.CAFile != "" {
+			command = append(command, fmt.Sprintf("--etcd-cafile=%s", cfg.Etcd.CAFile))
+		}
+		if cfg.Etcd.CertFile != "" && cfg.Etcd.KeyFile != "" {
+			etcdClientFileArg := fmt.Sprintf("--etcd-certfile=%s", cfg.Etcd.CertFile)
+			etcdKeyFileArg := fmt.Sprintf("--etcd-keyfile=%s", cfg.Etcd.KeyFile)
+			command = append(command, etcdClientFileArg, etcdKeyFileArg)
+		}
+	} else {
+		// Default to etcd static pod on localhost
+		etcdEndpointsArg := "--etcd-servers=https://127.0.0.1:2379"
+		etcdCAFileArg := fmt.Sprintf("--etcd-cafile=%s", filepath.Join(cfg.CertificatesDir, kubeadmconstants.EtcdCACertName))
+		etcdClientFileArg := fmt.Sprintf("--etcd-certfile=%s", filepath.Join(cfg.CertificatesDir, kubeadmconstants.APIServerEtcdClientCertName))
+		etcdKeyFileArg := fmt.Sprintf("--etcd-keyfile=%s", filepath.Join(cfg.CertificatesDir, kubeadmconstants.APIServerEtcdClientKeyName))
+		command = append(command, etcdEndpointsArg, etcdCAFileArg, etcdClientFileArg, etcdKeyFileArg)
+
+		// Warn for unused user supplied variables
+		if cfg.Etcd.CAFile != "" {
+			fmt.Printf("[controlplane] WARNING: Configuration for %s CAFile, %s, is unused without providing Endpoints for external %s\n", kubeadmconstants.Etcd, cfg.Etcd.CAFile, kubeadmconstants.Etcd)
+		}
+		if cfg.Etcd.CertFile != "" {
+			fmt.Printf("[controlplane] WARNING: Configuration for %s CertFile, %s, is unused without providing Endpoints for external %s\n", kubeadmconstants.Etcd, cfg.Etcd.CertFile, kubeadmconstants.Etcd)
+		}
+		if cfg.Etcd.KeyFile != "" {
+			fmt.Printf("[controlplane] WARNING: Configuration for %s KeyFile, %s, is unused without providing Endpoints for external %s\n", kubeadmconstants.Etcd, cfg.Etcd.KeyFile, kubeadmconstants.Etcd)
+		}
 	}
 
 	if cfg.CloudProvider != "" {
@@ -219,6 +238,16 @@ func getAPIServerCommand(cfg *kubeadmapi.MasterConfiguration, k8sVersion *versio
 
 	if features.Enabled(cfg.FeatureGates, features.DynamicKubeletConfig) {
 		command = append(command, "--feature-gates=DynamicKubeletConfig=true")
+	}
+
+	if features.Enabled(cfg.FeatureGates, features.Auditing) {
+		command = append(command, "--audit-policy-file="+kubeadmconstants.GetStaticPodAuditPolicyFile())
+		command = append(command, "--audit-log-path="+filepath.Join(kubeadmconstants.StaticPodAuditPolicyLogDir, kubeadmconstants.AuditPolicyLogFile))
+		if cfg.AuditPolicyConfiguration.LogMaxAge == nil {
+			command = append(command, fmt.Sprintf("--audit-log-maxage=%d", kubeadmapiext.DefaultAuditPolicyLogMaxAge))
+		} else {
+			command = append(command, fmt.Sprintf("--audit-log-maxage=%d", *cfg.AuditPolicyConfiguration.LogMaxAge))
+		}
 	}
 
 	return command

@@ -17,8 +17,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubeletconfigv1alpha1 "k8s.io/kubernetes/pkg/kubelet/apis/kubeletconfig/v1alpha1"
+	kubeletconfigv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/kubeletconfig/v1beta1"
 	kubeproxyconfigv1alpha1 "k8s.io/kubernetes/pkg/proxy/apis/kubeproxyconfig/v1alpha1"
 )
 
@@ -50,6 +51,10 @@ type MasterConfiguration struct {
 	// If not specified, defaults to Node and RBAC, meaning both the node
 	// authorizer and RBAC are enabled.
 	AuthorizationModes []string `json:"authorizationModes,omitempty"`
+	// NoTaintMaster will, if set, suppress the tainting of the
+	// master node allowing workloads to be run on it (e.g. in
+	// single node configurations).
+	NoTaintMaster bool `json:"noTaintMaster,omitempty"`
 
 	// Mark the controller and api server pods as privileged as some cloud
 	// controllers like openstack need escalated privileges under some conditions
@@ -59,8 +64,15 @@ type MasterConfiguration struct {
 	// Token is used for establishing bidirectional trust between nodes and masters.
 	// Used for joining nodes in the cluster.
 	Token string `json:"token"`
-	// TokenTTL is a ttl for Token. Defaults to 24h.
+	// TokenTTL defines the ttl for Token. Defaults to 24h.
 	TokenTTL *metav1.Duration `json:"tokenTTL,omitempty"`
+	// TokenUsages describes the ways in which this token can be used.
+	TokenUsages []string `json:"tokenUsages,omitempty"`
+	// Extra groups that this token will authenticate as when used for authentication
+	TokenGroups []string `json:"tokenGroups,omitempty"`
+
+	// CRISocket is used to retrieve container runtime info.
+	CRISocket string `json:"criSocket,omitempty"`
 
 	// APIServerExtraArgs is a set of extra flags to pass to the API Server or override
 	// default ones in form of <flagname>=<value>.
@@ -93,9 +105,14 @@ type MasterConfiguration struct {
 
 	// ImageRepository what container registry to pull control plane images from
 	ImageRepository string `json:"imageRepository"`
+	// ImagePullPolicy that control plane images. Can be Always, IfNotPresent or Never.
+	ImagePullPolicy v1.PullPolicy `json:"imagePullPolicy,omitempty"`
 	// UnifiedControlPlaneImage specifies if a specific container image should
 	// be used for all control plane components.
 	UnifiedControlPlaneImage string `json:"unifiedControlPlaneImage"`
+
+	// AuditPolicyConfiguration defines the options for the api server audit system
+	AuditPolicyConfiguration AuditPolicyConfiguration `json:"auditPolicy"`
 
 	// FeatureGates enabled by the user.
 	FeatureGates map[string]bool `json:"featureGates,omitempty"`
@@ -103,8 +120,10 @@ type MasterConfiguration struct {
 
 // API struct contains elements of API server address.
 type API struct {
-	// AdvertiseAddress sets the address for the API server to advertise.
+	// AdvertiseAddress sets the IP address for the API server to advertise.
 	AdvertiseAddress string `json:"advertiseAddress"`
+	// ControlPlaneEndpoint sets the DNS address for the API server
+	ControlPlaneEndpoint string `json:"controlPlaneEndpoint"`
 	// BindPort sets the secure port for the API Server to bind to.
 	// Defaults to 6443.
 	BindPort int32 `json:"bindPort"`
@@ -155,6 +174,10 @@ type Etcd struct {
 	Image string `json:"image"`
 	// SelfHosted holds configuration for self-hosting etcd.
 	SelfHosted *SelfHostedEtcd `json:"selfHosted,omitempty"`
+	// ServerCertSANs sets extra Subject Alternative Names for the etcd server signing cert.
+	ServerCertSANs []string `json:"serverCertSANs,omitempty"`
+	// PeerCertSANs sets extra Subject Alternative Names for the etcd peer signing cert.
+	PeerCertSANs []string `json:"peerCertSANs,omitempty"`
 }
 
 // SelfHostedEtcd describes options required to configure self-hosted etcd.
@@ -199,6 +222,8 @@ type NodeConfiguration struct {
 	TLSBootstrapToken string `json:"tlsBootstrapToken"`
 	// Token is used for both discovery and TLS bootstrapping.
 	Token string `json:"token"`
+	// CRISocket is used to retrieve container runtime info.
+	CRISocket string `json:"criSocket,omitempty"`
 
 	// DiscoveryTokenCACertHashes specifies a set of public key pins to verify
 	// when token-based discovery is used. The root CA found during discovery
@@ -221,7 +246,7 @@ type NodeConfiguration struct {
 
 // KubeletConfiguration contains elements describing initial remote configuration of kubelet.
 type KubeletConfiguration struct {
-	BaseConfig *kubeletconfigv1alpha1.KubeletConfiguration `json:"baseConfig,omitempty"`
+	BaseConfig *kubeletconfigv1beta1.KubeletConfiguration `json:"baseConfig,omitempty"`
 }
 
 // HostPathMount contains elements describing volumes that are mounted from the
@@ -234,9 +259,22 @@ type HostPathMount struct {
 	HostPath string `json:"hostPath"`
 	// MountPath is the path inside the pod where hostPath will be mounted.
 	MountPath string `json:"mountPath"`
+	// Writable controls write access to the volume
+	Writable bool `json:"writable,omitempty"`
 }
 
 // KubeProxy contains elements describing the proxy configuration.
 type KubeProxy struct {
 	Config *kubeproxyconfigv1alpha1.KubeProxyConfiguration `json:"config,omitempty"`
+}
+
+// AuditPolicyConfiguration holds the options for configuring the api server audit policy.
+type AuditPolicyConfiguration struct {
+	// Path is the local path to an audit policy.
+	Path string `json:"path"`
+	// LogDir is the local path to the directory where logs should be stored.
+	LogDir string `json:"logDir"`
+	// LogMaxAge is the number of days logs will be stored for. 0 indicates forever.
+	LogMaxAge *int32 `json:"logMaxAge,omitempty"`
+	//TODO(chuckha) add other options for audit policy.
 }

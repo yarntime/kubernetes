@@ -17,11 +17,11 @@ limitations under the License.
 package storage
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
-	"golang.org/x/net/context"
 	"k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -396,7 +396,7 @@ func TestWatch(t *testing.T) {
 		[]fields.Set{
 			{"metadata.name": "foo"},
 		},
-		// not matchin fields
+		// not matching fields
 		[]fields.Set{
 			{"metadata.name": "bar"},
 		},

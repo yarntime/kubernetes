@@ -26,7 +26,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -116,24 +115,29 @@ type EnvOptions struct {
 	From              string
 	Prefix            string
 
-	Mapper  meta.RESTMapper
 	Builder *resource.Builder
 	Infos   []*resource.Info
-	Encoder runtime.Encoder
 
 	Cmd *cobra.Command
 
 	UpdatePodSpecForObject func(obj runtime.Object, fn func(*v1.PodSpec) error) (bool, error)
-	PrintObject            func(cmd *cobra.Command, isLocal bool, mapper meta.RESTMapper, obj runtime.Object, out io.Writer) error
+}
+
+// NewEnvOptions returns an EnvOptions indicating all containers in the selected
+// pod templates are selected by default and allowing environment to be overwritten
+func NewEnvOptions(in io.Reader, out, errout io.Writer) *EnvOptions {
+	return &EnvOptions{
+		Out:               out,
+		Err:               errout,
+		In:                in,
+		ContainerSelector: "*",
+		Overwrite:         true,
+	}
 }
 
 // NewCmdEnv implements the OpenShift cli env command
 func NewCmdEnv(f cmdutil.Factory, in io.Reader, out, errout io.Writer) *cobra.Command {
-	options := &EnvOptions{
-		Out: out,
-		Err: errout,
-		In:  in,
-	}
+	options := NewEnvOptions(in, out, errout)
 	cmd := &cobra.Command{
 		Use: "env RESOURCE/NAME KEY_1=VAL_1 ... KEY_N=VAL_N",
 		DisableFlagsInUseLine: true,
@@ -147,7 +151,7 @@ func NewCmdEnv(f cmdutil.Factory, in io.Reader, out, errout io.Writer) *cobra.Co
 	}
 	usage := "the resource to update the env"
 	cmdutil.AddFilenameOptionFlags(cmd, &options.FilenameOptions, usage)
-	cmd.Flags().StringVarP(&options.ContainerSelector, "containers", "c", "*", "The names of containers in the selected pod templates to change - may use wildcards")
+	cmd.Flags().StringVarP(&options.ContainerSelector, "containers", "c", options.ContainerSelector, "The names of containers in the selected pod templates to change - may use wildcards")
 	cmd.Flags().StringP("from", "", "", "The name of a resource from which to inject environment variables")
 	cmd.Flags().StringP("prefix", "", "", "Prefix to append to variable names")
 	cmd.Flags().StringArrayVarP(&options.EnvParams, "env", "e", options.EnvParams, "Specify a key-value pair for an environment variable to set into each container.")
@@ -156,7 +160,7 @@ func NewCmdEnv(f cmdutil.Factory, in io.Reader, out, errout io.Writer) *cobra.Co
 	cmd.Flags().StringVarP(&options.Selector, "selector", "l", options.Selector, "Selector (label query) to filter on")
 	cmd.Flags().BoolVar(&options.Local, "local", options.Local, "If true, set env will NOT contact api-server but run locally.")
 	cmd.Flags().BoolVar(&options.All, "all", options.All, "If true, select all resources in the namespace of the specified resource types")
-	cmd.Flags().BoolVar(&options.Overwrite, "overwrite", true, "If true, allow environment to be overwritten, otherwise reject updates that overwrite existing environment.")
+	cmd.Flags().BoolVar(&options.Overwrite, "overwrite", options.Overwrite, "If true, allow environment to be overwritten, otherwise reject updates that overwrite existing environment.")
 
 	cmdutil.AddDryRunFlag(cmd)
 	cmdutil.AddPrinterFlags(cmd)
@@ -189,9 +193,7 @@ func (o *EnvOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args []stri
 		return cmdutil.UsageErrorf(cmd, "one or more resources must be specified as <resource> <name> or <resource>/<name>")
 	}
 
-	o.Mapper, _ = f.Object()
 	o.UpdatePodSpecForObject = f.UpdatePodSpecForObject
-	o.Encoder = f.JSONEncoder()
 	o.ContainerSelector = cmdutil.GetFlagString(cmd, "containers")
 	o.List = cmdutil.GetFlagBool(cmd, "list")
 	o.Resolve = cmdutil.GetFlagBool(cmd, "resolve")
@@ -202,7 +204,6 @@ func (o *EnvOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args []stri
 	o.From = cmdutil.GetFlagString(cmd, "from")
 	o.Prefix = cmdutil.GetFlagString(cmd, "prefix")
 	o.DryRun = cmdutil.GetDryRunFlag(cmd)
-	o.PrintObject = f.PrintObject
 
 	o.EnvArgs = envArgs
 	o.Resources = resources
@@ -325,7 +326,7 @@ func (o *EnvOptions) RunEnv(f cmdutil.Factory) error {
 	if err != nil {
 		return err
 	}
-	patches := CalculatePatches(o.Infos, o.Encoder, func(info *resource.Info) ([]byte, error) {
+	patches := CalculatePatches(o.Infos, cmdutil.InternalVersionJSONEncoder(), func(info *resource.Info) ([]byte, error) {
 		info.Object = info.AsVersioned()
 		_, err := o.UpdatePodSpecForObject(info.Object, func(spec *v1.PodSpec) error {
 			resolutionErrorsEncountered := false
@@ -393,7 +394,7 @@ func (o *EnvOptions) RunEnv(f cmdutil.Factory) error {
 		})
 
 		if err == nil {
-			return runtime.Encode(o.Encoder, info.Object)
+			return runtime.Encode(cmdutil.InternalVersionJSONEncoder(), info.Object)
 		}
 		return nil, err
 	})
@@ -416,8 +417,8 @@ func (o *EnvOptions) RunEnv(f cmdutil.Factory) error {
 			continue
 		}
 
-		if o.PrintObject != nil && (o.Local || o.DryRun) {
-			if err := o.PrintObject(o.Cmd, o.Local, o.Mapper, patch.Info.AsVersioned(), o.Out); err != nil {
+		if o.Local || o.DryRun {
+			if err := cmdutil.PrintObject(o.Cmd, patch.Info.AsVersioned(), o.Out); err != nil {
 				return err
 			}
 			continue
@@ -437,13 +438,13 @@ func (o *EnvOptions) RunEnv(f cmdutil.Factory) error {
 		}
 
 		if len(o.Output) > 0 {
-			if err := o.PrintObject(o.Cmd, o.Local, o.Mapper, info.AsVersioned(), o.Out); err != nil {
+			if err := cmdutil.PrintObject(o.Cmd, info.AsVersioned(), o.Out); err != nil {
 				return err
 			}
 			continue
 		}
 
-		f.PrintSuccess(o.ShortOutput, o.Out, info.Mapping.Resource, info.Name, false, "env updated")
+		cmdutil.PrintSuccess(o.ShortOutput, o.Out, info.Object, false, "env updated")
 	}
 	return utilerrors.NewAggregate(allErrs)
 }

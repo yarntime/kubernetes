@@ -23,7 +23,7 @@ DOCKER_OPTS=${DOCKER_OPTS:-""}
 DOCKER=(docker ${DOCKER_OPTS})
 DOCKERIZE_KUBELET=${DOCKERIZE_KUBELET:-""}
 ALLOW_PRIVILEGED=${ALLOW_PRIVILEGED:-""}
-ALLOW_SECURITY_CONTEXT=${ALLOW_SECURITY_CONTEXT:-""}
+DENY_SECURITY_CONTEXT_ADMISSION=${DENY_SECURITY_CONTEXT_ADMISSION:-""}
 PSP_ADMISSION=${PSP_ADMISSION:-""}
 NODE_ADMISSION=${NODE_ADMISSION:-""}
 RUNTIME_CONFIG=${RUNTIME_CONFIG:-""}
@@ -57,7 +57,7 @@ EVICTION_PRESSURE_TRANSITION_PERIOD=${EVICTION_PRESSURE_TRANSITION_PERIOD:-"1m"}
 # and we don't know the IP of the DNS pod to pass in as --cluster-dns.
 # To set this up by hand, set this flag and change DNS_SERVER_IP.
 # Note also that you need API_HOST (defined above) for correct DNS.
-KUBEPROXY_MODE=${KUBEPROXY_MODE:-""}
+KUBE_PROXY_MODE=${KUBE_PROXY_MODE:-""}
 ENABLE_CLUSTER_DNS=${KUBE_ENABLE_CLUSTER_DNS:-true}
 DNS_SERVER_IP=${KUBE_DNS_SERVER_IP:-10.0.0.10}
 DNS_DOMAIN=${KUBE_DNS_NAME:-"cluster.local"}
@@ -90,8 +90,9 @@ AUTH_ARGS=${AUTH_ARGS:-""}
 # Install a default storage class (enabled by default)
 DEFAULT_STORAGE_CLASS=${KUBE_DEFAULT_STORAGE_CLASS:-true}
 
-# start the cache mutation detector by default so that cache mutators will be found
-KUBE_CACHE_MUTATION_DETECTOR="${KUBE_CACHE_MUTATION_DETECTOR:-true}"
+# Do not run the mutation detector by default on a local cluster.
+# It is intended for a specific type of testing and inherently leaks memory.
+KUBE_CACHE_MUTATION_DETECTOR="${KUBE_CACHE_MUTATION_DETECTOR:-false}"
 export KUBE_CACHE_MUTATION_DETECTOR
 
 # panic the server on watch decode errors since they are considered coder mistakes
@@ -121,8 +122,15 @@ if [ "${CLOUD_PROVIDER}" == "openstack" ]; then
 fi
 
 # set feature gates if using ipvs mode
-if [ "${KUBEPROXY_MODE}" == "ipvs" ]; then
-    FEATURE_GATES="$FEATURE_GATES,SupportIPVSProxyMode=true"
+if [ "${KUBE_PROXY_MODE}" == "ipvs" ]; then
+    # If required kernel modules are not available, fall back to iptables.
+    sudo modprobe -a ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh nf_conntrack_ipv4
+    if [[ $? -eq 0 ]]; then
+      FEATURE_GATES="${FEATURE_GATES},SupportIPVSProxyMode=true"
+    else
+      echo "Required kernel modules for ipvs not found. Falling back to iptables mode."
+      KUBE_PROXY_MODE=iptables
+    fi
 fi
 
 # set feature gates if enable Pod priority and preemption
@@ -418,7 +426,7 @@ function set_service_accounts {
 
 function start_apiserver {
     security_admission=""
-    if [[ -z "${ALLOW_SECURITY_CONTEXT}" ]]; then
+    if [[ -n "${DENY_SECURITY_CONTEXT_ADMISSION}" ]]; then
       security_admission=",SecurityContextDeny"
     fi
     if [[ -n "${PSP_ADMISSION}" ]]; then
@@ -434,12 +442,12 @@ function start_apiserver {
       fi
       RUNTIME_CONFIG+="scheduling.k8s.io/v1alpha1=true"
     fi
-    
+
 
     # Admission Controllers to invoke prior to persisting objects in cluster
     #
     # The order defined here dose not matter.
-    ENABLE_ADMISSION_PLUGINS=Initializers,LimitRanger,ServiceAccount${security_admission},DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota,PodPreset
+    ENABLE_ADMISSION_PLUGINS=Initializers,LimitRanger,ServiceAccount${security_admission},DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota,PodPreset,StorageObjectInUseProtection
 
     audit_arg=""
     APISERVER_BASIC_AUDIT_LOG=""
@@ -574,9 +582,6 @@ function start_apiserver {
 
     # Wait for kube-apiserver to come up before launching the rest of the components.
     echo "Waiting for apiserver to come up"
-    # this uses the API port because if you don't have any authenticator, you can't seem to use the secure port at all.
-    # this matches what happened with the combination in 1.4.
-    # TODO change this conditionally based on whether API_PORT is on or off
     kube::util::wait_for_url "https://${API_HOST_IP}:${API_SECURE_PORT}/healthz" "apiserver: " 1 ${WAIT_FOR_URL_API_SERVER} \
         || { echo "check apiserver logs: ${APISERVER_LOG}" ; exit 1 ; }
 
@@ -810,18 +815,14 @@ kind: KubeProxyConfiguration
 clientConnection:
   kubeconfig: ${CERT_DIR}/kube-proxy.kubeconfig
 hostnameOverride: ${HOSTNAME_OVERRIDE}
-featureGates: ${FEATURE_GATES}
-mode: ${KUBEPROXY_MODE}
+mode: ${KUBE_PROXY_MODE}
 EOF
-    if [ "${KUBEPROXY_MODE}" == "ipvs" ]; then
-	# Load kernel modules required by IPVS proxier
-        sudo modprobe -a ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh nf_conntrack_ipv4
-    fi
 
     sudo "${GO_OUT}/hyperkube" proxy \
+      --v=${LOG_LEVEL} \
+      --feature-gates="${FEATURE_GATES}" \
       --config=/tmp/kube-proxy.yaml \
-      --master="https://${API_HOST}:${API_SECURE_PORT}" >"${PROXY_LOG}" \
-      --v=${LOG_LEVEL} 2>&1 &
+      --master="https://${API_HOST}:${API_SECURE_PORT}" >"${PROXY_LOG}" 2>&1 &
     PROXY_PID=$!
 
     SCHEDULER_LOG=${LOG_DIR}/kube-scheduler.log
@@ -944,6 +945,17 @@ EOF
 fi
 }
 
+# If we are running in the CI, we need a few more things before we can start
+if [[ "${KUBETEST_IN_DOCKER:-}" == "true" ]]; then
+  echo "Preparing to test ..."
+  ${KUBE_ROOT}/hack/install-etcd.sh
+  export PATH="${KUBE_ROOT}/third_party/etcd:${PATH}"
+  KUBE_FASTBUILD=true make ginkgo cross
+  apt install -y sudo
+  # configure shared mounts to prevent failure in DIND scenarios
+  mount --make-rshared /
+fi
+
 # validate that etcd is: not running, in path, and has minimum required version.
 if [[ "${START_MODE}" != "kubeletonly" ]]; then
   kube::etcd::validate
@@ -1018,4 +1030,11 @@ print_success
 
 if [[ "${ENABLE_DAEMON}" = false ]]; then
   while true; do sleep 1; done
+fi
+
+if [[ "${KUBETEST_IN_DOCKER:-}" == "true" ]]; then
+  cluster/kubectl.sh config set-cluster local --server=https://localhost:6443 --certificate-authority=/var/run/kubernetes/server-ca.crt
+  cluster/kubectl.sh config set-credentials myself --client-key=/var/run/kubernetes/client-admin.key --client-certificate=/var/run/kubernetes/client-admin.crt
+  cluster/kubectl.sh config set-context local --cluster=local --user=myself
+  cluster/kubectl.sh config use-context local
 fi

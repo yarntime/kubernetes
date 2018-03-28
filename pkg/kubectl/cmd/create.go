@@ -59,8 +59,8 @@ var (
 		# Create a pod based on the JSON passed into stdin.
 		cat pod.json | kubectl create -f -
 
-		# Edit the data in docker-registry.yaml in JSON using the v1 API format then create the resource using the edited data.
-		kubectl create -f docker-registry.yaml --edit --output-version=v1 -o json`))
+		# Edit the data in docker-registry.yaml in JSON then create the resource using the edited data.
+		kubectl create -f docker-registry.yaml --edit -o json`))
 )
 
 func NewCmdCreate(f cmdutil.Factory, out, errOut io.Writer) *cobra.Command {
@@ -91,14 +91,14 @@ func NewCmdCreate(f cmdutil.Factory, out, errOut io.Writer) *cobra.Command {
 	cmd.MarkFlagRequired("filename")
 	cmdutil.AddValidateFlags(cmd)
 	cmdutil.AddPrinterFlags(cmd)
-	cmd.Flags().BoolVar(&options.EditBeforeCreate, "edit", false, "Edit the API resource before creating")
+	cmd.Flags().BoolVar(&options.EditBeforeCreate, "edit", options.EditBeforeCreate, "Edit the API resource before creating")
 	cmd.Flags().Bool("windows-line-endings", runtime.GOOS == "windows",
 		"Only relevant if --edit=true. Defaults to the line ending native to your platform.")
 	cmdutil.AddApplyAnnotationFlags(cmd)
 	cmdutil.AddRecordFlag(cmd)
 	cmdutil.AddDryRunFlag(cmd)
 	cmdutil.AddInclude3rdPartyFlags(cmd)
-	cmd.Flags().StringVarP(&options.Selector, "selector", "l", "", "Selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
+	cmd.Flags().StringVarP(&options.Selector, "selector", "l", options.Selector, "Selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
 	cmd.Flags().StringVar(&options.Raw, "raw", options.Raw, "Raw URI to POST to the server.  Uses the transport specified by the kubeconfig file.")
 
 	// create subcommands
@@ -115,6 +115,7 @@ func NewCmdCreate(f cmdutil.Factory, out, errOut io.Writer) *cobra.Command {
 	cmd.AddCommand(NewCmdCreateRoleBinding(f, out))
 	cmd.AddCommand(NewCmdCreatePodDisruptionBudget(f, out))
 	cmd.AddCommand(NewCmdCreatePriorityClass(f, out))
+	cmd.AddCommand(NewCmdCreateJob(f, out))
 	return cmd
 }
 
@@ -191,7 +192,7 @@ func (o *CreateOptions) RunCreate(f cmdutil.Factory, cmd *cobra.Command) error {
 		if err != nil {
 			return err
 		}
-		if err := kubectl.CreateOrUpdateAnnotation(cmdutil.GetFlagBool(cmd, cmdutil.ApplyAnnotationsFlag), info, f.JSONEncoder()); err != nil {
+		if err := kubectl.CreateOrUpdateAnnotation(cmdutil.GetFlagBool(cmd, cmdutil.ApplyAnnotationsFlag), info, cmdutil.InternalVersionJSONEncoder()); err != nil {
 			return cmdutil.AddSourceToErr("creating", info.Source, err)
 		}
 
@@ -211,13 +212,10 @@ func (o *CreateOptions) RunCreate(f cmdutil.Factory, cmd *cobra.Command) error {
 
 		shortOutput := output == "name"
 		if len(output) > 0 && !shortOutput {
-			return f.PrintResourceInfoForCommand(cmd, info, o.Out)
-		}
-		if !shortOutput {
-			f.PrintObjectSpecificMessage(info.Object, o.Out)
+			return cmdutil.PrintObject(cmd, info.Object, o.Out)
 		}
 
-		f.PrintSuccess(shortOutput, o.Out, info.Mapping.Resource, info.Name, dryRun, "created")
+		cmdutil.PrintSuccess(shortOutput, o.Out, info.Object, dryRun, "created")
 		return nil
 	})
 	if err != nil {
@@ -339,7 +337,7 @@ func RunCreateSubcommand(f cmdutil.Factory, cmd *cobra.Command, out io.Writer, o
 	if err != nil {
 		return err
 	}
-	if err := kubectl.CreateOrUpdateAnnotation(cmdutil.GetFlagBool(cmd, cmdutil.ApplyAnnotationsFlag), info, f.JSONEncoder()); err != nil {
+	if err := kubectl.CreateOrUpdateAnnotation(cmdutil.GetFlagBool(cmd, cmdutil.ApplyAnnotationsFlag), info, cmdutil.InternalVersionJSONEncoder()); err != nil {
 		return err
 	}
 	obj = info.Object
@@ -356,9 +354,9 @@ func RunCreateSubcommand(f cmdutil.Factory, cmd *cobra.Command, out io.Writer, o
 	}
 
 	if useShortOutput := options.OutputFormat == "name"; useShortOutput || len(options.OutputFormat) == 0 {
-		f.PrintSuccess(useShortOutput, out, mapping.Resource, info.Name, options.DryRun, "created")
+		cmdutil.PrintSuccess(useShortOutput, out, info.Object, options.DryRun, "created")
 		return nil
 	}
 
-	return f.PrintObject(cmd, false, mapper, obj, out)
+	return cmdutil.PrintObject(cmd, obj, out)
 }

@@ -425,9 +425,9 @@ func (hst HTTPProxyCheck) Name() string {
 // Check validates http connectivity type, direct or via proxy.
 func (hst HTTPProxyCheck) Check() (warnings, errors []error) {
 
-	url := fmt.Sprintf("%s://%s", hst.Proto, hst.Host)
+	u := (&url.URL{Scheme: hst.Proto, Host: hst.Host}).String()
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, []error{err}
 	}
@@ -437,7 +437,7 @@ func (hst HTTPProxyCheck) Check() (warnings, errors []error) {
 		return nil, []error{err}
 	}
 	if proxy != nil {
-		return []error{fmt.Errorf("Connection to %q uses proxy %q. If that is not intended, adjust your proxy settings", url, proxy)}, nil
+		return []error{fmt.Errorf("Connection to %q uses proxy %q. If that is not intended, adjust your proxy settings", u, proxy)}, nil
 	}
 	return nil, nil
 }
@@ -530,7 +530,7 @@ func (eac ExtraArgsCheck) Check() (warnings, errors []error) {
 	}
 	if len(eac.ControllerManagerExtraArgs) > 0 {
 		flags := pflag.NewFlagSet("", pflag.ContinueOnError)
-		s := cmoptions.NewCMServer()
+		s := cmoptions.NewKubeControllerManagerOptions()
 		s.AddFlags(flags, []string{}, []string{})
 		warnings = append(warnings, argsCheck("kube-controller-manager", eac.ControllerManagerExtraArgs, flags)...)
 	}
@@ -851,7 +851,7 @@ func getEtcdVersionResponse(client *http.Client, url string, target interface{})
 }
 
 // RunInitMasterChecks executes all individual, applicable to Master node checks.
-func RunInitMasterChecks(execer utilsexec.Interface, cfg *kubeadmapi.MasterConfiguration, criSocket string, ignorePreflightErrors sets.String) error {
+func RunInitMasterChecks(execer utilsexec.Interface, cfg *kubeadmapi.MasterConfiguration, ignorePreflightErrors sets.String) error {
 	// First, check if we're root separately from the other preflight checks and fail fast
 	if err := RunRootCheckOnly(ignorePreflightErrors); err != nil {
 		return err
@@ -869,7 +869,7 @@ func RunInitMasterChecks(execer utilsexec.Interface, cfg *kubeadmapi.MasterConfi
 
 	checks := []Checker{
 		KubernetesVersionCheck{KubernetesVersion: cfg.KubernetesVersion, KubeadmVersion: kubeadmversion.Get().GitVersion},
-		SystemVerificationCheck{CRISocket: criSocket},
+		SystemVerificationCheck{CRISocket: cfg.CRISocket},
 		IsPrivilegedUserCheck{},
 		HostnameCheck{nodeName: cfg.NodeName},
 		KubeletVersionCheck{KubernetesVersion: cfg.KubernetesVersion, exec: execer},
@@ -949,7 +949,7 @@ func RunInitMasterChecks(execer utilsexec.Interface, cfg *kubeadmapi.MasterConfi
 }
 
 // RunJoinNodeChecks executes all individual, applicable to node checks.
-func RunJoinNodeChecks(execer utilsexec.Interface, cfg *kubeadmapi.NodeConfiguration, criSocket string, ignorePreflightErrors sets.String) error {
+func RunJoinNodeChecks(execer utilsexec.Interface, cfg *kubeadmapi.NodeConfiguration, ignorePreflightErrors sets.String) error {
 	// First, check if we're root separately from the other preflight checks and fail fast
 	if err := RunRootCheckOnly(ignorePreflightErrors); err != nil {
 		return err
@@ -966,7 +966,7 @@ func RunJoinNodeChecks(execer utilsexec.Interface, cfg *kubeadmapi.NodeConfigura
 	useCRI := len(warns) == 0
 
 	checks := []Checker{
-		SystemVerificationCheck{CRISocket: criSocket},
+		SystemVerificationCheck{CRISocket: cfg.CRISocket},
 		IsPrivilegedUserCheck{},
 		HostnameCheck{cfg.NodeName},
 		KubeletVersionCheck{exec: execer},
@@ -975,9 +975,10 @@ func RunJoinNodeChecks(execer utilsexec.Interface, cfg *kubeadmapi.NodeConfigura
 		DirAvailableCheck{Path: filepath.Join(kubeadmconstants.KubernetesDir, kubeadmconstants.ManifestsSubDirName)},
 		FileAvailableCheck{Path: cfg.CACertPath},
 		FileAvailableCheck{Path: filepath.Join(kubeadmconstants.KubernetesDir, kubeadmconstants.KubeletKubeConfigFileName)},
+		FileAvailableCheck{Path: filepath.Join(kubeadmconstants.KubernetesDir, kubeadmconstants.KubeletBootstrapKubeConfigFileName)},
 	}
 	if useCRI {
-		checks = append(checks, CRICheck{socket: criSocket, exec: execer})
+		checks = append(checks, CRICheck{socket: cfg.CRISocket, exec: execer})
 	} else {
 		// assume docker
 		checks = append(checks, ServiceCheck{Service: "docker", CheckIfActive: true})
@@ -999,19 +1000,27 @@ func RunJoinNodeChecks(execer utilsexec.Interface, cfg *kubeadmapi.NodeConfigura
 			criCtlChecker)
 	}
 
+	var bridgenf6Check Checker
 	for _, server := range cfg.DiscoveryTokenAPIServers {
 		ipstr, _, err := net.SplitHostPort(server)
 		if err == nil {
-			if ip := net.ParseIP(ipstr); ip != nil {
-				if ip.To4() == nil && ip.To16() != nil {
-					checks = append(checks,
-						FileContentCheck{Path: bridgenf6, Content: []byte{'1'}},
-					)
-					break // Ensure that check is added only once
+			checks = append(checks,
+				HTTPProxyCheck{Proto: "https", Host: ipstr},
+			)
+			if bridgenf6Check == nil {
+				if ip := net.ParseIP(ipstr); ip != nil {
+					if ip.To4() == nil && ip.To16() != nil {
+						// This check should be added only once
+						bridgenf6Check = FileContentCheck{Path: bridgenf6, Content: []byte{'1'}}
+					}
 				}
 			}
 		}
 	}
+	if bridgenf6Check != nil {
+		checks = append(checks, bridgenf6Check)
+	}
+
 	return RunChecks(checks, os.Stderr, ignorePreflightErrors)
 }
 

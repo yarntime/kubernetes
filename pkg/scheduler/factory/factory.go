@@ -20,6 +20,8 @@ package factory
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"reflect"
 	"time"
 
@@ -50,6 +52,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/apis/core/helper"
+	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	"k8s.io/kubernetes/pkg/features"
 	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
 	"k8s.io/kubernetes/pkg/scheduler"
@@ -69,11 +72,11 @@ const (
 )
 
 var (
-	serviceAffinitySet            = sets.NewString("ServiceAffinity")
-	matchInterPodAffinitySet      = sets.NewString("MatchInterPodAffinity")
-	generalPredicatesSets         = sets.NewString("GeneralPredicates")
-	noDiskConflictSet             = sets.NewString("NoDiskConflict")
-	maxPDVolumeCountPredicateKeys = []string{"MaxGCEPDVolumeCount", "MaxAzureDiskVolumeCount", "MaxEBSVolumeCount"}
+	serviceAffinitySet            = sets.NewString(predicates.CheckServiceAffinityPred)
+	matchInterPodAffinitySet      = sets.NewString(predicates.MatchInterPodAffinityPred)
+	generalPredicatesSets         = sets.NewString(predicates.GeneralPred)
+	noDiskConflictSet             = sets.NewString(predicates.NoDiskConflictPred)
+	maxPDVolumeCountPredicateKeys = []string{predicates.MaxGCEPDVolumeCountPred, predicates.MaxAzureDiskVolumeCountPred, predicates.MaxEBSVolumeCountPred}
 )
 
 // configFactory is the default implementation of the scheduler.Configurator interface.
@@ -258,6 +261,7 @@ func NewConfigFactory(
 		cache.ResourceEventHandlerFuncs{
 			// MaxPDVolumeCountPredicate: since it relies on the counts of PV.
 			AddFunc:    c.onPvAdd,
+			UpdateFunc: c.onPvUpdate,
 			DeleteFunc: c.onPvDelete,
 		},
 	)
@@ -292,6 +296,29 @@ func NewConfigFactory(
 		// Setup volume binder
 		c.volumeBinder = volumebinder.NewVolumeBinder(client, pvcInformer, pvInformer, nodeInformer, storageClassInformer)
 	}
+
+	// Setup cache comparer
+	comparer := &cacheComparer{
+		podLister:  podInformer.Lister(),
+		nodeLister: nodeInformer.Lister(),
+		pdbLister:  pdbInformer.Lister(),
+		cache:      c.schedulerCache,
+		podQueue:   c.podQueue,
+	}
+
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, compareSignal)
+
+	go func() {
+		for {
+			select {
+			case <-c.StopEverything:
+				return
+			case <-ch:
+				comparer.Compare()
+			}
+		}
+	}()
 
 	return c
 }
@@ -354,6 +381,56 @@ func (c *configFactory) onPvAdd(obj interface{}) {
 	}
 }
 
+func (c *configFactory) onPvUpdate(old, new interface{}) {
+	if c.enableEquivalenceClassCache {
+		newPV, ok := new.(*v1.PersistentVolume)
+		if !ok {
+			glog.Errorf("cannot convert to *v1.PersistentVolume: %v", new)
+			return
+		}
+		oldPV, ok := old.(*v1.PersistentVolume)
+		if !ok {
+			glog.Errorf("cannot convert to *v1.PersistentVolume: %v", old)
+			return
+		}
+		c.invalidatePredicatesForPvUpdate(oldPV, newPV)
+	}
+}
+
+func (c *configFactory) invalidatePredicatesForPvUpdate(oldPV, newPV *v1.PersistentVolume) {
+	invalidPredicates := sets.NewString()
+	for k, v := range newPV.Labels {
+		// If PV update modifies the zone/region labels.
+		if isZoneRegionLabel(k) && !reflect.DeepEqual(v, oldPV.Labels[k]) {
+			invalidPredicates.Insert(predicates.NoVolumeZoneConflictPred)
+			break
+		}
+	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeScheduling) {
+		oldAffinity, err := v1helper.GetStorageNodeAffinityFromAnnotation(oldPV.Annotations)
+		if err != nil {
+			glog.Errorf("cannot get node affinity fo *v1.PersistentVolume: %v", oldPV)
+			return
+		}
+		newAffinity, err := v1helper.GetStorageNodeAffinityFromAnnotation(newPV.Annotations)
+		if err != nil {
+			glog.Errorf("cannot get node affinity fo *v1.PersistentVolume: %v", newPV)
+			return
+		}
+
+		// If node affinity of PV is changed.
+		if !reflect.DeepEqual(oldAffinity, newAffinity) {
+			invalidPredicates.Insert(predicates.CheckVolumeBindingPred)
+		}
+	}
+	c.equivalencePodCache.InvalidateCachedPredicateItemOfAllNodes(invalidPredicates)
+}
+
+// isZoneRegionLabel check if given key of label is zone or region label.
+func isZoneRegionLabel(k string) bool {
+	return k == kubeletapis.LabelZoneFailureDomain || k == kubeletapis.LabelZoneRegion
+}
+
 func (c *configFactory) onPvDelete(obj interface{}) {
 	if c.enableEquivalenceClassCache {
 		var pv *v1.PersistentVolume
@@ -382,19 +459,19 @@ func (c *configFactory) invalidatePredicatesForPv(pv *v1.PersistentVolume) {
 
 	// PV types which impact MaxPDVolumeCountPredicate
 	if pv.Spec.AWSElasticBlockStore != nil {
-		invalidPredicates.Insert("MaxEBSVolumeCount")
+		invalidPredicates.Insert(predicates.MaxEBSVolumeCountPred)
 	}
 	if pv.Spec.GCEPersistentDisk != nil {
-		invalidPredicates.Insert("MaxGCEPDVolumeCount")
+		invalidPredicates.Insert(predicates.MaxGCEPDVolumeCountPred)
 	}
 	if pv.Spec.AzureDisk != nil {
-		invalidPredicates.Insert("MaxAzureDiskVolumeCount")
+		invalidPredicates.Insert(predicates.MaxAzureDiskVolumeCountPred)
 	}
 
 	// If PV contains zone related label, it may impact cached NoVolumeZoneConflict
-	for k := range pv.ObjectMeta.Labels {
-		if k == kubeletapis.LabelZoneFailureDomain || k == kubeletapis.LabelZoneRegion {
-			invalidPredicates.Insert("NoVolumeZoneConflict")
+	for k := range pv.Labels {
+		if isZoneRegionLabel(k) {
+			invalidPredicates.Insert(predicates.NoVolumeZoneConflictPred)
 			break
 		}
 	}
@@ -468,7 +545,7 @@ func (c *configFactory) invalidatePredicatesForPvc(pvc *v1.PersistentVolumeClaim
 	invalidPredicates := sets.NewString(maxPDVolumeCountPredicateKeys...)
 
 	// The bound volume's label may change
-	invalidPredicates.Insert("NoVolumeZoneConflict")
+	invalidPredicates.Insert(predicates.NoVolumeZoneConflictPred)
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeScheduling) {
 		// Add/delete impacts the available PVs to choose from
@@ -487,8 +564,6 @@ func (c *configFactory) invalidatePredicatesForPvcUpdate(old, new *v1.Persistent
 		}
 		// The bound volume type may change
 		invalidPredicates.Insert(maxPDVolumeCountPredicateKeys...)
-		// The bound volume's label may change
-		invalidPredicates.Insert("NoVolumeZoneConflict")
 	}
 
 	c.equivalencePodCache.InvalidateCachedPredicateItemOfAllNodes(invalidPredicates)
@@ -591,7 +666,7 @@ func (c *configFactory) updatePodInSchedulingQueue(oldObj, newObj interface{}) {
 	if c.skipPodUpdate(pod) {
 		return
 	}
-	if err := c.podQueue.Update(pod); err != nil {
+	if err := c.podQueue.Update(oldObj.(*v1.Pod), pod); err != nil {
 		runtime.HandleError(fmt.Errorf("unable to update %T: %v", newObj, err))
 	}
 }
@@ -729,19 +804,19 @@ func (c *configFactory) invalidateCachedPredicatesOnNodeUpdate(newNode *v1.Node,
 		invalidPredicates := sets.NewString()
 
 		if !reflect.DeepEqual(oldNode.Status.Allocatable, newNode.Status.Allocatable) {
-			invalidPredicates.Insert("GeneralPredicates") // "PodFitsResources"
+			invalidPredicates.Insert(predicates.GeneralPred) // "PodFitsResources"
 		}
 		if !reflect.DeepEqual(oldNode.GetLabels(), newNode.GetLabels()) {
-			invalidPredicates.Insert("GeneralPredicates", "ServiceAffinity") // "PodSelectorMatches"
+			invalidPredicates.Insert(predicates.GeneralPred, predicates.CheckServiceAffinityPred) // "PodSelectorMatches"
 			for k, v := range oldNode.GetLabels() {
 				// any label can be topology key of pod, we have to invalidate in all cases
 				if v != newNode.GetLabels()[k] {
-					invalidPredicates.Insert("MatchInterPodAffinity")
+					invalidPredicates.Insert(predicates.MatchInterPodAffinityPred)
 				}
 				// NoVolumeZoneConflict will only be affected by zone related label change
-				if k == kubeletapis.LabelZoneFailureDomain || k == kubeletapis.LabelZoneRegion {
+				if isZoneRegionLabel(k) {
 					if v != newNode.GetLabels()[k] {
-						invalidPredicates.Insert("NoVolumeZoneConflict")
+						invalidPredicates.Insert(predicates.NoVolumeZoneConflictPred)
 					}
 				}
 			}
@@ -757,7 +832,7 @@ func (c *configFactory) invalidateCachedPredicatesOnNodeUpdate(newNode *v1.Node,
 		}
 		if !reflect.DeepEqual(oldTaints, newTaints) ||
 			!reflect.DeepEqual(oldNode.Spec.Taints, newNode.Spec.Taints) {
-			invalidPredicates.Insert("PodToleratesNodeTaints")
+			invalidPredicates.Insert(predicates.PodToleratesNodeTaintsPred)
 		}
 
 		if !reflect.DeepEqual(oldNode.Status.Conditions, newNode.Status.Conditions) {
@@ -770,19 +845,19 @@ func (c *configFactory) invalidateCachedPredicatesOnNodeUpdate(newNode *v1.Node,
 				newConditions[cond.Type] = cond.Status
 			}
 			if oldConditions[v1.NodeMemoryPressure] != newConditions[v1.NodeMemoryPressure] {
-				invalidPredicates.Insert("CheckNodeMemoryPressure")
+				invalidPredicates.Insert(predicates.CheckNodeMemoryPressurePred)
 			}
 			if oldConditions[v1.NodeDiskPressure] != newConditions[v1.NodeDiskPressure] {
-				invalidPredicates.Insert("CheckNodeDiskPressure")
+				invalidPredicates.Insert(predicates.CheckNodeDiskPressurePred)
 			}
 			if oldConditions[v1.NodeReady] != newConditions[v1.NodeReady] ||
 				oldConditions[v1.NodeOutOfDisk] != newConditions[v1.NodeOutOfDisk] ||
 				oldConditions[v1.NodeNetworkUnavailable] != newConditions[v1.NodeNetworkUnavailable] {
-				invalidPredicates.Insert("CheckNodeCondition")
+				invalidPredicates.Insert(predicates.CheckNodeConditionPred)
 			}
 		}
 		if newNode.Spec.Unschedulable != oldNode.Spec.Unschedulable {
-			invalidPredicates.Insert("CheckNodeCondition")
+			invalidPredicates.Insert(predicates.CheckNodeConditionPred)
 		}
 		c.equivalencePodCache.InvalidateCachedPredicateItem(newNode.GetName(), invalidPredicates)
 	}
@@ -919,6 +994,7 @@ func (c *configFactory) CreateFromConfig(policy schedulerapi.Policy) (*scheduler
 
 	extenders := make([]algorithm.SchedulerExtender, 0)
 	if len(policy.ExtenderConfigs) != 0 {
+		ignoredExtendedResources := sets.NewString()
 		for ii := range policy.ExtenderConfigs {
 			glog.V(2).Infof("Creating extender with config %+v", policy.ExtenderConfigs[ii])
 			extender, err := core.NewHTTPExtender(&policy.ExtenderConfigs[ii])
@@ -926,7 +1002,13 @@ func (c *configFactory) CreateFromConfig(policy schedulerapi.Policy) (*scheduler
 				return nil, err
 			}
 			extenders = append(extenders, extender)
+			for _, r := range policy.ExtenderConfigs[ii].ManagedResources {
+				if r.IgnoredByScheduler {
+					ignoredExtendedResources.Insert(string(r.Name))
+				}
+			}
 		}
+		predicates.RegisterPredicateMetadataProducerWithExtendedResourceOptions(ignoredExtendedResources)
 	}
 	// Providing HardPodAffinitySymmetricWeight in the policy config is the new and preferred way of providing the value.
 	// Give it higher precedence than scheduler CLI configuration when it is provided.
@@ -942,14 +1024,22 @@ func (c *configFactory) CreateFromConfig(policy schedulerapi.Policy) (*scheduler
 	return c.CreateFromKeys(predicateKeys, priorityKeys, extenders)
 }
 
-// getBinder returns an extender that supports bind or a default binder.
-func (c *configFactory) getBinder(extenders []algorithm.SchedulerExtender) scheduler.Binder {
+// getBinderFunc returns an func which returns an extender that supports bind or a default binder based on the given pod.
+func (c *configFactory) getBinderFunc(extenders []algorithm.SchedulerExtender) func(pod *v1.Pod) scheduler.Binder {
+	var extenderBinder algorithm.SchedulerExtender
 	for i := range extenders {
 		if extenders[i].IsBinder() {
-			return extenders[i]
+			extenderBinder = extenders[i]
+			break
 		}
 	}
-	return &binder{c.client}
+	defaultBinder := &binder{c.client}
+	return func(pod *v1.Pod) scheduler.Binder {
+		if extenderBinder != nil && extenderBinder.IsInterested(pod) {
+			return extenderBinder
+		}
+		return defaultBinder
+	}
 }
 
 // Creates a scheduler from a set of registered fit predicate keys and priority keys.
@@ -1001,7 +1091,7 @@ func (c *configFactory) CreateFromKeys(predicateKeys, priorityKeys sets.String, 
 		// The scheduler only needs to consider schedulable nodes.
 		NodeLister:          &nodeLister{c.nodeLister},
 		Algorithm:           algo,
-		Binder:              c.getBinder(extenders),
+		GetBinder:           c.getBinderFunc(extenders),
 		PodConditionUpdater: &podConditionUpdater{c.client},
 		PodPreemptor:        &podPreemptor{c.client},
 		WaitForCacheSync: func() bool {

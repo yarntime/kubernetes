@@ -11,7 +11,6 @@ go_test(
     size = "large",
     srcs = [
         "extender_test.go",
-        "local-pv-neg-affinity_test.go",
         "main_test.go",
         "predicates_test.go",
         "preemption_test.go",
@@ -21,14 +20,12 @@ go_test(
         "volume_binding_test.go",
     ],
     embed = [":go_default_library"],
-    importpath = "k8s.io/kubernetes/test/integration/scheduler",
     tags = ["integration"],
     deps = [
         "//cmd/kube-scheduler/app:go_default_library",
         "//pkg/api/legacyscheme:go_default_library",
         "//pkg/api/testapi:go_default_library",
         "//pkg/apis/componentconfig:go_default_library",
-        "//pkg/apis/core/v1/helper:go_default_library",
         "//pkg/client/clientset_generated/internalclientset:go_default_library",
         "//pkg/client/informers/informers_generated/internalversion:go_default_library",
         "//pkg/controller/nodelifecycle:go_default_library",

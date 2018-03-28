@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
-	"strconv"
 	"time"
 
 	"github.com/go-openapi/spec"
@@ -60,7 +59,6 @@ import (
 	kubeletclient "k8s.io/kubernetes/pkg/kubelet/client"
 	"k8s.io/kubernetes/pkg/master"
 	"k8s.io/kubernetes/pkg/version"
-	"k8s.io/kubernetes/plugin/pkg/admission/admit"
 )
 
 // Config is a struct of configuration directives for NewMasterComponents.
@@ -126,8 +124,6 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 
 	if masterConfig == nil {
 		masterConfig = NewMasterConfig()
-		masterConfig.GenericConfig.EnableProfiling = true
-		masterConfig.GenericConfig.EnableMetrics = true
 		masterConfig.GenericConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(openapi.GetOpenAPIDefinitions, legacyscheme.Scheme)
 		masterConfig.GenericConfig.OpenAPIConfig.Info = &spec.Info{
 			InfoProps: spec.InfoProps{
@@ -160,17 +156,17 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 	}
 
 	tokenAuthenticator := authenticatorfactory.NewFromTokens(tokens)
-	if masterConfig.GenericConfig.Authenticator == nil {
-		masterConfig.GenericConfig.Authenticator = authenticatorunion.New(tokenAuthenticator, authauthenticator.RequestFunc(alwaysEmpty))
+	if masterConfig.GenericConfig.Authentication.Authenticator == nil {
+		masterConfig.GenericConfig.Authentication.Authenticator = authenticatorunion.New(tokenAuthenticator, authauthenticator.RequestFunc(alwaysEmpty))
 	} else {
-		masterConfig.GenericConfig.Authenticator = authenticatorunion.New(tokenAuthenticator, masterConfig.GenericConfig.Authenticator)
+		masterConfig.GenericConfig.Authentication.Authenticator = authenticatorunion.New(tokenAuthenticator, masterConfig.GenericConfig.Authentication.Authenticator)
 	}
 
-	if masterConfig.GenericConfig.Authorizer != nil {
+	if masterConfig.GenericConfig.Authorization.Authorizer != nil {
 		tokenAuthorizer := authorizerfactory.NewPrivilegedGroups(user.SystemPrivilegedGroup)
-		masterConfig.GenericConfig.Authorizer = authorizerunion.New(tokenAuthorizer, masterConfig.GenericConfig.Authorizer)
+		masterConfig.GenericConfig.Authorization.Authorizer = authorizerunion.New(tokenAuthorizer, masterConfig.GenericConfig.Authorization.Authorizer)
 	} else {
-		masterConfig.GenericConfig.Authorizer = alwaysAllow{}
+		masterConfig.GenericConfig.Authorization.Authorizer = alwaysAllow{}
 	}
 
 	masterConfig.GenericConfig.LoopbackClientConfig.BearerToken = privilegedLoopbackToken
@@ -218,6 +214,15 @@ func startMasterOrDie(masterConfig *master.Config, incomingServer *httptest.Serv
 	}
 
 	return m, s, closeFn
+}
+
+// Returns the master config appropriate for most integration tests.
+func NewIntegrationTestMasterConfig() *master.Config {
+	masterConfig := NewMasterConfig()
+	masterConfig.ExtraConfig.EnableCoreControllers = true
+	masterConfig.GenericConfig.PublicAddress = net.ParseIP("192.168.10.4")
+	masterConfig.ExtraConfig.APIResourceConfigSource = master.DefaultAPIResourceConfigSource()
+	return masterConfig
 }
 
 // Returns a basic master config.
@@ -281,9 +286,7 @@ func NewMasterConfig() *master.Config {
 	genericConfig := genericapiserver.NewConfig(legacyscheme.Codecs)
 	kubeVersion := version.Get()
 	genericConfig.Version = &kubeVersion
-	genericConfig.Authorizer = authorizerfactory.NewAlwaysAllowAuthorizer()
-	genericConfig.AdmissionControl = admit.NewAlwaysAdmit()
-	genericConfig.EnableMetrics = true
+	genericConfig.Authorization.Authorizer = authorizerfactory.NewAlwaysAllowAuthorizer()
 
 	err := etcdOptions.ApplyWithStorageFactoryTo(storageFactory, genericConfig)
 	if err != nil {
@@ -303,15 +306,6 @@ func NewMasterConfig() *master.Config {
 	}
 }
 
-// Returns the master config appropriate for most integration tests.
-func NewIntegrationTestMasterConfig() *master.Config {
-	masterConfig := NewMasterConfig()
-	masterConfig.ExtraConfig.EnableCoreControllers = true
-	masterConfig.GenericConfig.PublicAddress = net.ParseIP("192.168.10.4")
-	masterConfig.ExtraConfig.APIResourceConfigSource = master.DefaultAPIResourceConfigSource()
-	return masterConfig
-}
-
 // CloseFunc can be called to cleanup the master
 type CloseFunc func()
 
@@ -319,35 +313,12 @@ func RunAMaster(masterConfig *master.Config) (*master.Master, *httptest.Server, 
 	if masterConfig == nil {
 		masterConfig = NewMasterConfig()
 		masterConfig.GenericConfig.EnableProfiling = true
-		masterConfig.GenericConfig.EnableMetrics = true
 	}
 	return startMasterOrDie(masterConfig, nil, nil)
 }
 
 func RunAMasterUsingServer(masterConfig *master.Config, s *httptest.Server, masterReceiver MasterReceiver) (*master.Master, *httptest.Server, CloseFunc) {
 	return startMasterOrDie(masterConfig, s, masterReceiver)
-}
-
-// FindFreeLocalPort returns the number of an available port number on
-// the loopback interface.  Useful for determining the port to launch
-// a server on.  Error handling required - there is a non-zero chance
-// that the returned port number will be bound by another process
-// after this function returns.
-func FindFreeLocalPort() (int, error) {
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	_, portStr, err := net.SplitHostPort(l.Addr().String())
-	if err != nil {
-		return 0, err
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return 0, err
-	}
-	return port, nil
 }
 
 // SharedEtcd creates a storage config for a shared etcd instance, with a unique prefix.

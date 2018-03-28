@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	priorityutil "k8s.io/kubernetes/pkg/scheduler/algorithm/priorities/util"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
@@ -325,6 +326,46 @@ func TestAddPodWillConfirm(t *testing.T) {
 	}
 }
 
+func TestSnapshot(t *testing.T) {
+	nodeName := "node"
+	now := time.Now()
+	ttl := 10 * time.Second
+
+	testPods := []*v1.Pod{
+		makeBasePod(t, nodeName, "test-1", "100m", "500", "", []v1.ContainerPort{{HostIP: "127.0.0.1", HostPort: 80, Protocol: "TCP"}}),
+		makeBasePod(t, nodeName, "test-2", "200m", "1Ki", "", []v1.ContainerPort{{HostIP: "127.0.0.1", HostPort: 80, Protocol: "TCP"}}),
+	}
+	tests := []struct {
+		podsToAssume []*v1.Pod
+		podsToAdd    []*v1.Pod
+	}{{ // two pod were assumed at same time. But first one is called Add() and gets confirmed.
+		podsToAssume: []*v1.Pod{testPods[0], testPods[1]},
+		podsToAdd:    []*v1.Pod{testPods[0]},
+	}}
+
+	for _, tt := range tests {
+		cache := newSchedulerCache(ttl, time.Second, nil)
+		for _, podToAssume := range tt.podsToAssume {
+			if err := assumeAndFinishBinding(cache, podToAssume, now); err != nil {
+				t.Fatalf("assumePod failed: %v", err)
+			}
+		}
+		for _, podToAdd := range tt.podsToAdd {
+			if err := cache.AddPod(podToAdd); err != nil {
+				t.Fatalf("AddPod failed: %v", err)
+			}
+		}
+
+		snapshot := cache.Snapshot()
+		if !reflect.DeepEqual(snapshot.Nodes, cache.nodes) {
+			t.Fatalf("expect \n%+v; got \n%+v", cache.nodes, snapshot.Nodes)
+		}
+		if !reflect.DeepEqual(snapshot.AssumedPods, cache.assumedPods) {
+			t.Fatalf("expect \n%+v; got \n%+v", cache.assumedPods, snapshot.AssumedPods)
+		}
+	}
+}
+
 // TestAddPodWillReplaceAssumed tests that a pod being Add()ed will replace any assumed pod.
 func TestAddPodWillReplaceAssumed(t *testing.T) {
 	now := time.Now()
@@ -575,6 +616,69 @@ func TestExpireAddUpdatePod(t *testing.T) {
 	}
 }
 
+func makePodWithEphemeralStorage(nodeName, ephemeralStorage string) *v1.Pod {
+	req := v1.ResourceList{
+		v1.ResourceEphemeralStorage: resource.MustParse(ephemeralStorage),
+	}
+	return &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default-namespace",
+			Name:      "pod-with-ephemeral-storage",
+			UID:       types.UID("pod-with-ephemeral-storage"),
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{{
+				Resources: v1.ResourceRequirements{
+					Requests: req,
+				},
+			}},
+			NodeName: nodeName,
+		},
+	}
+}
+
+func TestEphemeralStorageResource(t *testing.T) {
+	nodeName := "node"
+	podE := makePodWithEphemeralStorage(nodeName, "500")
+	tests := []struct {
+		pod       *v1.Pod
+		wNodeInfo *NodeInfo
+	}{
+		{
+			pod: podE,
+			wNodeInfo: &NodeInfo{
+				requestedResource: &Resource{
+					EphemeralStorage: 500,
+				},
+				nonzeroRequest: &Resource{
+					MilliCPU: priorityutil.DefaultMilliCPURequest,
+					Memory:   priorityutil.DefaultMemoryRequest,
+				},
+				allocatableResource: &Resource{},
+				pods:                []*v1.Pod{podE},
+				usedPorts:           schedutil.HostPortInfo{},
+			},
+		},
+	}
+	for i, tt := range tests {
+		cache := newSchedulerCache(time.Second, time.Second, nil)
+		if err := cache.AddPod(tt.pod); err != nil {
+			t.Fatalf("AddPod failed: %v", err)
+		}
+		n := cache.nodes[nodeName]
+		deepEqualWithoutGeneration(t, i, n, tt.wNodeInfo)
+
+		if err := cache.RemovePod(tt.pod); err != nil {
+			t.Fatalf("RemovePod failed: %v", err)
+		}
+
+		n = cache.nodes[nodeName]
+		if n != nil {
+			t.Errorf("#%d: expecting pod deleted and nil node info, get=%s", i, n)
+		}
+	}
+}
+
 // TestRemovePod tests after added pod is removed, its information should also be subtracted.
 func TestRemovePod(t *testing.T) {
 	nodeName := "node"
@@ -747,6 +851,7 @@ func TestNodeOperators(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "pod1",
+						UID:  types.UID("pod1"),
 					},
 					Spec: v1.PodSpec{
 						NodeName: nodeName,
@@ -797,6 +902,7 @@ func TestNodeOperators(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "pod1",
+						UID:  types.UID("pod1"),
 					},
 					Spec: v1.PodSpec{
 						NodeName: nodeName,
@@ -815,6 +921,7 @@ func TestNodeOperators(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "pod2",
+						UID:  types.UID("pod2"),
 					},
 					Spec: v1.PodSpec{
 						NodeName: nodeName,
@@ -938,6 +1045,7 @@ func makeBasePod(t testingMode, nodeName, objName, cpu, mem, extended string, po
 	}
 	return &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
+			UID:       types.UID(objName),
 			Namespace: "node_info_cache_test",
 			Name:      objName,
 		},
