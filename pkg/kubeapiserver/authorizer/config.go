@@ -68,12 +68,13 @@ func (config AuthorizationConfig) New() (authorizer.Authorizer, authorizer.RuleR
 	)
 
 	for _, authorizationMode := range config.AuthorizationModes {
-		// Keep cases in sync with constant list above.
+		// Keep cases in sync with constant list in k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes/modes.go.
 		switch authorizationMode {
 		case modes.ModeNode:
 			graph := node.NewGraph()
 			node.AddGraphEventHandlers(
 				graph,
+				config.InformerFactory.Core().InternalVersion().Nodes(),
 				config.InformerFactory.Core().InternalVersion().Pods(),
 				config.InformerFactory.Core().InternalVersion().PersistentVolumes(),
 				config.VersionedInformerFactory.Storage().V1beta1().VolumeAttachments(),
@@ -107,10 +108,10 @@ func (config AuthorizationConfig) New() (authorizer.Authorizer, authorizer.RuleR
 			ruleResolvers = append(ruleResolvers, webhookAuthorizer)
 		case modes.ModeRBAC:
 			rbacAuthorizer := rbac.New(
-				&rbac.RoleGetter{Lister: config.InformerFactory.Rbac().InternalVersion().Roles().Lister()},
-				&rbac.RoleBindingLister{Lister: config.InformerFactory.Rbac().InternalVersion().RoleBindings().Lister()},
-				&rbac.ClusterRoleGetter{Lister: config.InformerFactory.Rbac().InternalVersion().ClusterRoles().Lister()},
-				&rbac.ClusterRoleBindingLister{Lister: config.InformerFactory.Rbac().InternalVersion().ClusterRoleBindings().Lister()},
+				&rbac.RoleGetter{Lister: config.VersionedInformerFactory.Rbac().V1().Roles().Lister()},
+				&rbac.RoleBindingLister{Lister: config.VersionedInformerFactory.Rbac().V1().RoleBindings().Lister()},
+				&rbac.ClusterRoleGetter{Lister: config.VersionedInformerFactory.Rbac().V1().ClusterRoles().Lister()},
+				&rbac.ClusterRoleBindingLister{Lister: config.VersionedInformerFactory.Rbac().V1().ClusterRoleBindings().Lister()},
 			)
 			authorizers = append(authorizers, rbacAuthorizer)
 			ruleResolvers = append(ruleResolvers, rbacAuthorizer)

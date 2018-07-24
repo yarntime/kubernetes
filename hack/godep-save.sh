@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2016 The Kubernetes Authors.
 #
@@ -59,6 +59,9 @@ REQUIRED_BINS=(
   "github.com/jteeuwen/go-bindata/go-bindata"
   "github.com/tools/godep"
   "github.com/client9/misspell/cmd/misspell"
+  "github.com/bazelbuild/bazel-gazelle/cmd/gazelle"
+  "github.com/kubernetes/repo-infra/kazel"
+  "k8s.io/kube-openapi/cmd/openapi-gen"
   "./..."
 )
 
