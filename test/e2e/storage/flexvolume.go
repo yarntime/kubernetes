@@ -27,12 +27,12 @@ import (
 	. "github.com/onsi/ginkgo"
 	"k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	versionutil "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/version"
 	clientset "k8s.io/client-go/kubernetes"
-	versionutil "k8s.io/kubernetes/pkg/util/version"
 	"k8s.io/kubernetes/test/e2e/framework"
-	"k8s.io/kubernetes/test/e2e/generated"
+	"k8s.io/kubernetes/test/e2e/framework/testfiles"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 )
 
@@ -44,9 +44,8 @@ const (
 	// On gci, root is read-only and controller-manager containerized. Assume
 	// controller-manager has started with --flex-volume-plugin-dir equal to this
 	// (see cluster/gce/config-test.sh)
-	gciVolumePluginDir        = "/home/kubernetes/flexvolume"
-	gciVolumePluginDirLegacy  = "/etc/srv/kubernetes/kubelet-plugins/volume/exec"
-	gciVolumePluginDirVersion = "1.10.0"
+	gciVolumePluginDir = "/home/kubernetes/flexvolume"
+	detachTimeout      = 10 * time.Second
 )
 
 // testFlexVolume tests that a client pod using a given flexvolume driver
@@ -94,7 +93,7 @@ func installFlex(c clientset.Interface, node *v1.Node, vendor, driver, filePath 
 	cmd := fmt.Sprintf("sudo mkdir -p %s", flexDir)
 	sshAndLog(cmd, host, true /*failOnError*/)
 
-	data := generated.ReadOrDie(filePath)
+	data := testfiles.ReadOrDie(filePath, Fail)
 	cmd = fmt.Sprintf("sudo tee <<'EOF' %s\n%s\nEOF", flexFile, string(data))
 	sshAndLog(cmd, host, true /*failOnError*/)
 
@@ -129,24 +128,7 @@ func uninstallFlex(c clientset.Interface, node *v1.Node, vendor, driver string) 
 func getFlexDir(c clientset.Interface, node *v1.Node, vendor, driver string) string {
 	volumePluginDir := defaultVolumePluginDir
 	if framework.ProviderIs("gce") {
-		if node == nil && framework.MasterOSDistroIs("gci", "ubuntu") {
-			v, err := getMasterVersion(c)
-			if err != nil {
-				framework.Failf("Error getting master version: %v", err)
-			}
-
-			if v.AtLeast(versionutil.MustParseGeneric(gciVolumePluginDirVersion)) {
-				volumePluginDir = gciVolumePluginDir
-			} else {
-				volumePluginDir = gciVolumePluginDirLegacy
-			}
-		} else if node != nil && framework.NodeOSDistroIs("gci", "ubuntu") {
-			if getNodeVersion(node).AtLeast(versionutil.MustParseGeneric(gciVolumePluginDirVersion)) {
-				volumePluginDir = gciVolumePluginDir
-			} else {
-				volumePluginDir = gciVolumePluginDirLegacy
-			}
-		}
+		volumePluginDir = gciVolumePluginDir
 	}
 	flexDir := path.Join(volumePluginDir, fmt.Sprintf("/%s~%s/", vendor, driver))
 	return flexDir
@@ -203,8 +185,8 @@ var _ = utils.SIGDescribe("Flexvolumes", func() {
 
 	BeforeEach(func() {
 		framework.SkipUnlessProviderIs("gce", "local")
-		framework.SkipUnlessMasterOSDistroIs("debian", "ubuntu", "gci")
-		framework.SkipUnlessNodeOSDistroIs("debian", "ubuntu", "gci")
+		framework.SkipUnlessMasterOSDistroIs("debian", "ubuntu", "gci", "custom")
+		framework.SkipUnlessNodeOSDistroIs("debian", "ubuntu", "gci", "custom")
 		framework.SkipUnlessSSHKeyPresent()
 
 		cs = f.ClientSet
@@ -252,6 +234,9 @@ var _ = utils.SIGDescribe("Flexvolumes", func() {
 		if err := f.WaitForPodTerminated(config.Prefix+"-client", ""); !apierrs.IsNotFound(err) {
 			framework.ExpectNoError(err, "Failed to wait client pod terminated: %v", err)
 		}
+
+		// Detach might occur after pod deletion. Wait before deleting driver.
+		time.Sleep(detachTimeout)
 
 		By(fmt.Sprintf("uninstalling flexvolume %s from node %s", driverInstallAs, node.Name))
 		uninstallFlex(cs, &node, "k8s", driverInstallAs)

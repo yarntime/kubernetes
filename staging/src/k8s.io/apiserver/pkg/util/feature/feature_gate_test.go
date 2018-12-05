@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFeatureGateFlag(t *testing.T) {
@@ -43,13 +44,13 @@ func TestFeatureGateFlag(t *testing.T) {
 			},
 		},
 		{
-			arg: "fooBarBaz=maybeidk",
+			arg: "fooBarBaz=true",
 			expect: map[Feature]bool{
 				allAlphaGate:  false,
 				testAlphaGate: false,
 				testBetaGate:  false,
 			},
-			parseError: "unrecognized key: fooBarBaz",
+			parseError: "unrecognized feature gate: fooBarBaz",
 		},
 		{
 			arg: "AllAlpha=false",
@@ -147,7 +148,7 @@ func TestFeatureGateOverride(t *testing.T) {
 	const testBetaGate Feature = "TestBeta"
 
 	// Don't parse the flag, assert defaults are used.
-	var f FeatureGate = NewFeatureGate()
+	var f *featureGate = NewFeatureGate()
 	f.Add(map[Feature]FeatureSpec{
 		testAlphaGate: {Default: false, PreRelease: Alpha},
 		testBetaGate:  {Default: false, PreRelease: Beta},
@@ -176,7 +177,7 @@ func TestFeatureGateFlagDefaults(t *testing.T) {
 	const testBetaGate Feature = "TestBeta"
 
 	// Don't parse the flag, assert defaults are used.
-	var f FeatureGate = NewFeatureGate()
+	var f *featureGate = NewFeatureGate()
 	f.Add(map[Feature]FeatureSpec{
 		testAlphaGate: {Default: false, PreRelease: Alpha},
 		testBetaGate:  {Default: true, PreRelease: Beta},
@@ -188,6 +189,32 @@ func TestFeatureGateFlagDefaults(t *testing.T) {
 	if f.Enabled(testBetaGate) != true {
 		t.Errorf("Expected true")
 	}
+}
+
+func TestFeatureGateKnownFeatures(t *testing.T) {
+	// gates for testing
+	const (
+		testAlphaGate      Feature = "TestAlpha"
+		testBetaGate       Feature = "TestBeta"
+		testGAGate         Feature = "TestGA"
+		testDeprecatedGate Feature = "TestDeprecated"
+	)
+
+	// Don't parse the flag, assert defaults are used.
+	var f *featureGate = NewFeatureGate()
+	f.Add(map[Feature]FeatureSpec{
+		testAlphaGate:      {Default: false, PreRelease: Alpha},
+		testBetaGate:       {Default: true, PreRelease: Beta},
+		testGAGate:         {Default: true, PreRelease: GA},
+		testDeprecatedGate: {Default: false, PreRelease: Deprecated},
+	})
+
+	known := strings.Join(f.KnownFeatures(), " ")
+
+	assert.Contains(t, known, testAlphaGate)
+	assert.Contains(t, known, testBetaGate)
+	assert.NotContains(t, known, testGAGate)
+	assert.NotContains(t, known, testDeprecatedGate)
 }
 
 func TestFeatureGateSetFromMap(t *testing.T) {
@@ -241,7 +268,7 @@ func TestFeatureGateSetFromMap(t *testing.T) {
 				testAlphaGate: false,
 				testBetaGate:  false,
 			},
-			setmapError: "unrecognized key:",
+			setmapError: "unrecognized feature gate:",
 		},
 	}
 	for i, test := range tests {

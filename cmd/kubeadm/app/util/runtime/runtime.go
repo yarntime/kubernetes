@@ -17,13 +17,14 @@ limitations under the License.
 package util
 
 import (
-	"fmt"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
 
+	pkgerrors "github.com/pkg/errors"
+
 	"k8s.io/apimachinery/pkg/util/errors"
-	kubeadmapiv1alpha3 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1alpha3"
+	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
 	utilsexec "k8s.io/utils/exec"
 )
 
@@ -53,7 +54,7 @@ func NewContainerRuntime(execer utilsexec.Interface, criSocket string) (Containe
 	var toolName string
 	var runtime ContainerRuntime
 
-	if criSocket != kubeadmapiv1alpha3.DefaultCRISocket {
+	if criSocket != kubeadmapiv1beta1.DefaultCRISocket {
 		toolName = "crictl"
 		// !!! temporary work around crictl warning:
 		// Using "/var/run/crio/crio.sock" as endpoint is deprecated,
@@ -68,7 +69,7 @@ func NewContainerRuntime(execer utilsexec.Interface, criSocket string) (Containe
 	}
 
 	if _, err := execer.LookPath(toolName); err != nil {
-		return nil, fmt.Errorf("%s is required for container runtime: %v", toolName, err)
+		return nil, pkgerrors.Wrapf(err, "%s is required for container runtime", toolName)
 	}
 
 	return runtime, nil
@@ -86,31 +87,29 @@ func (runtime *DockerRuntime) IsDocker() bool {
 
 // IsRunning checks if runtime is running
 func (runtime *CRIRuntime) IsRunning() error {
-	if err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "info").Run(); err != nil {
-		return fmt.Errorf("container runtime is not running: %v", err)
+	if out, err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "info").CombinedOutput(); err != nil {
+		return pkgerrors.Wrapf(err, "container runtime is not running: output: %s, error", string(out))
 	}
 	return nil
 }
 
 // IsRunning checks if runtime is running
 func (runtime *DockerRuntime) IsRunning() error {
-	if err := runtime.exec.Command("docker", "info").Run(); err != nil {
-		return fmt.Errorf("container runtime is not running: %v", err)
+	if out, err := runtime.exec.Command("docker", "info").CombinedOutput(); err != nil {
+		return pkgerrors.Wrapf(err, "container runtime is not running: output: %s, error", string(out))
 	}
 	return nil
 }
 
 // ListKubeContainers lists running k8s CRI pods
 func (runtime *CRIRuntime) ListKubeContainers() ([]string, error) {
-	output, err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "pods", "-q").CombinedOutput()
+	out, err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "pods", "-q").CombinedOutput()
 	if err != nil {
-		return nil, err
+		return nil, pkgerrors.Wrapf(err, "output: %s, error", string(out))
 	}
 	pods := []string{}
-	for _, pod := range strings.Fields(string(output)) {
-		if strings.HasPrefix(pod, "k8s_") {
-			pods = append(pods, pod)
-		}
+	for _, pod := range strings.Fields(string(out)) {
+		pods = append(pods, pod)
 	}
 	return pods, nil
 }
@@ -125,14 +124,14 @@ func (runtime *DockerRuntime) ListKubeContainers() ([]string, error) {
 func (runtime *CRIRuntime) RemoveContainers(containers []string) error {
 	errs := []error{}
 	for _, container := range containers {
-		err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "stopp", container).Run()
+		out, err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "stopp", container).CombinedOutput()
 		if err != nil {
 			// don't stop on errors, try to remove as many containers as possible
-			errs = append(errs, fmt.Errorf("failed to stop running pod %s: %v", container, err))
+			errs = append(errs, pkgerrors.Wrapf(err, "failed to stop running pod %s: output: %s, error", container, string(out)))
 		} else {
-			err = runtime.exec.Command("crictl", "-r", runtime.criSocket, "rmp", container).Run()
+			out, err = runtime.exec.Command("crictl", "-r", runtime.criSocket, "rmp", container).CombinedOutput()
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to remove running container %s: %v", container, err))
+				errs = append(errs, pkgerrors.Wrapf(err, "failed to remove running container %s: output: %s, error", container, string(out)))
 			}
 		}
 	}
@@ -143,10 +142,10 @@ func (runtime *CRIRuntime) RemoveContainers(containers []string) error {
 func (runtime *DockerRuntime) RemoveContainers(containers []string) error {
 	errs := []error{}
 	for _, container := range containers {
-		err := runtime.exec.Command("docker", "rm", "--force", "--volumes", container).Run()
+		out, err := runtime.exec.Command("docker", "rm", "--force", "--volumes", container).CombinedOutput()
 		if err != nil {
 			// don't stop on errors, try to remove as many containers as possible
-			errs = append(errs, fmt.Errorf("failed to remove running container %s: %v", container, err))
+			errs = append(errs, pkgerrors.Wrapf(err, "failed to remove running container %s: output: %s, error", container, string(out)))
 		}
 	}
 	return errors.NewAggregate(errs)
@@ -154,22 +153,30 @@ func (runtime *DockerRuntime) RemoveContainers(containers []string) error {
 
 // PullImage pulls the image
 func (runtime *CRIRuntime) PullImage(image string) error {
-	return runtime.exec.Command("crictl", "-r", runtime.criSocket, "pull", image).Run()
+	out, err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "pull", image).CombinedOutput()
+	if err != nil {
+		return pkgerrors.Wrapf(err, "output: %s, error", string(out))
+	}
+	return nil
 }
 
 // PullImage pulls the image
 func (runtime *DockerRuntime) PullImage(image string) error {
-	return runtime.exec.Command("docker", "pull", image).Run()
+	out, err := runtime.exec.Command("docker", "pull", image).CombinedOutput()
+	if err != nil {
+		return pkgerrors.Wrapf(err, "output: %s, error", string(out))
+	}
+	return nil
 }
 
 // ImageExists checks to see if the image exists on the system
 func (runtime *CRIRuntime) ImageExists(image string) (bool, error) {
 	err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "inspecti", image).Run()
-	return err == nil, err
+	return err == nil, nil
 }
 
 // ImageExists checks to see if the image exists on the system
 func (runtime *DockerRuntime) ImageExists(image string) (bool, error) {
 	err := runtime.exec.Command("docker", "inspect", image).Run()
-	return err == nil, err
+	return err == nil, nil
 }

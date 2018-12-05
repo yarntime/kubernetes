@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -39,7 +40,10 @@ import (
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/util/dryrun"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	utiltrace "k8s.io/apiserver/pkg/util/trace"
 )
 
@@ -50,8 +54,8 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 		trace := utiltrace.New("Patch " + req.URL.Path)
 		defer trace.LogIfLong(500 * time.Millisecond)
 
-		if isDryRun(req.URL) {
-			scope.err(errors.NewBadRequest("dryRun is not supported yet"), w, req)
+		if isDryRun(req.URL) && !utilfeature.DefaultFeatureGate.Enabled(features.DryRun) {
+			scope.err(errors.NewBadRequest("the dryRun alpha feature is disabled"), w, req)
 			return
 		}
 
@@ -96,6 +100,11 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 			scope.err(err, w, req)
 			return
 		}
+		if errs := validation.ValidateUpdateOptions(options); len(errs) > 0 {
+			err := errors.NewInvalid(schema.GroupKind{Group: metav1.GroupName, Kind: "UpdateOptions"}, "", errs)
+			scope.err(err, w, req)
+			return
+		}
 
 		ae := request.AuditEventFrom(ctx)
 		admit = admission.WithAudit(admit, ae)
@@ -109,9 +118,10 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 			return
 		}
 		gv := scope.Kind.GroupVersion()
+
 		codec := runtime.NewCodec(
 			scope.Serializer.EncoderForVersion(s.Serializer, gv),
-			scope.Serializer.DecoderToVersion(s.Serializer, schema.GroupVersion{Group: gv.Group, Version: runtime.APIVersionInternal}),
+			scope.Serializer.DecoderToVersion(s.Serializer, scope.HubGroupVersion),
 		)
 
 		userInfo, _ := request.UserFrom(ctx)
@@ -124,6 +134,7 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 			scope.Resource,
 			scope.Subresource,
 			admission.Update,
+			dryrun.IsDryRun(options.DryRun),
 			userInfo,
 		)
 		admissionCheck := func(updatedObject runtime.Object, currentObject runtime.Object) error {
@@ -138,6 +149,7 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 					scope.Resource,
 					scope.Subresource,
 					admission.Update,
+					dryrun.IsDryRun(options.DryRun),
 					userInfo,
 				))
 			}
@@ -151,6 +163,8 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 			unsafeConvertor: scope.UnsafeConvertor,
 			kind:            scope.Kind,
 			resource:        scope.Resource,
+
+			hubGroupVersion: scope.HubGroupVersion,
 
 			createValidation: rest.AdmissionToValidateObjectFunc(admit, staticAdmissionAttributes),
 			updateValidation: rest.AdmissionToValidateObjectUpdateFunc(admit, staticAdmissionAttributes),
@@ -187,6 +201,7 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 		}
 		trace.Step("Self-link added")
 
+		scope.Trace = trace
 		transformResponseObject(ctx, scope, req, w, http.StatusOK, result)
 	}
 }
@@ -206,6 +221,8 @@ type patcher struct {
 	unsafeConvertor runtime.ObjectConvertor
 	resource        schema.GroupVersionResource
 	kind            schema.GroupVersionKind
+
+	hubGroupVersion schema.GroupVersion
 
 	// Validation functions
 	createValidation rest.ValidateObjectFunc
@@ -231,11 +248,6 @@ type patcher struct {
 	mechanism         patchMechanism
 }
 
-func (p *patcher) toUnversioned(versionedObj runtime.Object) (runtime.Object, error) {
-	gvk := p.kind.GroupKind().WithVersion(runtime.APIVersionInternal)
-	return p.unsafeConvertor.ConvertToVersion(versionedObj, gvk.GroupVersion())
-}
-
 type patchMechanism interface {
 	applyPatchToCurrentObject(currentObject runtime.Object) (runtime.Object, error)
 }
@@ -254,7 +266,7 @@ func (p *jsonPatcher) applyPatchToCurrentObject(currentObject runtime.Object) (r
 	// Apply the patch.
 	patchedObjJS, err := p.applyJSPatch(currentObjJS)
 	if err != nil {
-		return nil, interpretPatchError(err)
+		return nil, err
 	}
 
 	// Construct the resulting typed, unversioned object.
@@ -273,9 +285,13 @@ func (p *jsonPatcher) applyJSPatch(versionedJS []byte) (patchedJS []byte, retErr
 	case types.JSONPatchType:
 		patchObj, err := jsonpatch.DecodePatch(p.patchJS)
 		if err != nil {
-			return nil, err
+			return nil, errors.NewBadRequest(err.Error())
 		}
-		return patchObj.Apply(versionedJS)
+		patchedJS, err := patchObj.Apply(versionedJS)
+		if err != nil {
+			return nil, errors.NewGenericServerResponse(http.StatusUnprocessableEntity, "", schema.GroupResource{}, "", err.Error(), 0, false)
+		}
+		return patchedJS, nil
 	case types.MergePatchType:
 		return jsonpatch.MergePatch(versionedJS, p.patchJS)
 	default:
@@ -305,13 +321,8 @@ func (p *smpPatcher) applyPatchToCurrentObject(currentObject runtime.Object) (ru
 	if err := strategicPatchObject(p.defaulter, currentVersionedObject, p.patchJS, versionedObjToUpdate, p.schemaReferenceObj); err != nil {
 		return nil, err
 	}
-	// Convert the object back to unversioned (aka internal version).
-	unversionedObjToUpdate, err := p.toUnversioned(versionedObjToUpdate)
-	if err != nil {
-		return nil, err
-	}
-
-	return unversionedObjToUpdate, nil
+	// Convert the object back to the hub version
+	return p.unsafeConvertor.ConvertToVersion(versionedObjToUpdate, p.hubGroupVersion)
 }
 
 // strategicPatchObject applies a strategic merge patch of <patchJS> to
@@ -404,7 +415,7 @@ func applyPatchToObject(
 ) error {
 	patchedObjMap, err := strategicpatch.StrategicMergeMapPatch(originalMap, patchMap, schemaReferenceObj)
 	if err != nil {
-		return interpretPatchError(err)
+		return interpretStrategicMergePatchError(err)
 	}
 
 	// Rather than serialize the patched map to JSON, then decode it to an object, we go directly from a map to an object
@@ -417,8 +428,8 @@ func applyPatchToObject(
 	return nil
 }
 
-// interpretPatchError interprets the error type and returns an error with appropriate HTTP code.
-func interpretPatchError(err error) error {
+// interpretStrategicMergePatchError interprets the error type and returns an error with appropriate HTTP code.
+func interpretStrategicMergePatchError(err error) error {
 	switch err {
 	case mergepatch.ErrBadJSONDoc, mergepatch.ErrBadPatchFormatForPrimitiveList, mergepatch.ErrBadPatchFormatForRetainKeys, mergepatch.ErrBadPatchFormatForSetElementOrderList, mergepatch.ErrUnsupportedStrategicMergePatchFormat:
 		return errors.NewBadRequest(err.Error())
