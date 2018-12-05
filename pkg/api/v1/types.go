@@ -519,6 +519,8 @@ type PersistentVolumeSpec struct {
 	// means that this volume does not belong to any StorageClass.
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty" protobuf:"bytes,6,opt,name=storageClassName"`
+
+	FastMode bool `json:"fastMode,omitempty" protobuf:"bytes,7,opt,name=fastMode"`
 }
 
 // PersistentVolumeReclaimPolicy describes a policy for end-of-life maintenance of persistent volumes.
@@ -618,6 +620,8 @@ type PersistentVolumeClaimSpec struct {
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#class-1
 	// +optional
 	StorageClassName *string `json:"storageClassName,omitempty" protobuf:"bytes,5,opt,name=storageClassName"`
+	// In fast mode, use local file system directly, not lvm
+	FastMode bool `json:"fastMode,omitempty" protobuf:"bytes,6,opt,name=fastMode"`
 }
 
 // PersistentVolumeClaimStatus is the current status of a persistent volume claim.
@@ -3535,7 +3539,9 @@ const (
 	// The resource name for ResourceStorageScratch is alpha and it can change across releases.
 	ResourceStorageScratch ResourceName = "storage.kubernetes.io/scratch"
 	// NVIDIA GPU, in devices. Alpha, might change: although fractional and allowing values >1, only one whole device per node is assigned.
-	ResourceNvidiaGPU ResourceName = "alpha.kubernetes.io/nvidia-gpu"
+	ResourceNvidiaGPU    ResourceName = "alpha.kubernetes.io/nvidia-gpu"
+	ResourceNewNvidiaGPU ResourceName = "nvidia.com/gpu"
+	ResourceGPU          ResourceName = "gpu"
 	// Number of Pods that may be running on this Node: see ResourcePods
 )
 

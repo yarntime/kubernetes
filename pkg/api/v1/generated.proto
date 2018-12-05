@@ -1,5 +1,5 @@
 /*
-Copyright 2017 The Kubernetes Authors.
+Copyright 2018 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -2079,6 +2079,9 @@ message PersistentVolumeClaimSpec {
   // More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#class-1
   // +optional
   optional string storageClassName = 5;
+
+  // In fast mode, use local file system directly, not lvm
+  optional bool fastMode = 6;
 }
 
 // PersistentVolumeClaimStatus is the current status of a persistent volume claim.
@@ -2261,6 +2264,8 @@ message PersistentVolumeSpec {
   // means that this volume does not belong to any StorageClass.
   // +optional
   optional string storageClassName = 6;
+
+  optional bool fastMode = 7;
 }
 
 // PersistentVolumeStatus is the current status of a persistent volume.

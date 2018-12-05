@@ -454,6 +454,9 @@ type PersistentVolumeSpec struct {
 	// means that this volume does not belong to any StorageClass.
 	// +optional
 	StorageClassName string
+
+	// In fast mode, use local file system directly, not lvm
+	FastMode  bool
 }
 
 // PersistentVolumeReclaimPolicy describes a policy for end-of-life maintenance of persistent volumes
@@ -535,6 +538,9 @@ type PersistentVolumeClaimSpec struct {
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes/#class-1
 	// +optional
 	StorageClassName *string
+
+	// In fast mode, use local file system directly, not lvm
+	FastMode      bool
 }
 
 type PersistentVolumeClaimStatus struct {

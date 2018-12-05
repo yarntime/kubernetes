@@ -411,6 +411,7 @@ type provisionerConfig struct {
 	gidMin          int
 	gidMax          int
 	volumeType      gapi.VolumeDurabilityInfo
+	fastMode        bool
 }
 
 type glusterfsVolumeProvisioner struct {
@@ -683,6 +684,7 @@ func (p *glusterfsVolumeProvisioner) Provision() (*v1.PersistentVolume, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.fastMode = p.options.PVC.Spec.FastMode
 	p.provisionerConfig = *cfg
 
 	glog.V(4).Infof("glusterfs: creating volume with configuration %+v", p.provisionerConfig)
@@ -713,6 +715,7 @@ func (p *glusterfsVolumeProvisioner) Provision() (*v1.PersistentVolume, error) {
 	pv.Spec.PersistentVolumeSource.Glusterfs = glusterfs
 	pv.Spec.PersistentVolumeReclaimPolicy = p.options.PersistentVolumeReclaimPolicy
 	pv.Spec.AccessModes = p.options.PVC.Spec.AccessModes
+	pv.Spec.FastMode = p.options.PVC.Spec.FastMode
 	if len(pv.Spec.AccessModes) == 0 {
 		pv.Spec.AccessModes = p.plugin.GetAccessModes()
 	}
@@ -780,7 +783,7 @@ func (p *glusterfsVolumeProvisioner) CreateVolume(gid int) (r *v1.GlusterfsVolum
 		glog.V(4).Infof("glusterfs: provided clusterIDs: %v", clusterIDs)
 	}
 	gid64 := int64(gid)
-	volumeReq := &gapi.VolumeCreateRequest{Size: sz, Clusters: clusterIDs, Gid: gid64, Durability: p.volumeType}
+	volumeReq := &gapi.VolumeCreateRequest{Size: sz, Clusters: clusterIDs, Gid: gid64, Durability: p.volumeType, FastMode: p.fastMode}
 	volume, err := cli.VolumeCreate(volumeReq)
 	if err != nil {
 		glog.Errorf("glusterfs: error creating volume %v ", err)
