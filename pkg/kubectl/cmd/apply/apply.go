@@ -93,7 +93,7 @@ type ApplyOptions struct {
 const (
 	// maxPatchRetry is the maximum number of conflicts retry for during a patch operation before returning failure
 	maxPatchRetry = 5
-	// backOffPeriod is the period to back off when apply patch resutls in error.
+	// backOffPeriod is the period to back off when apply patch results in error.
 	backOffPeriod = 1 * time.Second
 	// how many times we can retry before back off
 	triesBeforeBackOff = 1
@@ -344,6 +344,13 @@ func (o *ApplyOptions) Run() error {
 			return err
 		}
 
+		// If server-dry-run is requested but the type doesn't support it, fail right away.
+		if o.ServerDryRun {
+			if err := dryRunVerifier.HasSupport(info.Mapping.GroupVersionKind); err != nil {
+				return err
+			}
+		}
+
 		if info.Namespaced() {
 			visitedNamespaces.Insert(info.Namespace)
 		}
@@ -366,12 +373,6 @@ func (o *ApplyOptions) Run() error {
 		if err := info.Get(); err != nil {
 			if !errors.IsNotFound(err) {
 				return cmdutil.AddSourceToErr(fmt.Sprintf("retrieving current configuration of:\n%s\nfrom server for:", info.String()), info.Source, err)
-			}
-			// If server-dry-run is requested but the type doesn't support it, fail right away.
-			if o.ServerDryRun {
-				if err := dryRunVerifier.HasSupport(info.Mapping.GroupVersionKind); err != nil {
-					return err
-				}
 			}
 
 			// Create the resource if it doesn't exist
@@ -575,12 +576,11 @@ func getRESTMappings(mapper meta.RESTMapper, pruneResources *[]pruneResource) (n
 			{"", "v1", "Service", true},
 			{"batch", "v1", "Job", true},
 			{"batch", "v1beta1", "CronJob", true},
-			{"extensions", "v1beta1", "DaemonSet", true},
-			{"extensions", "v1beta1", "Deployment", true},
 			{"extensions", "v1beta1", "Ingress", true},
-			{"extensions", "v1beta1", "ReplicaSet", true},
-			{"apps", "v1beta1", "StatefulSet", true},
-			{"apps", "v1beta1", "Deployment", true},
+			{"apps", "v1", "DaemonSet", true},
+			{"apps", "v1", "Deployment", true},
+			{"apps", "v1", "ReplicaSet", true},
+			{"apps", "v1", "StatefulSet", true},
 		}
 	}
 

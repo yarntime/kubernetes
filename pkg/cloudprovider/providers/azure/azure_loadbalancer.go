@@ -27,11 +27,11 @@ import (
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	cloudprovider "k8s.io/cloud-provider"
+	"k8s.io/klog"
 	serviceapi "k8s.io/kubernetes/pkg/api/v1/service"
 
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2017-09-01/network"
 	"github.com/Azure/go-autorest/autorest/to"
-	"k8s.io/klog"
 )
 
 const (
@@ -210,7 +210,7 @@ func (az *Cloud) getServiceLoadBalancer(service *v1.Service, clusterName string,
 	primaryVMSetName := az.vmSet.GetPrimaryVMSetName()
 	defaultLBName := az.getAzureLoadBalancerName(clusterName, primaryVMSetName, isInternal)
 
-	existingLBs, err := az.ListLBWithRetry(service)
+	existingLBs, err := az.ListLB(service)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -387,7 +387,7 @@ func (az *Cloud) determinePublicIPName(clusterName string, service *v1.Service) 
 
 	pipResourceGroup := az.getPublicIPAddressResourceGroup(service)
 
-	pips, err := az.ListPIPWithRetry(service, pipResourceGroup)
+	pips, err := az.ListPIP(service, pipResourceGroup)
 	if err != nil {
 		return "", err
 	}
@@ -474,13 +474,13 @@ func (az *Cloud) ensurePublicIPExists(service *v1.Service, pipName string, domai
 	}
 
 	klog.V(2).Infof("ensurePublicIPExists for service(%s): pip(%s) - creating", serviceName, *pip.Name)
-	klog.V(10).Infof("CreateOrUpdatePIPWithRetry(%s, %q): start", pipResourceGroup, *pip.Name)
-	err = az.CreateOrUpdatePIPWithRetry(service, pipResourceGroup, pip)
+	klog.V(10).Infof("CreateOrUpdatePIP(%s, %q): start", pipResourceGroup, *pip.Name)
+	err = az.CreateOrUpdatePIP(service, pipResourceGroup, pip)
 	if err != nil {
 		klog.V(2).Infof("ensure(%s) abort backoff: pip(%s) - creating", serviceName, *pip.Name)
 		return nil, err
 	}
-	klog.V(10).Infof("CreateOrUpdatePIPWithRetry(%s, %q): end", pipResourceGroup, *pip.Name)
+	klog.V(10).Infof("CreateOrUpdatePIP(%s, %q): end", pipResourceGroup, *pip.Name)
 
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
@@ -818,16 +818,16 @@ func (az *Cloud) reconcileLoadBalancer(clusterName string, service *v1.Service, 
 			klog.V(10).Infof("EnsureBackendPoolDeleted(%s, %s): end", lbBackendPoolID, vmSetName)
 
 			// Remove the LB.
-			klog.V(10).Infof("reconcileLoadBalancer: az.DeleteLBWithRetry(%q): start", lbName)
-			err = az.DeleteLBWithRetry(service, lbName)
+			klog.V(10).Infof("reconcileLoadBalancer: az.DeleteLB(%q): start", lbName)
+			err = az.DeleteLB(service, lbName)
 			if err != nil {
 				klog.V(2).Infof("reconcileLoadBalancer for service(%s) abort backoff: lb(%s) - deleting; no remaining frontendIPConfigurations", serviceName, lbName)
 				return nil, err
 			}
-			klog.V(10).Infof("az.DeleteLBWithRetry(%q): end", lbName)
+			klog.V(10).Infof("az.DeleteLB(%q): end", lbName)
 		} else {
 			klog.V(2).Infof("reconcileLoadBalancer: reconcileLoadBalancer for service(%s): lb(%s) - updating", serviceName, lbName)
-			err := az.CreateOrUpdateLBWithRetry(service, *lb)
+			err := az.CreateOrUpdateLB(service, *lb)
 			if err != nil {
 				klog.V(2).Infof("reconcileLoadBalancer for service(%s) abort backoff: lb(%s) - updating", serviceName, lbName)
 				return nil, err
@@ -991,7 +991,7 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 	if err != nil {
 		return nil, err
 	}
-	sourceAddressPrefixes := []string{}
+	var sourceAddressPrefixes []string
 	if (sourceRanges == nil || serviceapi.IsAllowAll(sourceRanges)) && len(serviceTags) == 0 {
 		if !requiresInternalLoadBalancer(service) {
 			sourceAddressPrefixes = []string{"Internet"}
@@ -1006,51 +1006,35 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 	}
 	expectedSecurityRules := []network.SecurityRule{}
 
-	if wantLb && len(sourceAddressPrefixes) > 0 {
-		for _, port := range ports {
+	if wantLb {
+		expectedSecurityRules = make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
+
+		for i, port := range ports {
 			_, securityProto, _, err := getProtocolsFromKubernetesProtocol(port.Protocol)
 			if err != nil {
 				return nil, err
 			}
-			if useSharedSecurityRule(service) {
-				// When service is shared, a separate rule is created for each element in sourceAddressPrefixes
-				for j := range sourceAddressPrefixes {
-					securityRuleName := az.getSecurityRuleName(service, port, sourceAddressPrefixes[j])
-					expectedSecurityRules = append(expectedSecurityRules, network.SecurityRule{
-						Name: to.StringPtr(securityRuleName),
-						SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-							Protocol:                 *securityProto,
-							SourcePortRange:          to.StringPtr("*"),
-							DestinationPortRange:     to.StringPtr(strconv.Itoa(int(port.Port))),
-							SourceAddressPrefix:      to.StringPtr(sourceAddressPrefixes[j]),
-							DestinationAddressPrefix: to.StringPtr(destinationIPAddress),
-							Access:                   network.SecurityRuleAccessAllow,
-							Direction:                network.SecurityRuleDirectionInbound,
-						},
-					})
-				}
-			} else {
-				// When service is not shared, a single rule UUID-PROTOCOL-PORT is created
-				securityRuleName := az.getSecurityRuleName(service, port, "")
-				expectedSecurityRules = append(expectedSecurityRules, network.SecurityRule{
+			for j := range sourceAddressPrefixes {
+				ix := i*len(sourceAddressPrefixes) + j
+				securityRuleName := az.getSecurityRuleName(service, port, sourceAddressPrefixes[j])
+				expectedSecurityRules[ix] = network.SecurityRule{
 					Name: to.StringPtr(securityRuleName),
 					SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
 						Protocol:                 *securityProto,
 						SourcePortRange:          to.StringPtr("*"),
 						DestinationPortRange:     to.StringPtr(strconv.Itoa(int(port.Port))),
-						SourceAddressPrefixes:    &sourceAddressPrefixes,
+						SourceAddressPrefix:      to.StringPtr(sourceAddressPrefixes[j]),
 						DestinationAddressPrefix: to.StringPtr(destinationIPAddress),
 						Access:                   network.SecurityRuleAccessAllow,
 						Direction:                network.SecurityRuleDirectionInbound,
 					},
-				})
+				}
 			}
-
 		}
 	}
 
 	for _, r := range expectedSecurityRules {
-		klog.V(10).Infof("Expecting security rule for %s: %s:%s -> %s:%s", service.Name, logSafeCollection(r.SourceAddressPrefix, r.SourceAddressPrefixes), *r.SourcePortRange, *r.DestinationAddressPrefix, *r.DestinationPortRange)
+		klog.V(10).Infof("Expecting security rule for %s: %s:%s -> %s:%s", service.Name, *r.SourceAddressPrefix, *r.SourcePortRange, *r.DestinationAddressPrefix, *r.DestinationPortRange)
 	}
 
 	// update security rules
@@ -1061,7 +1045,7 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 	}
 
 	for _, r := range updatedRules {
-		klog.V(10).Infof("Existing security rule while processing %s: %s:%s -> %s:%s", service.Name, logSafeCollection(r.SourceAddressPrefix, r.SourceAddressPrefixes), logSafe(r.SourcePortRange), logSafeCollection(r.DestinationAddressPrefix, r.DestinationAddressPrefixes), logSafe(r.DestinationPortRange))
+		klog.V(10).Infof("Existing security rule while processing %s: %s:%s -> %s:%s", service.Name, logSafe(r.SourceAddressPrefix), logSafe(r.SourcePortRange), logSafeCollection(r.DestinationAddressPrefix, r.DestinationAddressPrefixes), logSafe(r.DestinationPortRange))
 	}
 
 	// update security rules: remove unwanted rules that belong privately
@@ -1090,14 +1074,17 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 				sharedRuleName := az.getSecurityRuleName(service, port, sourceAddressPrefix)
 				sharedIndex, sharedRule, sharedRuleFound := findSecurityRuleByName(updatedRules, sharedRuleName)
 				if !sharedRuleFound {
+					klog.V(4).Infof("Expected to find shared rule %s for service %s being deleted, but did not", sharedRuleName, service.Name)
 					return nil, fmt.Errorf("Expected to find shared rule %s for service %s being deleted, but did not", sharedRuleName, service.Name)
 				}
 				if sharedRule.DestinationAddressPrefixes == nil {
+					klog.V(4).Infof("Expected to have array of destinations in shared rule for service %s being deleted, but did not", service.Name)
 					return nil, fmt.Errorf("Expected to have array of destinations in shared rule for service %s being deleted, but did not", service.Name)
 				}
 				existingPrefixes := *sharedRule.DestinationAddressPrefixes
 				addressIndex, found := findIndex(existingPrefixes, destinationIPAddress)
 				if !found {
+					klog.V(4).Infof("Expected to find destination address %s in shared rule %s for service %s being deleted, but did not", destinationIPAddress, sharedRuleName, service.Name)
 					return nil, fmt.Errorf("Expected to find destination address %s in shared rule %s for service %s being deleted, but did not", destinationIPAddress, sharedRuleName, service.Name)
 				}
 				if len(existingPrefixes) == 1 {
@@ -1131,24 +1118,8 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 			foundRule = true
 		}
 		if foundRule && allowsConsolidation(expectedRule) {
-			klog.V(2).Infof("reconcile(%s)(%t): sg rule(%s) - allowConsolidation", serviceName, wantLb, *expectedRule.Name)
 			index, _ := findConsolidationCandidate(updatedRules, expectedRule)
 			updatedRules[index] = consolidate(updatedRules[index], expectedRule)
-			dirtySg = true
-		}
-		if foundRule && !allowsConsolidation(expectedRule) {
-			// For backward compatibility, for not shared rules,
-			// if existing rule(s)'s name contains or equals to UUID-PROTOCOL-PORT,
-			// then replace the first matching rule with the new rule with the new naming convention.
-			// Keep the same priority as the existing rule.
-			// Remove rest of the matching rules as the new rule already includes all the SourceAddressPrefixes.
-			// This also takes care of service updates.
-			klog.V(2).Infof("reconcile(%s)(%t): sg rule(%s) - not allowConsolidation", serviceName, wantLb, *expectedRule.Name)
-			updated := false
-			updatedRules, updated = updateMatchingRules(updatedRules, expectedRule)
-			if !updated {
-				return nil, fmt.Errorf("Expected to update rules containing %s for service %s, but did not", *expectedRule.Name, service.Name)
-			}
 			dirtySg = true
 		}
 		if !foundRule {
@@ -1166,14 +1137,14 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 	}
 
 	for _, r := range updatedRules {
-		klog.V(10).Infof("Updated security rule while processing %s: %s:%s -> %s:%s", service.Name, logSafeCollection(r.SourceAddressPrefix, r.SourceAddressPrefixes), logSafe(r.SourcePortRange), logSafeCollection(r.DestinationAddressPrefix, r.DestinationAddressPrefixes), logSafe(r.DestinationPortRange))
+		klog.V(10).Infof("Updated security rule while processing %s: %s:%s -> %s:%s", service.Name, logSafe(r.SourceAddressPrefix), logSafe(r.SourcePortRange), logSafeCollection(r.DestinationAddressPrefix, r.DestinationAddressPrefixes), logSafe(r.DestinationPortRange))
 	}
 
 	if dirtySg {
 		sg.SecurityRules = &updatedRules
 		klog.V(2).Infof("reconcileSecurityGroup for service(%s): sg(%s) - updating", serviceName, *sg.Name)
-		klog.V(10).Infof("CreateOrUpdateSGWithRetry(%q): start", *sg.Name)
-		err := az.CreateOrUpdateSGWithRetry(service, sg)
+		klog.V(10).Infof("CreateOrUpdateSecurityGroup(%q): start", *sg.Name)
+		err := az.CreateOrUpdateSecurityGroup(service, sg)
 		if err != nil {
 			klog.V(2).Infof("ensure(%s) abort backoff: sg(%s) - updating", serviceName, *sg.Name)
 			// TODO (Nov 2017): remove when augmented security rules are out of preview
@@ -1186,7 +1157,7 @@ func (az *Cloud) reconcileSecurityGroup(clusterName string, service *v1.Service,
 			// END TODO
 			return nil, err
 		}
-		klog.V(10).Infof("CreateOrUpdateSGWithRetry(%q): end", *sg.Name)
+		klog.V(10).Infof("CreateOrUpdateSecurityGroup(%q): end", *sg.Name)
 	}
 	return &sg, nil
 }
@@ -1242,25 +1213,6 @@ func findConsolidationCandidate(rules []network.SecurityRule, rule network.Secur
 	return 0, false
 }
 
-func updateMatchingRules(existingRules []network.SecurityRule, updatedRule network.SecurityRule) ([]network.SecurityRule, bool) {
-	updatedRules := []network.SecurityRule{}
-	updated := false
-	for _, existingRule := range existingRules {
-		if strings.Contains(to.String(existingRule.Name), to.String(updatedRule.Name)) {
-			if !updated {
-				updated = true
-				updatedRule.Priority = existingRule.Priority
-				updatedRules = append(updatedRules, updatedRule)
-			}
-			// skip if another matching rule is found after an existing rule has been updated
-		} else {
-			updatedRules = append(updatedRules, existingRule)
-		}
-	}
-
-	return updatedRules, updated
-}
-
 func makeConsolidatable(rule network.SecurityRule) network.SecurityRule {
 	return network.SecurityRule{
 		Name: rule.Name,
@@ -1293,8 +1245,8 @@ func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule
 			SourcePortRanges:           existingRule.SourcePortRanges,
 			DestinationPortRange:       existingRule.DestinationPortRange,
 			DestinationPortRanges:      existingRule.DestinationPortRanges,
-			SourceAddressPrefix:        newRule.SourceAddressPrefix,
-			SourceAddressPrefixes:      newRule.SourceAddressPrefixes,
+			SourceAddressPrefix:        existingRule.SourceAddressPrefix,
+			SourceAddressPrefixes:      existingRule.SourceAddressPrefixes,
 			DestinationAddressPrefixes: destinations,
 			Access:                     existingRule.Access,
 			Direction:                  existingRule.Direction,
@@ -1363,7 +1315,7 @@ func (az *Cloud) reconcilePublicIP(clusterName string, service *v1.Service, lb *
 
 	pipResourceGroup := az.getPublicIPAddressResourceGroup(service)
 
-	pips, err := az.ListPIPWithRetry(service, pipResourceGroup)
+	pips, err := az.ListPIP(service, pipResourceGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -1462,7 +1414,7 @@ func (az *Cloud) safeDeletePublicIP(service *v1.Service, pipResourceGroup string
 
 		// Update load balancer when frontendIPConfigUpdated or loadBalancerRuleUpdated.
 		if frontendIPConfigUpdated || loadBalancerRuleUpdated {
-			err := az.CreateOrUpdateLBWithRetry(service, *lb)
+			err := az.CreateOrUpdateLB(service, *lb)
 			if err != nil {
 				klog.Errorf("safeDeletePublicIP for service(%s) failed with error: %v", getServiceName(service), err)
 				return err
@@ -1471,14 +1423,14 @@ func (az *Cloud) safeDeletePublicIP(service *v1.Service, pipResourceGroup string
 	}
 
 	pipName := to.String(pip.Name)
-	klog.V(10).Infof("DeletePublicIPWithRetry(%s, %q): start", pipResourceGroup, pipName)
-	err := az.DeletePublicIPWithRetry(service, pipResourceGroup, pipName)
+	klog.V(10).Infof("DeletePublicIP(%s, %q): start", pipResourceGroup, pipName)
+	err := az.DeletePublicIP(service, pipResourceGroup, pipName)
 	if err != nil {
 		if err = ignoreStatusNotFoundFromError(err); err != nil {
 			return err
 		}
 	}
-	klog.V(10).Infof("DeletePublicIPWithRetry(%s, %q): end", pipResourceGroup, pipName)
+	klog.V(10).Infof("DeletePublicIP(%s, %q): end", pipResourceGroup, pipName)
 
 	return nil
 }
@@ -1521,19 +1473,12 @@ func equalLoadBalancingRulePropertiesFormat(s, t *network.LoadBalancingRulePrope
 
 // This compares rule's Name, Protocol, SourcePortRange, DestinationPortRange, SourceAddressPrefix, Access, and Direction.
 // Note that it compares rule's DestinationAddressPrefix only when it's not consolidated rule as such rule does not have DestinationAddressPrefix defined.
-// We intentionally do not compare SourceAddressPrefixes and DestinationAddressPrefixes in consolidated case because reconcileSecurityRule has to consider the two rules equal,
-// despite different SourceAddressPrefixes and DestinationAddressPrefixes, in order to give it a chance to consolidate the two rules.
+// We intentionally do not compare DestinationAddressPrefixes in consolidated case because reconcileSecurityRule has to consider the two rules equal,
+// despite different DestinationAddressPrefixes, in order to give it a chance to consolidate the two rules.
 func findSecurityRule(rules []network.SecurityRule, rule network.SecurityRule) bool {
 	for _, existingRule := range rules {
-		if allowsConsolidation(existingRule) && allowsConsolidation(rule) {
-			if !strings.EqualFold(to.String(existingRule.Name), to.String(rule.Name)) {
-				continue
-			}
-		} else {
-			// for backward compatibiiity as existing rule name UUID-PROTOCOL-PORT-SOURCEIP should contain new naming pattern UUID-PROTOCOL-PORT
-			if !strings.Contains(to.String(existingRule.Name), to.String(rule.Name)) {
-				continue
-			}
+		if !strings.EqualFold(to.String(existingRule.Name), to.String(rule.Name)) {
+			continue
 		}
 		if existingRule.Protocol != rule.Protocol {
 			continue
@@ -1542,6 +1487,9 @@ func findSecurityRule(rules []network.SecurityRule, rule network.SecurityRule) b
 			continue
 		}
 		if !strings.EqualFold(to.String(existingRule.DestinationPortRange), to.String(rule.DestinationPortRange)) {
+			continue
+		}
+		if !strings.EqualFold(to.String(existingRule.SourceAddressPrefix), to.String(rule.SourceAddressPrefix)) {
 			continue
 		}
 		if !allowsConsolidation(existingRule) && !allowsConsolidation(rule) {
