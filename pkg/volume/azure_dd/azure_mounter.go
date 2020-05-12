@@ -1,3 +1,5 @@
+// +build !providerless
+
 /*
 Copyright 2017 The Kubernetes Authors.
 
@@ -21,8 +23,10 @@ import (
 	"os"
 	"runtime"
 
-	"k8s.io/api/core/v1"
 	"k8s.io/klog"
+	"k8s.io/utils/mount"
+
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
 )
@@ -61,15 +65,15 @@ func (m *azureDiskMounter) CanMount() error {
 	return nil
 }
 
-func (m *azureDiskMounter) SetUp(fsGroup *int64) error {
-	return m.SetUpAt(m.GetPath(), fsGroup)
+func (m *azureDiskMounter) SetUp(mounterArgs volume.MounterArgs) error {
+	return m.SetUpAt(m.GetPath(), mounterArgs)
 }
 
 func (m *azureDiskMounter) GetPath() string {
 	return getPath(m.dataDisk.podUID, m.dataDisk.volumeName, m.plugin.host)
 }
 
-func (m *azureDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
+func (m *azureDiskMounter) SetUpAt(dir string, mounterArgs volume.MounterArgs) error {
 	mounter := m.plugin.host.GetMounter(m.plugin.GetPluginName())
 	volumeSource, _, err := getVolumeSource(m.spec)
 
@@ -160,7 +164,7 @@ func (m *azureDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
 	}
 
 	if volumeSource.ReadOnly == nil || !*volumeSource.ReadOnly {
-		volume.SetVolumeOwnership(m, fsGroup)
+		volume.SetVolumeOwnership(m, mounterArgs.FsGroup, mounterArgs.FSGroupChangePolicy)
 	}
 
 	klog.V(2).Infof("azureDisk - successfully mounted disk %s on %s", diskName, dir)
@@ -172,7 +176,7 @@ func (u *azureDiskUnmounter) TearDown() error {
 }
 
 func (u *azureDiskUnmounter) TearDownAt(dir string) error {
-	if pathExists, pathErr := util.PathExists(dir); pathErr != nil {
+	if pathExists, pathErr := mount.PathExists(dir); pathErr != nil {
 		return fmt.Errorf("Error checking if path exists: %v", pathErr)
 	} else if !pathExists {
 		klog.Warningf("Warning: Unmount skipped because path does not exist: %v", dir)

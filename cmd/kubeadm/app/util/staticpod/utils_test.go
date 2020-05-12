@@ -25,9 +25,10 @@ import (
 	"strconv"
 	"testing"
 
-	"k8s.io/api/core/v1"
+	"github.com/lithammer/dedent"
+
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	testutil "k8s.io/kubernetes/cmd/kubeadm/test"
@@ -42,306 +43,350 @@ func TestComponentResources(t *testing.T) {
 	}
 }
 
-func TestComponentProbe(t *testing.T) {
-	var tests = []struct {
-		name      string
-		cfg       *kubeadmapi.InitConfiguration
-		component string
-		port      int
-		path      string
-		scheme    v1.URIScheme
-		expected  string
+func TestGetAPIServerProbeAddress(t *testing.T) {
+	tests := []struct {
+		desc     string
+		endpoint *kubeadmapi.APIEndpoint
+		expected string
 	}{
 		{
-			name: "default apiserver advertise address with http",
-			cfg: &kubeadmapi.InitConfiguration{
-				LocalAPIEndpoint: kubeadmapi.APIEndpoint{
-					AdvertiseAddress: "",
-				},
-			},
-			component: kubeadmconstants.KubeAPIServer,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "127.0.0.1",
+			desc:     "nil endpoint returns 127.0.0.1",
+			expected: "127.0.0.1",
 		},
 		{
-			name: "default apiserver advertise address with https",
-			cfg: &kubeadmapi.InitConfiguration{
-				LocalAPIEndpoint: kubeadmapi.APIEndpoint{
-					AdvertiseAddress: "",
-				},
-			},
-			component: kubeadmconstants.KubeAPIServer,
-			port:      2,
-			path:      "bar",
-			scheme:    v1.URISchemeHTTPS,
-			expected:  "127.0.0.1",
+			desc:     "empty AdvertiseAddress endpoint returns 127.0.0.1",
+			endpoint: &kubeadmapi.APIEndpoint{},
+			expected: "127.0.0.1",
 		},
 		{
-			name: "valid ipv4 apiserver advertise address with http",
-			cfg: &kubeadmapi.InitConfiguration{
-				LocalAPIEndpoint: kubeadmapi.APIEndpoint{
-					AdvertiseAddress: "1.2.3.4",
-				},
+			desc: "filled in AdvertiseAddress endpoint returns it",
+			endpoint: &kubeadmapi.APIEndpoint{
+				AdvertiseAddress: "10.10.10.10",
 			},
-			component: kubeadmconstants.KubeAPIServer,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "1.2.3.4",
+			expected: "10.10.10.10",
 		},
 		{
-			name: "valid ipv6 apiserver advertise address with http",
-			cfg: &kubeadmapi.InitConfiguration{
-				LocalAPIEndpoint: kubeadmapi.APIEndpoint{
-					AdvertiseAddress: "2001:db8::1",
-				},
+			desc: "filled in ipv6 AdvertiseAddress endpoint returns it",
+			endpoint: &kubeadmapi.APIEndpoint{
+				AdvertiseAddress: "2001:abcd:bcda::1",
 			},
-			component: kubeadmconstants.KubeAPIServer,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "2001:db8::1",
+			expected: "2001:abcd:bcda::1",
 		},
 		{
-			name: "valid IPv4 controller-manager probe",
-			cfg: &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					ControllerManager: kubeadmapi.ControlPlaneComponent{
-						ExtraArgs: map[string]string{"address": "1.2.3.4"},
-					},
-				},
+			desc: "filled in 0.0.0.0 AdvertiseAddress endpoint returns empty",
+			endpoint: &kubeadmapi.APIEndpoint{
+				AdvertiseAddress: "0.0.0.0",
 			},
-			component: kubeadmconstants.KubeControllerManager,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "1.2.3.4",
+			expected: "",
 		},
 		{
-			name: "valid IPv6 controller-manager probe",
-			cfg: &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					ControllerManager: kubeadmapi.ControlPlaneComponent{
-						ExtraArgs: map[string]string{"address": "2001:db8::1"},
-					},
-				},
+			desc: "filled in :: AdvertiseAddress endpoint returns empty",
+			endpoint: &kubeadmapi.APIEndpoint{
+				AdvertiseAddress: "::",
 			},
-			component: kubeadmconstants.KubeControllerManager,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "2001:db8::1",
-		},
-		{
-			name: "valid IPv4 scheduler probe",
-			cfg: &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					Scheduler: kubeadmapi.ControlPlaneComponent{
-						ExtraArgs: map[string]string{"address": "1.2.3.4"},
-					},
-				},
-			},
-			component: kubeadmconstants.KubeScheduler,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "1.2.3.4",
-		},
-		{
-			name: "valid IPv6 scheduler probe",
-			cfg: &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					Scheduler: kubeadmapi.ControlPlaneComponent{
-						ExtraArgs: map[string]string{"address": "2001:db8::1"},
-					},
-				},
-			},
-			component: kubeadmconstants.KubeScheduler,
-			port:      1,
-			path:      "foo",
-			scheme:    v1.URISchemeHTTP,
-			expected:  "2001:db8::1",
+			expected: "",
 		},
 	}
-	for _, rt := range tests {
-		t.Run(rt.name, func(t *testing.T) {
-			actual := ComponentProbe(rt.cfg, rt.component, rt.port, rt.path, rt.scheme)
-			if actual.Handler.HTTPGet.Host != rt.expected {
-				t.Errorf("%s test case failed:\n\texpected: %s\n\t  actual: %s",
-					rt.name, rt.expected,
-					actual.Handler.HTTPGet.Host)
-			}
-			if actual.Handler.HTTPGet.Port != intstr.FromInt(rt.port) {
-				t.Errorf("%s test case failed:\n\texpected: %v\n\t  actual: %v",
-					rt.name, rt.port,
-					actual.Handler.HTTPGet.Port)
-			}
-			if actual.Handler.HTTPGet.Path != rt.path {
-				t.Errorf("%s test case failed:\n\texpected: %s\n\t  actual: %s",
-					rt.name, rt.path,
-					actual.Handler.HTTPGet.Path)
-			}
-			if actual.Handler.HTTPGet.Scheme != rt.scheme {
-				t.Errorf("%s test case failed:\n\texpected: %v\n\t  actual: %v",
-					rt.name, rt.scheme,
-					actual.Handler.HTTPGet.Scheme)
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			actual := GetAPIServerProbeAddress(test.endpoint)
+			if actual != test.expected {
+				t.Errorf("Unexpected result from GetAPIServerProbeAddress:\n\texpected: %s\n\tactual: %s", test.expected, actual)
 			}
 		})
 	}
 }
 
-func TestEtcdProbe(t *testing.T) {
-	var tests = []struct {
-		name      string
-		cfg       *kubeadmapi.ClusterConfiguration
-		component string
-		port      int
-		certsDir  string
-		cacert    string
-		cert      string
-		key       string
-		expected  string
+func TestGetControllerManagerProbeAddress(t *testing.T) {
+	tests := []struct {
+		desc     string
+		cfg      *kubeadmapi.ClusterConfiguration
+		expected string
 	}{
 		{
-			name: "valid etcd probe using listen-client-urls IPv4 addresses",
+			desc: "no controller manager extra args leads to 127.0.0.1 being used",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://1.2.3.4:2379,http://4.3.2.1:2379"},
-					},
+				ControllerManager: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsA",
-			cacert:    "ca1",
-			cert:      "cert1",
-			key:       "key1",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[1.2.3.4]:1 --cacert=secretsA/ca1 --cert=secretsA/cert1 --key=secretsA/key1 get foo",
+			expected: "127.0.0.1",
 		},
 		{
-			name: "valid etcd probe using listen-client-urls unspecified IPv6 address",
+			desc: "setting controller manager extra address arg to something acknowledges it",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://[0:0:0:0:0:0:0:0]:2379"},
+				ControllerManager: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeControllerManagerBindAddressArg: "10.10.10.10",
 					},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsB",
-			cacert:    "ca2",
-			cert:      "cert2",
-			key:       "key2",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[::1]:1 --cacert=secretsB/ca2 --cert=secretsB/cert2 --key=secretsB/key2 get foo",
+			expected: "10.10.10.10",
 		},
 		{
-			name: "valid etcd probe using listen-client-urls unspecified IPv6 address 2",
+			desc: "setting controller manager extra ipv6 address arg to something acknowledges it",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://[::0:0]:2379"},
+				ControllerManager: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeControllerManagerBindAddressArg: "2001:abcd:bcda::1",
 					},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsB",
-			cacert:    "ca2",
-			cert:      "cert2",
-			key:       "key2",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[::1]:1 --cacert=secretsB/ca2 --cert=secretsB/cert2 --key=secretsB/key2 get foo",
+			expected: "2001:abcd:bcda::1",
 		},
 		{
-			name: "valid etcd probe using listen-client-urls unspecified IPv6 address 3",
+			desc: "setting controller manager extra address arg to 0.0.0.0 returns empty",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://[::]:2379"},
+				ControllerManager: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeControllerManagerBindAddressArg: "0.0.0.0",
 					},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsB",
-			cacert:    "ca2",
-			cert:      "cert2",
-			key:       "key2",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[::1]:1 --cacert=secretsB/ca2 --cert=secretsB/cert2 --key=secretsB/key2 get foo",
+			expected: "",
 		},
 		{
-			name: "valid etcd probe using listen-client-urls unspecified IPv4 address",
+			desc: "setting controller manager extra ipv6 address arg to :: returns empty",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://1.2.3.4:2379,http://4.3.2.1:2379"},
+				ControllerManager: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeControllerManagerBindAddressArg: "::",
 					},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsA",
-			cacert:    "ca1",
-			cert:      "cert1",
-			key:       "key1",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[1.2.3.4]:1 --cacert=secretsA/ca1 --cert=secretsA/cert1 --key=secretsA/key1 get foo",
+			expected: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			actual := GetControllerManagerProbeAddress(test.cfg)
+			if actual != test.expected {
+				t.Errorf("Unexpected result from GetControllerManagerProbeAddress:\n\texpected: %s\n\tactual: %s", test.expected, actual)
+			}
+		})
+	}
+}
+
+func TestGetSchedulerProbeAddress(t *testing.T) {
+	tests := []struct {
+		desc     string
+		cfg      *kubeadmapi.ClusterConfiguration
+		expected string
+	}{
+		{
+			desc: "no scheduler extra args leads to 127.0.0.1 being used",
+			cfg: &kubeadmapi.ClusterConfiguration{
+				Scheduler: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{},
+				},
+			},
+			expected: "127.0.0.1",
 		},
 		{
-			name: "valid etcd probe using listen-client-urls IPv6 addresses",
+			desc: "setting scheduler extra address arg to something acknowledges it",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://[2001:db8::1]:2379,http://[2001:db8::2]:2379"},
+				Scheduler: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeSchedulerBindAddressArg: "10.10.10.10",
 					},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsB",
-			cacert:    "ca2",
-			cert:      "cert2",
-			key:       "key2",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[2001:db8::1]:1 --cacert=secretsB/ca2 --cert=secretsB/cert2 --key=secretsB/key2 get foo",
+			expected: "10.10.10.10",
 		},
 		{
-			name: "valid IPv4 etcd probe using hostname for listen-client-urls",
+			desc: "setting scheduler extra ipv6 address arg to something acknowledges it",
 			cfg: &kubeadmapi.ClusterConfiguration{
-				Etcd: kubeadmapi.Etcd{
-					Local: &kubeadmapi.LocalEtcd{
-						ExtraArgs: map[string]string{
-							"listen-client-urls": "http://localhost:2379"},
+				Scheduler: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeSchedulerBindAddressArg: "2001:abcd:bcda::1",
 					},
 				},
 			},
-			component: kubeadmconstants.Etcd,
-			port:      1,
-			certsDir:  "secretsC",
-			cacert:    "ca3",
-			cert:      "cert3",
-			key:       "key3",
-			expected:  "ETCDCTL_API=3 etcdctl --endpoints=https://[127.0.0.1]:1 --cacert=secretsC/ca3 --cert=secretsC/cert3 --key=secretsC/key3 get foo",
+			expected: "2001:abcd:bcda::1",
+		},
+		{
+			desc: "setting scheduler extra ipv6 address arg to 0.0.0.0 returns empty",
+			cfg: &kubeadmapi.ClusterConfiguration{
+				Scheduler: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeSchedulerBindAddressArg: "0.0.0.0",
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			desc: "setting scheduler extra ipv6 address arg to :: returns empty",
+			cfg: &kubeadmapi.ClusterConfiguration{
+				Scheduler: kubeadmapi.ControlPlaneComponent{
+					ExtraArgs: map[string]string{
+						kubeSchedulerBindAddressArg: "::",
+					},
+				},
+			},
+			expected: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			actual := GetSchedulerProbeAddress(test.cfg)
+			if actual != test.expected {
+				t.Errorf("Unexpected result from GetSchedulerProbeAddress:\n\texpected: %s\n\tactual: %s", test.expected, actual)
+			}
+		})
+	}
+}
+func TestGetEtcdProbeEndpoint(t *testing.T) {
+	var tests = []struct {
+		name             string
+		cfg              *kubeadmapi.Etcd
+		isIPv6           bool
+		expectedHostname string
+		expectedPort     int
+		expectedScheme   v1.URIScheme
+	}{
+		{
+			name: "etcd probe URL from two URLs",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "https://1.2.3.4:1234,https://4.3.2.1:2381"},
+				},
+			},
+			isIPv6:           false,
+			expectedHostname: "1.2.3.4",
+			expectedPort:     1234,
+			expectedScheme:   v1.URISchemeHTTPS,
+		},
+		{
+			name: "etcd probe URL with HTTP scheme",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "http://1.2.3.4:1234"},
+				},
+			},
+			isIPv6:           false,
+			expectedHostname: "1.2.3.4",
+			expectedPort:     1234,
+			expectedScheme:   v1.URISchemeHTTP,
+		},
+		{
+			name: "etcd probe URL without scheme should result in defaults",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "1.2.3.4"},
+				},
+			},
+			isIPv6:           false,
+			expectedHostname: "127.0.0.1",
+			expectedPort:     kubeadmconstants.EtcdMetricsPort,
+			expectedScheme:   v1.URISchemeHTTP,
+		},
+		{
+			name: "etcd probe URL without port",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "https://1.2.3.4"},
+				},
+			},
+			isIPv6:           false,
+			expectedHostname: "1.2.3.4",
+			expectedPort:     kubeadmconstants.EtcdMetricsPort,
+			expectedScheme:   v1.URISchemeHTTPS,
+		},
+		{
+			name: "etcd probe URL from two IPv6 URLs",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "https://[2001:abcd:bcda::1]:1234,https://[2001:abcd:bcda::2]:2381"},
+				},
+			},
+			isIPv6:           true,
+			expectedHostname: "2001:abcd:bcda::1",
+			expectedPort:     1234,
+			expectedScheme:   v1.URISchemeHTTPS,
+		},
+		{
+			name: "etcd probe localhost IPv6 URL with HTTP scheme",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "http://[::1]:1234"},
+				},
+			},
+			isIPv6:           true,
+			expectedHostname: "::1",
+			expectedPort:     1234,
+			expectedScheme:   v1.URISchemeHTTP,
+		},
+		{
+			name: "etcd probe IPv6 URL with HTTP scheme",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "http://[2001:abcd:bcda::1]:1234"},
+				},
+			},
+			isIPv6:           true,
+			expectedHostname: "2001:abcd:bcda::1",
+			expectedPort:     1234,
+			expectedScheme:   v1.URISchemeHTTP,
+		},
+		{
+			name: "etcd probe IPv6 URL without port",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{
+					ExtraArgs: map[string]string{
+						"listen-metrics-urls": "https://[2001:abcd:bcda::1]"},
+				},
+			},
+			isIPv6:           true,
+			expectedHostname: "2001:abcd:bcda::1",
+			expectedPort:     kubeadmconstants.EtcdMetricsPort,
+			expectedScheme:   v1.URISchemeHTTPS,
+		},
+		{
+			name: "etcd probe URL from defaults",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{},
+			},
+			isIPv6:           false,
+			expectedHostname: "127.0.0.1",
+			expectedPort:     kubeadmconstants.EtcdMetricsPort,
+			expectedScheme:   v1.URISchemeHTTP,
+		},
+		{
+			name: "etcd probe URL from defaults if IPv6",
+			cfg: &kubeadmapi.Etcd{
+				Local: &kubeadmapi.LocalEtcd{},
+			},
+			isIPv6:           true,
+			expectedHostname: "::1",
+			expectedPort:     kubeadmconstants.EtcdMetricsPort,
+			expectedScheme:   v1.URISchemeHTTP,
 		},
 	}
 	for _, rt := range tests {
 		t.Run(rt.name, func(t *testing.T) {
-			// TODO: Make EtcdProbe accept a ClusterConfiguration object instead of InitConfiguration
-			initcfg := &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: *rt.cfg,
+			hostname, port, scheme := GetEtcdProbeEndpoint(rt.cfg, rt.isIPv6)
+			if hostname != rt.expectedHostname {
+				t.Errorf("%q test case failed:\n\texpected hostname: %s\n\tgot: %s",
+					rt.name, rt.expectedHostname, hostname)
 			}
-			actual := EtcdProbe(initcfg, rt.component, rt.port, rt.certsDir, rt.cacert, rt.cert, rt.key)
-			if actual.Handler.Exec.Command[2] != rt.expected {
-				t.Errorf("%s test case failed:\n\texpected: %s\n\t  actual: %s",
-					rt.name, rt.expected,
-					actual.Handler.Exec.Command[2])
+			if port != rt.expectedPort {
+				t.Errorf("%q test case failed:\n\texpected port: %d\n\tgot: %d",
+					rt.name, rt.expectedPort, port)
+			}
+			if scheme != rt.expectedScheme {
+				t.Errorf("%q test case failed:\n\texpected scheme: %v\n\tgot: %v",
+					rt.name, rt.expectedScheme, scheme)
 			}
 		})
 	}
@@ -360,10 +405,9 @@ func TestComponentPod(t *testing.T) {
 					Kind:       "Pod",
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:        "foo",
-					Namespace:   "kube-system",
-					Annotations: map[string]string{"scheduler.alpha.kubernetes.io/critical-pod": ""},
-					Labels:      map[string]string{"component": "foo", "tier": "control-plane"},
+					Name:      "foo",
+					Namespace: "kube-system",
+					Labels:    map[string]string{"component": "foo", "tier": "control-plane"},
 				},
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{
@@ -371,7 +415,7 @@ func TestComponentPod(t *testing.T) {
 							Name: "foo",
 						},
 					},
-					PriorityClassName: "system-cluster-critical",
+					PriorityClassName: "system-node-critical",
 					HostNetwork:       true,
 					Volumes:           []v1.Volume{},
 				},
@@ -382,7 +426,7 @@ func TestComponentPod(t *testing.T) {
 	for _, rt := range tests {
 		t.Run(rt.name, func(t *testing.T) {
 			c := v1.Container{Name: rt.name}
-			actual := ComponentPod(c, map[string]v1.Volume{})
+			actual := ComponentPod(c, map[string]v1.Volume{}, nil)
 			if !reflect.DeepEqual(rt.expected, actual) {
 				t.Errorf(
 					"failed componentPod:\n\texpected: %v\n\t  actual: %v",
@@ -709,5 +753,46 @@ func TestManifestFilesAreEqual(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestKustomizeStaticPod(t *testing.T) {
+	// Create temp folder for the test case
+	tmpdir := testutil.SetupTempDir(t)
+	defer os.RemoveAll(tmpdir)
+
+	patchString := dedent.Dedent(`
+    apiVersion: v1
+    kind: Pod
+    metadata:
+        name: kube-apiserver
+        namespace: kube-system
+        annotations:
+            kustomize: patch for kube-apiserver
+    `)
+
+	err := ioutil.WriteFile(filepath.Join(tmpdir, "patch.yaml"), []byte(patchString), 0644)
+	if err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
+
+	pod := &v1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Pod",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kube-apiserver",
+			Namespace: "kube-system",
+		},
+	}
+
+	kpod, err := KustomizeStaticPod(pod, tmpdir)
+	if err != nil {
+		t.Errorf("KustomizeStaticPod returned unexpected error: %v", err)
+	}
+
+	if _, ok := kpod.ObjectMeta.Annotations["kustomize"]; !ok {
+		t.Error("Kustomize did not apply patches corresponding to the resource")
 	}
 }

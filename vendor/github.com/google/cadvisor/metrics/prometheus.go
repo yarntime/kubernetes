@@ -21,7 +21,6 @@ import (
 
 	"github.com/google/cadvisor/container"
 	info "github.com/google/cadvisor/info/v1"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/klog"
 )
@@ -40,8 +39,9 @@ type infoProvider interface {
 // metricValue describes a single metric value for a given set of label values
 // within a parent containerMetric.
 type metricValue struct {
-	value  float64
-	labels []string
+	value     float64
+	labels    []string
+	timestamp time.Time
 }
 
 type metricValues []metricValue
@@ -55,30 +55,35 @@ func asNanosecondsToSeconds(v uint64) float64 {
 }
 
 // fsValues is a helper method for assembling per-filesystem stats.
-func fsValues(fsStats []info.FsStats, valueFn func(*info.FsStats) float64) metricValues {
+func fsValues(fsStats []info.FsStats, valueFn func(*info.FsStats) float64, timestamp time.Time) metricValues {
 	values := make(metricValues, 0, len(fsStats))
 	for _, stat := range fsStats {
 		values = append(values, metricValue{
-			value:  valueFn(&stat),
-			labels: []string{stat.Device},
+			value:     valueFn(&stat),
+			labels:    []string{stat.Device},
+			timestamp: timestamp,
 		})
 	}
 	return values
 }
 
 // ioValues is a helper method for assembling per-disk and per-filesystem stats.
-func ioValues(ioStats []info.PerDiskStats, ioType string, ioValueFn func(uint64) float64, fsStats []info.FsStats, valueFn func(*info.FsStats) float64) metricValues {
+func ioValues(ioStats []info.PerDiskStats, ioType string, ioValueFn func(uint64) float64,
+	fsStats []info.FsStats, valueFn func(*info.FsStats) float64, timestamp time.Time) metricValues {
+
 	values := make(metricValues, 0, len(ioStats)+len(fsStats))
 	for _, stat := range ioStats {
 		values = append(values, metricValue{
-			value:  ioValueFn(stat.Stats[ioType]),
-			labels: []string{stat.Device},
+			value:     ioValueFn(stat.Stats[ioType]),
+			labels:    []string{stat.Device},
+			timestamp: timestamp,
 		})
 	}
 	for _, stat := range fsStats {
 		values = append(values, metricValue{
-			value:  valueFn(&stat),
-			labels: []string{stat.Device},
+			value:     valueFn(&stat),
+			labels:    []string{stat.Device},
+			timestamp: timestamp,
 		})
 	}
 	return values
@@ -134,7 +139,10 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Last time a container was seen by the exporter",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(time.Now().Unix())}}
+					return metricValues{{
+						value:     float64(time.Now().Unix()),
+						timestamp: time.Now(),
+					}}
 				},
 			},
 		},
@@ -147,14 +155,24 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Cumulative user cpu time consumed in seconds.",
 				valueType: prometheus.CounterValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.Usage.User) / float64(time.Second)}}
+					return metricValues{
+						{
+							value:     float64(s.Cpu.Usage.User) / float64(time.Second),
+							timestamp: s.Timestamp,
+						},
+					}
 				},
 			}, {
 				name:      "container_cpu_system_seconds_total",
 				help:      "Cumulative system cpu time consumed in seconds.",
 				valueType: prometheus.CounterValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.Usage.System) / float64(time.Second)}}
+					return metricValues{
+						{
+							value:     float64(s.Cpu.Usage.System) / float64(time.Second),
+							timestamp: s.Timestamp,
+						},
+					}
 				},
 			}, {
 				name:        "container_cpu_usage_seconds_total",
@@ -165,8 +183,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					if len(s.Cpu.Usage.PerCpu) == 0 {
 						if s.Cpu.Usage.Total > 0 {
 							return metricValues{{
-								value:  float64(s.Cpu.Usage.Total) / float64(time.Second),
-								labels: []string{"total"},
+								value:     float64(s.Cpu.Usage.Total) / float64(time.Second),
+								labels:    []string{"total"},
+								timestamp: s.Timestamp,
 							}}
 						}
 					}
@@ -174,8 +193,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					for i, value := range s.Cpu.Usage.PerCpu {
 						if value > 0 {
 							values = append(values, metricValue{
-								value:  float64(value) / float64(time.Second),
-								labels: []string{fmt.Sprintf("cpu%02d", i)},
+								value:     float64(value) / float64(time.Second),
+								labels:    []string{fmt.Sprintf("cpu%02d", i)},
+								timestamp: s.Timestamp,
 							})
 						}
 					}
@@ -187,7 +207,11 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				valueType: prometheus.CounterValue,
 				condition: func(s info.ContainerSpec) bool { return s.Cpu.Quota != 0 },
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.CFS.Periods)}}
+					return metricValues{
+						{
+							value:     float64(s.Cpu.CFS.Periods),
+							timestamp: s.Timestamp,
+						}}
 				},
 			}, {
 				name:      "container_cpu_cfs_throttled_periods_total",
@@ -195,7 +219,11 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				valueType: prometheus.CounterValue,
 				condition: func(s info.ContainerSpec) bool { return s.Cpu.Quota != 0 },
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.CFS.ThrottledPeriods)}}
+					return metricValues{
+						{
+							value:     float64(s.Cpu.CFS.ThrottledPeriods),
+							timestamp: s.Timestamp,
+						}}
 				},
 			}, {
 				name:      "container_cpu_cfs_throttled_seconds_total",
@@ -203,7 +231,11 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				valueType: prometheus.CounterValue,
 				condition: func(s info.ContainerSpec) bool { return s.Cpu.Quota != 0 },
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.CFS.ThrottledTime) / float64(time.Second)}}
+					return metricValues{
+						{
+							value:     float64(s.Cpu.CFS.ThrottledTime) / float64(time.Second),
+							timestamp: s.Timestamp,
+						}}
 				},
 			},
 		}...)
@@ -215,21 +247,30 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Time duration the processes of the container have run on the CPU.",
 				valueType: prometheus.CounterValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.Schedstat.RunTime) / float64(time.Second)}}
+					return metricValues{{
+						value:     float64(s.Cpu.Schedstat.RunTime) / float64(time.Second),
+						timestamp: s.Timestamp,
+					}}
 				},
 			}, {
 				name:      "container_cpu_schedstat_runqueue_seconds_total",
 				help:      "Time duration processes of the container have been waiting on a runqueue.",
 				valueType: prometheus.CounterValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.Schedstat.RunqueueTime) / float64(time.Second)}}
+					return metricValues{{
+						value:     float64(s.Cpu.Schedstat.RunqueueTime) / float64(time.Second),
+						timestamp: s.Timestamp,
+					}}
 				},
 			}, {
 				name:      "container_cpu_schedstat_run_periods_total",
 				help:      "Number of times processes of the cgroup have run on the cpu",
 				valueType: prometheus.CounterValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.Schedstat.RunPeriods)}}
+					return metricValues{{
+						value:     float64(s.Cpu.Schedstat.RunPeriods),
+						timestamp: s.Timestamp,
+					}}
 				},
 			},
 		}...)
@@ -241,7 +282,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Value of container cpu load average over the last 10 seconds.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Cpu.LoadAverage)}}
+					return metricValues{{value: float64(s.Cpu.LoadAverage), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:        "container_tasks_state",
@@ -251,26 +292,85 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return metricValues{
 						{
-							value:  float64(s.TaskStats.NrSleeping),
-							labels: []string{"sleeping"},
+							value:     float64(s.TaskStats.NrSleeping),
+							labels:    []string{"sleeping"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.TaskStats.NrRunning),
-							labels: []string{"running"},
+							value:     float64(s.TaskStats.NrRunning),
+							labels:    []string{"running"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.TaskStats.NrStopped),
-							labels: []string{"stopped"},
+							value:     float64(s.TaskStats.NrStopped),
+							labels:    []string{"stopped"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.TaskStats.NrUninterruptible),
-							labels: []string{"uninterruptible"},
+							value:     float64(s.TaskStats.NrUninterruptible),
+							labels:    []string{"uninterruptible"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.TaskStats.NrIoWait),
-							labels: []string{"iowaiting"},
+							value:     float64(s.TaskStats.NrIoWait),
+							labels:    []string{"iowaiting"},
+							timestamp: s.Timestamp,
 						},
 					}
+				},
+			},
+		}...)
+	}
+	if includedMetrics.Has(container.HugetlbUsageMetrics) {
+		c.containerMetrics = append(c.containerMetrics, []containerMetric{
+			{
+				name:        "container_hugetlb_failcnt",
+				help:        "Number of hugepage usage hits limits",
+				valueType:   prometheus.CounterValue,
+				extraLabels: []string{"pagesize"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					values := make(metricValues, 0, len(s.Hugetlb))
+					for k, v := range s.Hugetlb {
+						values = append(values, metricValue{
+							value:     float64(v.Failcnt),
+							labels:    []string{k},
+							timestamp: s.Timestamp,
+						})
+					}
+					return values
+				},
+			}, {
+				name:        "container_hugetlb_usage_bytes",
+				help:        "Current hugepage usage in bytes",
+				valueType:   prometheus.GaugeValue,
+				extraLabels: []string{"pagesize"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					values := make(metricValues, 0, len(s.Hugetlb))
+					for k, v := range s.Hugetlb {
+						values = append(values, metricValue{
+							value:     float64(v.Usage),
+							labels:    []string{k},
+							timestamp: s.Timestamp,
+						})
+					}
+					return values
+				},
+			},
+			{
+				name:        "container_hugetlb_max_usage_bytes",
+				help:        "Maximum hugepage usage recorded in bytes",
+				valueType:   prometheus.GaugeValue,
+				extraLabels: []string{"pagesize"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					values := make(metricValues, 0, len(s.Hugetlb))
+					for k, v := range s.Hugetlb {
+						values = append(values, metricValue{
+							value:     float64(v.MaxUsage),
+							labels:    []string{k},
+							timestamp: s.Timestamp,
+						})
+					}
+					return values
 				},
 			},
 		}...)
@@ -282,42 +382,45 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Number of bytes of page cache memory.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.Cache)}}
+					return metricValues{{value: float64(s.Memory.Cache), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:      "container_memory_rss",
 				help:      "Size of RSS in bytes.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.RSS)}}
+					return metricValues{{value: float64(s.Memory.RSS), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:      "container_memory_mapped_file",
 				help:      "Size of memory mapped files in bytes.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.MappedFile)}}
+					return metricValues{{value: float64(s.Memory.MappedFile), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:      "container_memory_swap",
 				help:      "Container swap usage in bytes.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.Swap)}}
+					return metricValues{{value: float64(s.Memory.Swap), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:      "container_memory_failcnt",
 				help:      "Number of memory usage hits limits",
 				valueType: prometheus.CounterValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.Failcnt)}}
+					return metricValues{{
+						value:     float64(s.Memory.Failcnt),
+						timestamp: s.Timestamp,
+					}}
 				},
 			}, {
 				name:      "container_memory_usage_bytes",
 				help:      "Current memory usage in bytes, including all memory regardless of when it was accessed",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.Usage)}}
+					return metricValues{{value: float64(s.Memory.Usage), timestamp: s.Timestamp}}
 				},
 			},
 			{
@@ -325,14 +428,14 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Maximum memory usage recorded in bytes",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.MaxUsage)}}
+					return metricValues{{value: float64(s.Memory.MaxUsage), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:      "container_memory_working_set_bytes",
 				help:      "Current working set in bytes.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Memory.WorkingSet)}}
+					return metricValues{{value: float64(s.Memory.WorkingSet), timestamp: s.Timestamp}}
 				},
 			}, {
 				name:        "container_memory_failures_total",
@@ -342,20 +445,24 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return metricValues{
 						{
-							value:  float64(s.Memory.ContainerData.Pgfault),
-							labels: []string{"pgfault", "container"},
+							value:     float64(s.Memory.ContainerData.Pgfault),
+							labels:    []string{"pgfault", "container"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Memory.ContainerData.Pgmajfault),
-							labels: []string{"pgmajfault", "container"},
+							value:     float64(s.Memory.ContainerData.Pgmajfault),
+							labels:    []string{"pgmajfault", "container"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Memory.HierarchicalData.Pgfault),
-							labels: []string{"pgfault", "hierarchy"},
+							value:     float64(s.Memory.HierarchicalData.Pgfault),
+							labels:    []string{"pgfault", "hierarchy"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Memory.HierarchicalData.Pgmajfault),
-							labels: []string{"pgmajfault", "hierarchy"},
+							value:     float64(s.Memory.HierarchicalData.Pgmajfault),
+							labels:    []string{"pgmajfault", "hierarchy"},
+							timestamp: s.Timestamp,
 						},
 					}
 				},
@@ -373,8 +480,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Accelerators))
 					for _, value := range s.Accelerators {
 						values = append(values, metricValue{
-							value:  float64(value.MemoryTotal),
-							labels: []string{value.Make, value.Model, value.ID},
+							value:     float64(value.MemoryTotal),
+							labels:    []string{value.Make, value.Model, value.ID},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -388,8 +496,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Accelerators))
 					for _, value := range s.Accelerators {
 						values = append(values, metricValue{
-							value:  float64(value.MemoryUsed),
-							labels: []string{value.Make, value.Model, value.ID},
+							value:     float64(value.MemoryUsed),
+							labels:    []string{value.Make, value.Model, value.ID},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -403,8 +512,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Accelerators))
 					for _, value := range s.Accelerators {
 						values = append(values, metricValue{
-							value:  float64(value.DutyCycle),
-							labels: []string{value.Make, value.Model, value.ID},
+							value:     float64(value.DutyCycle),
+							labels:    []string{value.Make, value.Model, value.ID},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -422,7 +532,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return fsValues(s.Filesystem, func(fs *info.FsStats) float64 {
 						return float64(fs.InodesFree)
-					})
+					}, s.Timestamp)
 				},
 			}, {
 				name:        "container_fs_inodes_total",
@@ -432,7 +542,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return fsValues(s.Filesystem, func(fs *info.FsStats) float64 {
 						return float64(fs.Inodes)
-					})
+					}, s.Timestamp)
 				},
 			}, {
 				name:        "container_fs_limit_bytes",
@@ -442,7 +552,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return fsValues(s.Filesystem, func(fs *info.FsStats) float64 {
 						return float64(fs.Limit)
-					})
+					}, s.Timestamp)
 				},
 			}, {
 				name:        "container_fs_usage_bytes",
@@ -452,7 +562,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return fsValues(s.Filesystem, func(fs *info.FsStats) float64 {
 						return float64(fs.Usage)
-					})
+					}, s.Timestamp)
 				},
 			},
 		}...)
@@ -468,6 +578,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					return ioValues(
 						s.DiskIo.IoServiceBytes, "Read", asFloat64,
 						nil, nil,
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -481,6 +592,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.ReadsCompleted)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -494,6 +606,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.SectorsRead)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -507,6 +620,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.ReadsMerged)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -520,6 +634,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.ReadTime) / float64(time.Second)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -531,6 +646,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					return ioValues(
 						s.DiskIo.IoServiceBytes, "Write", asFloat64,
 						nil, nil,
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -544,6 +660,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.WritesCompleted)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -557,6 +674,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.SectorsWritten)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -570,6 +688,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.WritesMerged)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -583,6 +702,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.WriteTime) / float64(time.Second)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -596,6 +716,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(fs.IoInProgress)
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -609,6 +730,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 						s.Filesystem, func(fs *info.FsStats) float64 {
 							return float64(float64(fs.IoTime) / float64(time.Second))
 						},
+						s.Timestamp,
 					)
 				},
 			}, {
@@ -619,7 +741,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return fsValues(s.Filesystem, func(fs *info.FsStats) float64 {
 						return float64(fs.WeightedIoTime) / float64(time.Second)
-					})
+					}, s.Timestamp)
 				},
 			},
 		}...)
@@ -635,8 +757,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.RxBytes),
-							labels: []string{value.Name},
+							value:     float64(value.RxBytes),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -650,8 +773,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.RxPackets),
-							labels: []string{value.Name},
+							value:     float64(value.RxPackets),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -665,8 +789,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.RxDropped),
-							labels: []string{value.Name},
+							value:     float64(value.RxDropped),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -680,8 +805,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.RxErrors),
-							labels: []string{value.Name},
+							value:     float64(value.RxErrors),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -695,8 +821,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.TxBytes),
-							labels: []string{value.Name},
+							value:     float64(value.TxBytes),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -710,8 +837,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.TxPackets),
-							labels: []string{value.Name},
+							value:     float64(value.TxPackets),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -725,8 +853,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.TxDropped),
-							labels: []string{value.Name},
+							value:     float64(value.TxDropped),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -740,8 +869,9 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 					values := make(metricValues, 0, len(s.Network.Interfaces))
 					for _, value := range s.Network.Interfaces {
 						values = append(values, metricValue{
-							value:  float64(value.TxErrors),
-							labels: []string{value.Name},
+							value:     float64(value.TxErrors),
+							labels:    []string{value.Name},
+							timestamp: s.Timestamp,
 						})
 					}
 					return values
@@ -759,48 +889,537 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return metricValues{
 						{
-							value:  float64(s.Network.Tcp.Established),
-							labels: []string{"established"},
+							value:     float64(s.Network.Tcp.Established),
+							labels:    []string{"established"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.SynSent),
-							labels: []string{"synsent"},
+							value:     float64(s.Network.Tcp.SynSent),
+							labels:    []string{"synsent"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.SynRecv),
-							labels: []string{"synrecv"},
+							value:     float64(s.Network.Tcp.SynRecv),
+							labels:    []string{"synrecv"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.FinWait1),
-							labels: []string{"finwait1"},
+							value:     float64(s.Network.Tcp.FinWait1),
+							labels:    []string{"finwait1"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.FinWait2),
-							labels: []string{"finwait2"},
+							value:     float64(s.Network.Tcp.FinWait2),
+							labels:    []string{"finwait2"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.TimeWait),
-							labels: []string{"timewait"},
+							value:     float64(s.Network.Tcp.TimeWait),
+							labels:    []string{"timewait"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.Close),
-							labels: []string{"close"},
+							value:     float64(s.Network.Tcp.Close),
+							labels:    []string{"close"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.CloseWait),
-							labels: []string{"closewait"},
+							value:     float64(s.Network.Tcp.CloseWait),
+							labels:    []string{"closewait"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.LastAck),
-							labels: []string{"lastack"},
+							value:     float64(s.Network.Tcp.LastAck),
+							labels:    []string{"lastack"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.Listen),
-							labels: []string{"listen"},
+							value:     float64(s.Network.Tcp.Listen),
+							labels:    []string{"listen"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Tcp.Closing),
-							labels: []string{"closing"},
+							value:     float64(s.Network.Tcp.Closing),
+							labels:    []string{"closing"},
+							timestamp: s.Timestamp,
+						},
+					}
+				},
+			},
+		}...)
+		c.containerMetrics = append(c.containerMetrics, []containerMetric{
+			{
+				name:        "container_network_tcp6_usage_total",
+				help:        "tcp6 connection usage statistic for container",
+				valueType:   prometheus.GaugeValue,
+				extraLabels: []string{"tcp_state"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{
+						{
+							value:     float64(s.Network.Tcp6.Established),
+							labels:    []string{"established"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.SynSent),
+							labels:    []string{"synsent"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.SynRecv),
+							labels:    []string{"synrecv"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.FinWait1),
+							labels:    []string{"finwait1"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.FinWait2),
+							labels:    []string{"finwait2"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.TimeWait),
+							labels:    []string{"timewait"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.Close),
+							labels:    []string{"close"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.CloseWait),
+							labels:    []string{"closewait"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.LastAck),
+							labels:    []string{"lastack"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.Listen),
+							labels:    []string{"listen"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Tcp6.Closing),
+							labels:    []string{"closing"},
+							timestamp: s.Timestamp,
+						},
+					}
+				},
+			},
+		}...)
+	}
+	if includedMetrics.Has(container.NetworkAdvancedTcpUsageMetrics) {
+		c.containerMetrics = append(c.containerMetrics, []containerMetric{
+			{
+				name:        "container_network_advance_tcp_stats_total",
+				help:        "advance tcp connections statistic for container",
+				valueType:   prometheus.GaugeValue,
+				extraLabels: []string{"tcp_state"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{
+						{
+							value:     float64(s.Network.TcpAdvanced.RtoAlgorithm),
+							labels:    []string{"rtoalgorithm"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.RtoMin),
+							labels:    []string{"rtomin"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.RtoMax),
+							labels:    []string{"rtomax"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.MaxConn),
+							labels:    []string{"maxconn"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.ActiveOpens),
+							labels:    []string{"activeopens"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.PassiveOpens),
+							labels:    []string{"passiveopens"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.AttemptFails),
+							labels:    []string{"attemptfails"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.EstabResets),
+							labels:    []string{"estabresets"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.CurrEstab),
+							labels:    []string{"currestab"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.InSegs),
+							labels:    []string{"insegs"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.OutSegs),
+							labels:    []string{"outsegs"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.RetransSegs),
+							labels:    []string{"retranssegs"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.InErrs),
+							labels:    []string{"inerrs"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.OutRsts),
+							labels:    []string{"outrsts"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.InCsumErrors),
+							labels:    []string{"incsumerrors"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.EmbryonicRsts),
+							labels:    []string{"embryonicrsts"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.SyncookiesSent),
+							labels:    []string{"syncookiessent"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.SyncookiesRecv),
+							labels:    []string{"syncookiesrecv"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.SyncookiesFailed),
+							labels:    []string{"syncookiesfailed"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.PruneCalled),
+							labels:    []string{"prunecalled"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.RcvPruned),
+							labels:    []string{"rcvpruned"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.OfoPruned),
+							labels:    []string{"ofopruned"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.OutOfWindowIcmps),
+							labels:    []string{"outofwindowicmps"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.LockDroppedIcmps),
+							labels:    []string{"lockdroppedicmps"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TW),
+							labels:    []string{"tw"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TWRecycled),
+							labels:    []string{"twrecycled"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TWKilled),
+							labels:    []string{"twkilled"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPTimeWaitOverflow),
+							labels:    []string{"tcptimewaitoverflow"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPTimeouts),
+							labels:    []string{"tcptimeouts"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSpuriousRTOs),
+							labels:    []string{"tcpspuriousrtos"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPLossProbes),
+							labels:    []string{"tcplossprobes"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPLossProbeRecovery),
+							labels:    []string{"tcplossproberecovery"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPRenoRecoveryFail),
+							labels:    []string{"tcprenorecoveryfail"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSackRecoveryFail),
+							labels:    []string{"tcpsackrecoveryfail"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPRenoFailures),
+							labels:    []string{"tcprenofailures"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSackFailures),
+							labels:    []string{"tcpsackfailures"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPLossFailures),
+							labels:    []string{"tcplossfailures"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.DelayedACKs),
+							labels:    []string{"delayedacks"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.DelayedACKLocked),
+							labels:    []string{"delayedacklocked"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.DelayedACKLost),
+							labels:    []string{"delayedacklost"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.ListenOverflows),
+							labels:    []string{"listenoverflows"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.ListenDrops),
+							labels:    []string{"listendrops"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPHPHits),
+							labels:    []string{"tcphphits"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPPureAcks),
+							labels:    []string{"tcppureacks"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPHPAcks),
+							labels:    []string{"tcphpacks"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPRenoRecovery),
+							labels:    []string{"tcprenorecovery"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSackRecovery),
+							labels:    []string{"tcpsackrecovery"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSACKReneging),
+							labels:    []string{"tcpsackreneging"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFACKReorder),
+							labels:    []string{"tcpfackreorder"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSACKReorder),
+							labels:    []string{"tcpsackreorder"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPRenoReorder),
+							labels:    []string{"tcprenoreorder"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPTSReorder),
+							labels:    []string{"tcptsreorder"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFullUndo),
+							labels:    []string{"tcpfullundo"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPPartialUndo),
+							labels:    []string{"tcppartialundo"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKUndo),
+							labels:    []string{"tcpdsackundo"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPLossUndo),
+							labels:    []string{"tcplossundo"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastRetrans),
+							labels:    []string{"tcpfastretrans"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSlowStartRetrans),
+							labels:    []string{"tcpslowstartretrans"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPLostRetransmit),
+							labels:    []string{"tcplostretransmit"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPRetransFail),
+							labels:    []string{"tcpretransfail"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPRcvCollapsed),
+							labels:    []string{"tcprcvcollapsed"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKOldSent),
+							labels:    []string{"tcpdsackoldsent"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKOfoSent),
+							labels:    []string{"tcpdsackofosent"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKRecv),
+							labels:    []string{"tcpdsackrecv"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKOfoRecv),
+							labels:    []string{"tcpdsackoforecv"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPAbortOnData),
+							labels:    []string{"tcpabortondata"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPAbortOnClose),
+							labels:    []string{"tcpabortonclose"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPAbortOnMemory),
+							labels:    []string{"tcpabortonmemory"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPAbortOnTimeout),
+							labels:    []string{"tcpabortontimeout"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPAbortOnLinger),
+							labels:    []string{"tcpabortonlinger"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPAbortFailed),
+							labels:    []string{"tcpabortfailed"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPMemoryPressures),
+							labels:    []string{"tcpmemorypressures"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPMemoryPressuresChrono),
+							labels:    []string{"tcpmemorypressureschrono"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSACKDiscard),
+							labels:    []string{"tcpsackdiscard"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKIgnoredOld),
+							labels:    []string{"tcpdsackignoredold"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDSACKIgnoredNoUndo),
+							labels:    []string{"tcpdsackignorednoundo"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPMD5NotFound),
+							labels:    []string{"tcpmd5notfound"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPMD5Unexpected),
+							labels:    []string{"tcpmd5unexpected"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPMD5Failure),
+							labels:    []string{"tcpmd5failure"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSackShifted),
+							labels:    []string{"tcpsackshifted"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSackMerged),
+							labels:    []string{"tcpsackmerged"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSackShiftFallback),
+							labels:    []string{"tcpsackshiftfallback"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPBacklogDrop),
+							labels:    []string{"tcpbacklogdrop"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.PFMemallocDrop),
+							labels:    []string{"pfmemallocdrop"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPMinTTLDrop),
+							labels:    []string{"tcpminttldrop"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPDeferAcceptDrop),
+							labels:    []string{"tcpdeferacceptdrop"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.IPReversePathFilter),
+							labels:    []string{"ipreversepathfilter"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPReqQFullDoCookies),
+							labels:    []string{"tcpreqqfulldocookies"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPReqQFullDrop),
+							labels:    []string{"tcpreqqfulldrop"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastOpenActive),
+							labels:    []string{"tcpfastopenactive"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastOpenActiveFail),
+							labels:    []string{"tcpfastopenactivefail"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastOpenPassive),
+							labels:    []string{"tcpfastopenpassive"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastOpenPassiveFail),
+							labels:    []string{"tcpfastopenpassivefail"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastOpenListenOverflow),
+							labels:    []string{"tcpfastopenlistenoverflow"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPFastOpenCookieReqd),
+							labels:    []string{"tcpfastopencookiereqd"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPSynRetrans),
+							labels:    []string{"tcpsynretrans"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.TCPOrigDataSent),
+							labels:    []string{"tcporigdatasent"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.PAWSActive),
+							labels:    []string{"pawsactive"},
+							timestamp: s.Timestamp,
+						}, {
+							value:     float64(s.Network.TcpAdvanced.PAWSEstab),
+							labels:    []string{"pawsestab"},
+							timestamp: s.Timestamp,
 						},
 					}
 				},
@@ -810,6 +1429,38 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 	if includedMetrics.Has(container.NetworkUdpUsageMetrics) {
 		c.containerMetrics = append(c.containerMetrics, []containerMetric{
 			{
+				name:        "container_network_udp6_usage_total",
+				help:        "udp6 connection usage statistic for container",
+				valueType:   prometheus.GaugeValue,
+				extraLabels: []string{"udp_state"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{
+						{
+							value:     float64(s.Network.Udp6.Listen),
+							labels:    []string{"listen"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Udp6.Dropped),
+							labels:    []string{"dropped"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Udp6.RxQueued),
+							labels:    []string{"rxqueued"},
+							timestamp: s.Timestamp,
+						},
+						{
+							value:     float64(s.Network.Udp6.TxQueued),
+							labels:    []string{"txqueued"},
+							timestamp: s.Timestamp,
+						},
+					}
+				},
+			},
+		}...)
+		c.containerMetrics = append(c.containerMetrics, []containerMetric{
+			{
 				name:        "container_network_udp_usage_total",
 				help:        "udp connection usage statistic for container",
 				valueType:   prometheus.GaugeValue,
@@ -817,20 +1468,24 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				getValues: func(s *info.ContainerStats) metricValues {
 					return metricValues{
 						{
-							value:  float64(s.Network.Udp.Listen),
-							labels: []string{"listen"},
+							value:     float64(s.Network.Udp.Listen),
+							labels:    []string{"listen"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Udp.Dropped),
-							labels: []string{"dropped"},
+							value:     float64(s.Network.Udp.Dropped),
+							labels:    []string{"dropped"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Udp.RxQueued),
-							labels: []string{"rxqueued"},
+							value:     float64(s.Network.Udp.RxQueued),
+							labels:    []string{"rxqueued"},
+							timestamp: s.Timestamp,
 						},
 						{
-							value:  float64(s.Network.Udp.TxQueued),
-							labels: []string{"txqueued"},
+							value:     float64(s.Network.Udp.TxQueued),
+							labels:    []string{"txqueued"},
+							timestamp: s.Timestamp,
 						},
 					}
 				},
@@ -844,7 +1499,7 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Number of processes running inside the container.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Processes.ProcessCount)}}
+					return metricValues{{value: float64(s.Processes.ProcessCount), timestamp: s.Timestamp}}
 				},
 			},
 			{
@@ -852,10 +1507,62 @@ func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetri
 				help:      "Number of open file descriptors for the container.",
 				valueType: prometheus.GaugeValue,
 				getValues: func(s *info.ContainerStats) metricValues {
-					return metricValues{{value: float64(s.Processes.FdCount)}}
+					return metricValues{{value: float64(s.Processes.FdCount), timestamp: s.Timestamp}}
+				},
+			},
+			{
+				name:      "container_sockets",
+				help:      "Number of open sockets for the container.",
+				valueType: prometheus.GaugeValue,
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{{value: float64(s.Processes.SocketCount), timestamp: s.Timestamp}}
+				},
+			},
+			{
+				name:      "container_threads_max",
+				help:      "Maximum number of threads allowed inside the container, infinity if value is zero",
+				valueType: prometheus.GaugeValue,
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{
+						{
+							value:     float64(s.Processes.ThreadsMax),
+							timestamp: s.Timestamp,
+						},
+					}
+				},
+			},
+			{
+				name:      "container_threads",
+				help:      "Number of threads running inside the container",
+				valueType: prometheus.GaugeValue,
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{
+						{
+							value:     float64(s.Processes.ThreadsCurrent),
+							timestamp: s.Timestamp,
+						},
+					}
+				},
+			},
+			{
+				name:        "container_ulimits_soft",
+				help:        "Soft ulimit values for the container root process. Unlimited if -1, except priority and nice",
+				valueType:   prometheus.GaugeValue,
+				extraLabels: []string{"ulimit"},
+				getValues: func(s *info.ContainerStats) metricValues {
+					values := make(metricValues, 0, len(s.Processes.Ulimits))
+					for _, ulimit := range s.Processes.Ulimits {
+						values = append(values, metricValue{
+							value:     float64(ulimit.SoftLimit),
+							labels:    []string{ulimit.Name},
+							timestamp: s.Timestamp,
+						})
+					}
+					return values
 				},
 			},
 		}...)
+
 	}
 
 	return c
@@ -922,17 +1629,29 @@ func DefaultContainerLabels(container *info.ContainerInfo) map[string]string {
 	return set
 }
 
-// BaseContainerLabels implements ContainerLabelsFunc. It only exports the
-// container name, first alias, and image name.
-func BaseContainerLabels(container *info.ContainerInfo) map[string]string {
-	set := map[string]string{LabelID: container.Name}
-	if len(container.Aliases) > 0 {
-		set[LabelName] = container.Aliases[0]
+// BaseContainerLabels returns a ContainerLabelsFunc that exports the container
+// name, first alias, image name as well as white listed label values.
+func BaseContainerLabels(whiteList []string) func(container *info.ContainerInfo) map[string]string {
+	whiteListMap := make(map[string]struct{}, len(whiteList))
+	for _, k := range whiteList {
+		whiteListMap[k] = struct{}{}
 	}
-	if image := container.Spec.Image; len(image) > 0 {
-		set[LabelImage] = image
+
+	return func(container *info.ContainerInfo) map[string]string {
+		set := map[string]string{LabelID: container.Name}
+		if len(container.Aliases) > 0 {
+			set[LabelName] = container.Aliases[0]
+		}
+		if image := container.Spec.Image; len(image) > 0 {
+			set[LabelImage] = image
+		}
+		for k, v := range container.Spec.Labels {
+			if _, ok := whiteListMap[k]; ok {
+				set[ContainerLabelPrefix+k] = v
+			}
+		}
+		return set
 	}
-	return set
 }
 
 func (c *PrometheusCollector) collectContainersInfo(ch chan<- prometheus.Metric) {
@@ -954,8 +1673,18 @@ func (c *PrometheusCollector) collectContainersInfo(ch chan<- prometheus.Metric)
 		labels := make([]string, 0, len(rawLabels))
 		containerLabels := c.containerLabelsFunc(cont)
 		for l := range rawLabels {
-			labels = append(labels, sanitizeLabelName(l))
-			values = append(values, containerLabels[l])
+			duplicate := false
+			sl := sanitizeLabelName(l)
+			for _, x := range labels {
+				if sl == x {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				labels = append(labels, sl)
+				values = append(values, containerLabels[l])
+			}
 		}
 
 		// Container spec
@@ -993,10 +1722,30 @@ func (c *PrometheusCollector) collectContainersInfo(ch chan<- prometheus.Metric)
 			}
 			desc := cm.desc(labels)
 			for _, metricValue := range cm.getValues(stats) {
-				ch <- prometheus.MustNewConstMetric(desc, cm.valueType, float64(metricValue.value), append(values, metricValue.labels...)...)
+				ch <- prometheus.NewMetricWithTimestamp(
+					metricValue.timestamp,
+					prometheus.MustNewConstMetric(desc, cm.valueType, float64(metricValue.value), append(values, metricValue.labels...)...),
+				)
+			}
+		}
+		if c.includedMetrics.Has(container.AppMetrics) {
+			for metricLabel, v := range stats.CustomMetrics {
+				for _, metric := range v {
+					clabels := make([]string, len(rawLabels), len(rawLabels)+len(metric.Labels))
+					cvalues := make([]string, len(rawLabels), len(rawLabels)+len(metric.Labels))
+					copy(clabels, labels)
+					copy(cvalues, values)
+					for label, value := range metric.Labels {
+						clabels = append(clabels, sanitizeLabelName("app_"+label))
+						cvalues = append(cvalues, value)
+					}
+					desc := prometheus.NewDesc(metricLabel, "Custom application metric.", clabels, nil)
+					ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, float64(metric.FloatValue), cvalues...)
+				}
 			}
 		}
 	}
+
 }
 
 func (c *PrometheusCollector) collectVersionInfo(ch chan<- prometheus.Metric) {

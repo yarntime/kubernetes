@@ -17,8 +17,10 @@ limitations under the License.
 package master
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,10 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	genericapiserver "k8s.io/apiserver/pkg/server"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/master/reconcilers"
 	"k8s.io/kubernetes/pkg/registry/core/rangeallocation"
 	corerest "k8s.io/kubernetes/pkg/registry/core/rest"
@@ -51,10 +52,14 @@ type Controller struct {
 	ServiceClient   corev1client.ServicesGetter
 	NamespaceClient corev1client.NamespacesGetter
 	EventClient     corev1client.EventsGetter
+	healthClient    rest.Interface
 
-	ServiceClusterIPRegistry rangeallocation.RangeRegistry
+	ServiceClusterIPRegistry          rangeallocation.RangeRegistry
+	ServiceClusterIPRange             net.IPNet
+	SecondaryServiceClusterIPRegistry rangeallocation.RangeRegistry
+	SecondaryServiceClusterIPRange    net.IPNet
+
 	ServiceClusterIPInterval time.Duration
-	ServiceClusterIPRange    net.IPNet
 
 	ServiceNodePortRegistry rangeallocation.RangeRegistry
 	ServiceNodePortInterval time.Duration
@@ -80,21 +85,19 @@ type Controller struct {
 }
 
 // NewBootstrapController returns a controller for watching the core capabilities of the master
-func (c *completedConfig) NewBootstrapController(legacyRESTStorage corerest.LegacyRESTStorage, serviceClient corev1client.ServicesGetter, nsClient corev1client.NamespacesGetter, eventClient corev1client.EventsGetter) *Controller {
+func (c *completedConfig) NewBootstrapController(legacyRESTStorage corerest.LegacyRESTStorage, serviceClient corev1client.ServicesGetter, nsClient corev1client.NamespacesGetter, eventClient corev1client.EventsGetter, healthClient rest.Interface) *Controller {
 	_, publicServicePort, err := c.GenericConfig.SecureServing.HostPort()
 	if err != nil {
 		klog.Fatalf("failed to get listener address: %v", err)
 	}
 
-	systemNamespaces := []string{metav1.NamespaceSystem, metav1.NamespacePublic}
-	if utilfeature.DefaultFeatureGate.Enabled(features.NodeLease) {
-		systemNamespaces = append(systemNamespaces, corev1.NamespaceNodeLease)
-	}
+	systemNamespaces := []string{metav1.NamespaceSystem, metav1.NamespacePublic, corev1.NamespaceNodeLease}
 
 	return &Controller{
 		ServiceClient:   serviceClient,
 		NamespaceClient: nsClient,
 		EventClient:     eventClient,
+		healthClient:    healthClient,
 
 		EndpointReconciler: c.ExtraConfig.EndpointReconcilerConfig.Reconciler,
 		EndpointInterval:   c.ExtraConfig.EndpointReconcilerConfig.Interval,
@@ -102,8 +105,11 @@ func (c *completedConfig) NewBootstrapController(legacyRESTStorage corerest.Lega
 		SystemNamespaces:         systemNamespaces,
 		SystemNamespacesInterval: 1 * time.Minute,
 
-		ServiceClusterIPRegistry: legacyRESTStorage.ServiceClusterIPAllocator,
-		ServiceClusterIPRange:    c.ExtraConfig.ServiceIPRange,
+		ServiceClusterIPRegistry:          legacyRESTStorage.ServiceClusterIPAllocator,
+		ServiceClusterIPRange:             c.ExtraConfig.ServiceIPRange,
+		SecondaryServiceClusterIPRegistry: legacyRESTStorage.SecondaryServiceClusterIPAllocator,
+		SecondaryServiceClusterIPRange:    c.ExtraConfig.SecondaryServiceIPRange,
+
 		ServiceClusterIPInterval: 3 * time.Minute,
 
 		ServiceNodePortRegistry: legacyRESTStorage.ServiceNodePortAllocator,
@@ -121,11 +127,13 @@ func (c *completedConfig) NewBootstrapController(legacyRESTStorage corerest.Lega
 	}
 }
 
+// PostStartHook initiates the core controller loops that must exist for bootstrapping.
 func (c *Controller) PostStartHook(hookContext genericapiserver.PostStartHookContext) error {
 	c.Start()
 	return nil
 }
 
+// PreShutdownHook triggers the actions needed to shut down the API Server cleanly.
 func (c *Controller) PreShutdownHook() error {
 	c.Stop()
 	return nil
@@ -138,7 +146,13 @@ func (c *Controller) Start() {
 		return
 	}
 
-	repairClusterIPs := servicecontroller.NewRepair(c.ServiceClusterIPInterval, c.ServiceClient, c.EventClient, &c.ServiceClusterIPRange, c.ServiceClusterIPRegistry)
+	// Reconcile during first run removing itself until server is ready.
+	endpointPorts := createEndpointPortSpec(c.PublicServicePort, "https", c.ExtraEndpointPorts)
+	if err := c.EndpointReconciler.RemoveEndpoints(kubernetesServiceName, c.PublicIP, endpointPorts); err != nil {
+		klog.Errorf("Unable to remove old endpoints from kubernetes service: %v", err)
+	}
+
+	repairClusterIPs := servicecontroller.NewRepair(c.ServiceClusterIPInterval, c.ServiceClient, c.EventClient, &c.ServiceClusterIPRange, c.ServiceClusterIPRegistry, &c.SecondaryServiceClusterIPRange, c.SecondaryServiceClusterIPRegistry)
 	repairNodePorts := portallocatorcontroller.NewRepair(c.ServiceNodePortInterval, c.ServiceClient, c.EventClient, c.ServiceNodePortRange, c.ServiceNodePortRegistry)
 
 	// run all of the controllers once prior to returning from Start.
@@ -150,15 +164,12 @@ func (c *Controller) Start() {
 		// If we fail to repair node ports apiserver is useless. We should restart and retry.
 		klog.Fatalf("Unable to perform initial service nodePort check: %v", err)
 	}
-	// Service definition is reconciled during first run to correct port and type per expectations.
-	if err := c.UpdateKubernetesService(true); err != nil {
-		klog.Errorf("Unable to perform initial Kubernetes service initialization: %v", err)
-	}
 
 	c.runner = async.NewRunner(c.RunKubernetesNamespaces, c.RunKubernetesService, repairClusterIPs.RunUntil, repairNodePorts.RunUntil)
 	c.runner.Start()
 }
 
+// Stop cleans up this API Servers endpoint reconciliation leases so another master can take over more quickly.
 func (c *Controller) Stop() {
 	if c.runner != nil {
 		c.runner.Stop()
@@ -168,7 +179,8 @@ func (c *Controller) Stop() {
 	go func() {
 		defer close(finishedReconciling)
 		klog.Infof("Shutting down kubernetes service endpoint reconciler")
-		if err := c.EndpointReconciler.StopReconciling(kubernetesServiceName, c.PublicIP, endpointPorts); err != nil {
+		c.EndpointReconciler.StopReconciling()
+		if err := c.EndpointReconciler.RemoveEndpoints(kubernetesServiceName, c.PublicIP, endpointPorts); err != nil {
 			klog.Error(err)
 		}
 	}()
@@ -178,7 +190,7 @@ func (c *Controller) Stop() {
 		// done
 	case <-time.After(2 * c.EndpointInterval):
 		// don't block server shutdown forever if we can't reach etcd to remove ourselves
-		klog.Warning("StopReconciling() timed out")
+		klog.Warning("RemoveEndpoints() timed out")
 	}
 }
 
@@ -196,7 +208,14 @@ func (c *Controller) RunKubernetesNamespaces(ch chan struct{}) {
 
 // RunKubernetesService periodically updates the kubernetes service
 func (c *Controller) RunKubernetesService(ch chan struct{}) {
-	wait.Until(func() {
+	// wait until process is ready
+	wait.PollImmediateUntil(100*time.Millisecond, func() (bool, error) {
+		var code int
+		c.healthClient.Get().AbsPath("/healthz").Do(context.TODO()).StatusCode(&code)
+		return code == http.StatusOK, nil
+	}, ch)
+
+	wait.NonSlidingUntil(func() {
 		// Service definition is not reconciled after first
 		// run, ports and type will be corrected only during
 		// start.
@@ -259,15 +278,15 @@ func createEndpointPortSpec(endpointPort int, endpointPortName string, extraEndp
 	return endpointPorts
 }
 
-// CreateMasterServiceIfNeeded will create the specified service if it
+// CreateOrUpdateMasterServiceIfNeeded will create the specified service if it
 // doesn't already exist.
 func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, serviceIP net.IP, servicePorts []corev1.ServicePort, serviceType corev1.ServiceType, reconcile bool) error {
-	if s, err := c.ServiceClient.Services(metav1.NamespaceDefault).Get(serviceName, metav1.GetOptions{}); err == nil {
+	if s, err := c.ServiceClient.Services(metav1.NamespaceDefault).Get(context.TODO(), serviceName, metav1.GetOptions{}); err == nil {
 		// The service already exists.
 		if reconcile {
 			if svc, updated := reconcilers.GetMasterServiceUpdateIfNeeded(s, servicePorts, serviceType); updated {
 				klog.Warningf("Resetting master service %q to %#v", serviceName, svc)
-				_, err := c.ServiceClient.Services(metav1.NamespaceDefault).Update(svc)
+				_, err := c.ServiceClient.Services(metav1.NamespaceDefault).Update(context.TODO(), svc, metav1.UpdateOptions{})
 				return err
 			}
 		}
@@ -289,7 +308,7 @@ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, ser
 		},
 	}
 
-	_, err := c.ServiceClient.Services(metav1.NamespaceDefault).Create(svc)
+	_, err := c.ServiceClient.Services(metav1.NamespaceDefault).Create(context.TODO(), svc, metav1.CreateOptions{})
 	if errors.IsAlreadyExists(err) {
 		return c.CreateOrUpdateMasterServiceIfNeeded(serviceName, serviceIP, servicePorts, serviceType, reconcile)
 	}

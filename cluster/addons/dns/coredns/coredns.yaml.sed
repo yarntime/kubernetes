@@ -63,14 +63,17 @@ data:
   Corefile: |
     .:53 {
         errors
-        health
+        health {
+            lameduck 5s
+        }
+        ready
         kubernetes $DNS_DOMAIN in-addr.arpa ip6.arpa {
             pods insecure
-            upstream
             fallthrough in-addr.arpa ip6.arpa
+            ttl 30
         }
         prometheus :9153
-        proxy . /etc/resolv.conf
+        forward . /etc/resolv.conf
         cache 30
         loop
         reload
@@ -104,19 +107,22 @@ spec:
       labels:
         k8s-app: kube-dns
       annotations:
-        seccomp.security.alpha.kubernetes.io/pod: 'docker/default'
+        seccomp.security.alpha.kubernetes.io/pod: 'runtime/default'
     spec:
+      priorityClassName: system-cluster-critical
       serviceAccountName: coredns
       tolerations:
         - key: "CriticalAddonsOnly"
           operator: "Exists"
+      nodeSelector:
+        kubernetes.io/os: linux
       containers:
       - name: coredns
-        image: k8s.gcr.io/coredns:1.2.6
+        image: k8s.gcr.io/coredns:1.6.7
         imagePullPolicy: IfNotPresent
         resources:
           limits:
-            memory: 170Mi
+            memory: $DNS_MEMORY_LIMIT
           requests:
             cpu: 100m
             memory: 70Mi
@@ -144,6 +150,11 @@ spec:
           timeoutSeconds: 5
           successThreshold: 1
           failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8181
+            scheme: HTTP
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -184,4 +195,7 @@ spec:
     protocol: UDP
   - name: dns-tcp
     port: 53
+    protocol: TCP
+  - name: metrics
+    port: 9153
     protocol: TCP

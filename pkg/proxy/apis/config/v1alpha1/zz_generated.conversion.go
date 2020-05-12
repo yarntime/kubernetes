@@ -78,6 +78,16 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*v1alpha1.KubeProxyWinkernelConfiguration)(nil), (*config.KubeProxyWinkernelConfiguration)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_KubeProxyWinkernelConfiguration_To_config_KubeProxyWinkernelConfiguration(a.(*v1alpha1.KubeProxyWinkernelConfiguration), b.(*config.KubeProxyWinkernelConfiguration), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*config.KubeProxyWinkernelConfiguration)(nil), (*v1alpha1.KubeProxyWinkernelConfiguration)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_config_KubeProxyWinkernelConfiguration_To_v1alpha1_KubeProxyWinkernelConfiguration(a.(*config.KubeProxyWinkernelConfiguration), b.(*v1alpha1.KubeProxyWinkernelConfiguration), scope)
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -86,6 +96,7 @@ func autoConvert_v1alpha1_KubeProxyConfiguration_To_config_KubeProxyConfiguratio
 	out.BindAddress = in.BindAddress
 	out.HealthzBindAddress = in.HealthzBindAddress
 	out.MetricsBindAddress = in.MetricsBindAddress
+	out.BindAddressHardFail = in.BindAddressHardFail
 	out.EnableProfiling = in.EnableProfiling
 	out.ClusterCIDR = in.ClusterCIDR
 	out.HostnameOverride = in.HostnameOverride
@@ -101,13 +112,17 @@ func autoConvert_v1alpha1_KubeProxyConfiguration_To_config_KubeProxyConfiguratio
 	out.OOMScoreAdj = (*int32)(unsafe.Pointer(in.OOMScoreAdj))
 	out.Mode = config.ProxyMode(in.Mode)
 	out.PortRange = in.PortRange
-	out.ResourceContainer = in.ResourceContainer
 	out.UDPIdleTimeout = in.UDPIdleTimeout
 	if err := Convert_v1alpha1_KubeProxyConntrackConfiguration_To_config_KubeProxyConntrackConfiguration(&in.Conntrack, &out.Conntrack, s); err != nil {
 		return err
 	}
 	out.ConfigSyncPeriod = in.ConfigSyncPeriod
 	out.NodePortAddresses = *(*[]string)(unsafe.Pointer(&in.NodePortAddresses))
+	if err := Convert_v1alpha1_KubeProxyWinkernelConfiguration_To_config_KubeProxyWinkernelConfiguration(&in.Winkernel, &out.Winkernel, s); err != nil {
+		return err
+	}
+	out.ShowHiddenMetricsForVersion = in.ShowHiddenMetricsForVersion
+	out.DetectLocalMode = config.LocalMode(in.DetectLocalMode)
 	return nil
 }
 
@@ -121,6 +136,7 @@ func autoConvert_config_KubeProxyConfiguration_To_v1alpha1_KubeProxyConfiguratio
 	out.BindAddress = in.BindAddress
 	out.HealthzBindAddress = in.HealthzBindAddress
 	out.MetricsBindAddress = in.MetricsBindAddress
+	out.BindAddressHardFail = in.BindAddressHardFail
 	out.EnableProfiling = in.EnableProfiling
 	out.ClusterCIDR = in.ClusterCIDR
 	out.HostnameOverride = in.HostnameOverride
@@ -136,13 +152,17 @@ func autoConvert_config_KubeProxyConfiguration_To_v1alpha1_KubeProxyConfiguratio
 	out.OOMScoreAdj = (*int32)(unsafe.Pointer(in.OOMScoreAdj))
 	out.Mode = v1alpha1.ProxyMode(in.Mode)
 	out.PortRange = in.PortRange
-	out.ResourceContainer = in.ResourceContainer
 	out.UDPIdleTimeout = in.UDPIdleTimeout
 	if err := Convert_config_KubeProxyConntrackConfiguration_To_v1alpha1_KubeProxyConntrackConfiguration(&in.Conntrack, &out.Conntrack, s); err != nil {
 		return err
 	}
 	out.ConfigSyncPeriod = in.ConfigSyncPeriod
 	out.NodePortAddresses = *(*[]string)(unsafe.Pointer(&in.NodePortAddresses))
+	if err := Convert_config_KubeProxyWinkernelConfiguration_To_v1alpha1_KubeProxyWinkernelConfiguration(&in.Winkernel, &out.Winkernel, s); err != nil {
+		return err
+	}
+	out.ShowHiddenMetricsForVersion = in.ShowHiddenMetricsForVersion
+	out.DetectLocalMode = v1alpha1.LocalMode(in.DetectLocalMode)
 	return nil
 }
 
@@ -152,7 +172,6 @@ func Convert_config_KubeProxyConfiguration_To_v1alpha1_KubeProxyConfiguration(in
 }
 
 func autoConvert_v1alpha1_KubeProxyConntrackConfiguration_To_config_KubeProxyConntrackConfiguration(in *v1alpha1.KubeProxyConntrackConfiguration, out *config.KubeProxyConntrackConfiguration, s conversion.Scope) error {
-	out.Max = (*int32)(unsafe.Pointer(in.Max))
 	out.MaxPerCore = (*int32)(unsafe.Pointer(in.MaxPerCore))
 	out.Min = (*int32)(unsafe.Pointer(in.Min))
 	out.TCPEstablishedTimeout = (*v1.Duration)(unsafe.Pointer(in.TCPEstablishedTimeout))
@@ -166,7 +185,6 @@ func Convert_v1alpha1_KubeProxyConntrackConfiguration_To_config_KubeProxyConntra
 }
 
 func autoConvert_config_KubeProxyConntrackConfiguration_To_v1alpha1_KubeProxyConntrackConfiguration(in *config.KubeProxyConntrackConfiguration, out *v1alpha1.KubeProxyConntrackConfiguration, s conversion.Scope) error {
-	out.Max = (*int32)(unsafe.Pointer(in.Max))
 	out.MaxPerCore = (*int32)(unsafe.Pointer(in.MaxPerCore))
 	out.Min = (*int32)(unsafe.Pointer(in.Min))
 	out.TCPEstablishedTimeout = (*v1.Duration)(unsafe.Pointer(in.TCPEstablishedTimeout))
@@ -210,6 +228,10 @@ func autoConvert_v1alpha1_KubeProxyIPVSConfiguration_To_config_KubeProxyIPVSConf
 	out.MinSyncPeriod = in.MinSyncPeriod
 	out.Scheduler = in.Scheduler
 	out.ExcludeCIDRs = *(*[]string)(unsafe.Pointer(&in.ExcludeCIDRs))
+	out.StrictARP = in.StrictARP
+	out.TCPTimeout = in.TCPTimeout
+	out.TCPFinTimeout = in.TCPFinTimeout
+	out.UDPTimeout = in.UDPTimeout
 	return nil
 }
 
@@ -223,10 +245,38 @@ func autoConvert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConf
 	out.MinSyncPeriod = in.MinSyncPeriod
 	out.Scheduler = in.Scheduler
 	out.ExcludeCIDRs = *(*[]string)(unsafe.Pointer(&in.ExcludeCIDRs))
+	out.StrictARP = in.StrictARP
+	out.TCPTimeout = in.TCPTimeout
+	out.TCPFinTimeout = in.TCPFinTimeout
+	out.UDPTimeout = in.UDPTimeout
 	return nil
 }
 
 // Convert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConfiguration is an autogenerated conversion function.
 func Convert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConfiguration(in *config.KubeProxyIPVSConfiguration, out *v1alpha1.KubeProxyIPVSConfiguration, s conversion.Scope) error {
 	return autoConvert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConfiguration(in, out, s)
+}
+
+func autoConvert_v1alpha1_KubeProxyWinkernelConfiguration_To_config_KubeProxyWinkernelConfiguration(in *v1alpha1.KubeProxyWinkernelConfiguration, out *config.KubeProxyWinkernelConfiguration, s conversion.Scope) error {
+	out.NetworkName = in.NetworkName
+	out.SourceVip = in.SourceVip
+	out.EnableDSR = in.EnableDSR
+	return nil
+}
+
+// Convert_v1alpha1_KubeProxyWinkernelConfiguration_To_config_KubeProxyWinkernelConfiguration is an autogenerated conversion function.
+func Convert_v1alpha1_KubeProxyWinkernelConfiguration_To_config_KubeProxyWinkernelConfiguration(in *v1alpha1.KubeProxyWinkernelConfiguration, out *config.KubeProxyWinkernelConfiguration, s conversion.Scope) error {
+	return autoConvert_v1alpha1_KubeProxyWinkernelConfiguration_To_config_KubeProxyWinkernelConfiguration(in, out, s)
+}
+
+func autoConvert_config_KubeProxyWinkernelConfiguration_To_v1alpha1_KubeProxyWinkernelConfiguration(in *config.KubeProxyWinkernelConfiguration, out *v1alpha1.KubeProxyWinkernelConfiguration, s conversion.Scope) error {
+	out.NetworkName = in.NetworkName
+	out.SourceVip = in.SourceVip
+	out.EnableDSR = in.EnableDSR
+	return nil
+}
+
+// Convert_config_KubeProxyWinkernelConfiguration_To_v1alpha1_KubeProxyWinkernelConfiguration is an autogenerated conversion function.
+func Convert_config_KubeProxyWinkernelConfiguration_To_v1alpha1_KubeProxyWinkernelConfiguration(in *config.KubeProxyWinkernelConfiguration, out *v1alpha1.KubeProxyWinkernelConfiguration, s conversion.Scope) error {
+	return autoConvert_config_KubeProxyWinkernelConfiguration_To_v1alpha1_KubeProxyWinkernelConfiguration(in, out, s)
 }

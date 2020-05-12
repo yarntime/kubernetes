@@ -28,6 +28,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
+	diskcached "k8s.io/client-go/discovery/cached/disk"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
@@ -40,6 +41,7 @@ const (
 	flagContext          = "context"
 	flagNamespace        = "namespace"
 	flagAPIServer        = "server"
+	flagTLSServerName    = "tls-server-name"
 	flagInsecure         = "insecure-skip-tls-verify"
 	flagCertFile         = "client-certificate"
 	flagKeyFile          = "client-key"
@@ -83,6 +85,7 @@ type ConfigFlags struct {
 	Context          *string
 	Namespace        *string
 	APIServer        *string
+	TLSServerName    *string
 	Insecure         *bool
 	CertFile         *string
 	KeyFile          *string
@@ -159,6 +162,9 @@ func (f *ConfigFlags) toRawKubeConfigLoader() clientcmd.ClientConfig {
 	if f.APIServer != nil {
 		overrides.ClusterInfo.Server = *f.APIServer
 	}
+	if f.TLSServerName != nil {
+		overrides.ClusterInfo.TLSServerName = *f.TLSServerName
+	}
 	if f.CAFile != nil {
 		overrides.ClusterInfo.CertificateAuthority = *f.CAFile
 	}
@@ -184,16 +190,11 @@ func (f *ConfigFlags) toRawKubeConfigLoader() clientcmd.ClientConfig {
 		overrides.Timeout = *f.Timeout
 	}
 
-	var clientConfig clientcmd.ClientConfig
-
 	// we only have an interactive prompt when a password is allowed
 	if f.Password == nil {
-		clientConfig = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
-	} else {
-		clientConfig = clientcmd.NewInteractiveDeferredLoadingClientConfig(loadingRules, overrides, os.Stdin)
+		return &clientConfig{clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)}
 	}
-
-	return clientConfig
+	return &clientConfig{clientcmd.NewInteractiveDeferredLoadingClientConfig(loadingRules, overrides, os.Stdin)}
 }
 
 // toRawKubePersistentConfigLoader binds config flag values to config overrides
@@ -231,7 +232,7 @@ func (f *ConfigFlags) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, e
 	}
 
 	discoveryCacheDir := computeDiscoverCacheDir(filepath.Join(homedir.HomeDir(), ".kube", "cache", "discovery"), config.Host)
-	return discovery.NewCachedDiscoveryClientForConfig(config, discoveryCacheDir, httpCacheDir, time.Duration(10*time.Minute))
+	return diskcached.NewCachedDiscoveryClientForConfig(config, discoveryCacheDir, httpCacheDir, time.Duration(10*time.Minute))
 }
 
 // ToRESTMapper returns a mapper.
@@ -293,6 +294,9 @@ func (f *ConfigFlags) AddFlags(flags *pflag.FlagSet) {
 	if f.APIServer != nil {
 		flags.StringVarP(f.APIServer, flagAPIServer, "s", *f.APIServer, "The address and port of the Kubernetes API server")
 	}
+	if f.TLSServerName != nil {
+		flags.StringVar(f.TLSServerName, flagTLSServerName, *f.TLSServerName, "Server name to use for server certificate validation. If it is not provided, the hostname used to contact the server is used")
+	}
 	if f.Insecure != nil {
 		flags.BoolVar(f.Insecure, flagInsecure, *f.Insecure, "If true, the server's certificate will not be checked for validity. This will make your HTTPS connections insecure")
 	}
@@ -328,6 +332,7 @@ func NewConfigFlags(usePersistentConfig bool) *ConfigFlags {
 		Context:          stringptr(""),
 		Namespace:        stringptr(""),
 		APIServer:        stringptr(""),
+		TLSServerName:    stringptr(""),
 		CertFile:         stringptr(""),
 		KeyFile:          stringptr(""),
 		CAFile:           stringptr(""),

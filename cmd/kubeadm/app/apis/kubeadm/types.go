@@ -17,10 +17,13 @@ limitations under the License.
 package kubeadm
 
 import (
-	"k8s.io/api/core/v1"
+	"crypto/x509"
+
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
+	"k8s.io/kubernetes/cmd/kubeadm/app/features"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -34,16 +37,13 @@ type InitConfiguration struct {
 
 	// ClusterConfiguration holds the cluster-wide information, and embeds that struct (which can be (un)marshalled separately as well)
 	// When InitConfiguration is marshalled to bytes in the external version, this information IS NOT preserved (which can be seen from
-	// the `json:"-"` tag in the external variant of these API types. Here, in the internal version `json:",inline"` is used, which means
-	// that all of ClusterConfiguration's fields will appear as they would be InitConfiguration's fields. This is used in practice solely
-	// in kubeadm API roundtrip unit testing. Check out `cmd/kubeadm/app/util/config/*_test.go` for more information. Normally, the internal
-	// type is NEVER marshalled, but always converted to some external version first.
-	ClusterConfiguration `json:",inline"`
+	// the `json:"-"` tag in the external variant of these API types.
+	ClusterConfiguration `json:"-"`
 
 	// BootstrapTokens is respected at `kubeadm init` time and describes a set of Bootstrap Tokens to create.
 	BootstrapTokens []BootstrapToken
 
-	// NodeRegistration holds fields that relate to registering the new master node to the cluster
+	// NodeRegistration holds fields that relate to registering the new control-plane node to the cluster
 	NodeRegistration NodeRegistrationOptions
 
 	// LocalAPIEndpoint represents the endpoint of the API server instance that's deployed on this control plane node
@@ -53,6 +53,10 @@ type InitConfiguration struct {
 	// on. By default, kubeadm tries to auto-detect the IP of the default interface and use that, but in case that process
 	// fails you may set the desired value here.
 	LocalAPIEndpoint APIEndpoint
+
+	// CertificateKey sets the key with which certificates and keys are encrypted prior to being uploaded in
+	// a secret in the cluster during the uploadcerts init phase.
+	CertificateKey string
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -61,9 +65,9 @@ type InitConfiguration struct {
 type ClusterConfiguration struct {
 	metav1.TypeMeta
 
-	// ComponentConfigs holds internal ComponentConfig struct types known to kubeadm, should long-term only exist in the internal kubeadm API
+	// ComponentConfigs holds component configs known to kubeadm, should long-term only exist in the internal kubeadm API
 	// +k8s:conversion-gen=false
-	ComponentConfigs ComponentConfigs
+	ComponentConfigs ComponentConfigMap
 
 	// Etcd holds configuration for etcd.
 	Etcd Etcd
@@ -113,6 +117,8 @@ type ClusterConfiguration struct {
 	CIImageRepository string
 
 	// UseHyperKubeImage controls if hyperkube should be used for Kubernetes components instead of their respective separate images
+	// DEPRECATED: As hyperkube is itself deprecated, this fields is too. It will be removed in future kubeadm config versions, kubeadm
+	// will print multiple warnings when set to true, and at some point it may become ignored.
 	UseHyperKubeImage bool
 
 	// FeatureGates enabled by the user.
@@ -178,14 +184,6 @@ type ImageMeta struct {
 	//TODO: evaluate if we need also a ImageName based on user feedbacks
 }
 
-// ComponentConfigs holds known internal ComponentConfig types for other components
-type ComponentConfigs struct {
-	// Kubelet holds the ComponentConfiguration for the kubelet
-	Kubelet *kubeletconfig.KubeletConfiguration
-	// KubeProxy holds the ComponentConfiguration for the kube-proxy
-	KubeProxy *kubeproxyconfig.KubeProxyConfiguration
-}
-
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ClusterStatus contains the cluster status. The ClusterStatus will be stored in the kubeadm-config
@@ -208,10 +206,10 @@ type APIEndpoint struct {
 	BindPort int32
 }
 
-// NodeRegistrationOptions holds fields that relate to registering a new master or node to the cluster, either via "kubeadm init" or "kubeadm join"
+// NodeRegistrationOptions holds fields that relate to registering a new control-plane or node to the cluster, either via "kubeadm init" or "kubeadm join"
 type NodeRegistrationOptions struct {
 
-	// Name is the `.Metadata.Name` field of the Node API object that will be created in this `kubeadm init` or `kubeadm joiń` operation.
+	// Name is the `.Metadata.Name` field of the Node API object that will be created in this `kubeadm init` or `kubeadm join` operation.
 	// This field is also used in the CommonName field of the kubelet's client certificate to the API server.
 	// Defaults to the hostname of the node if not provided.
 	Name string
@@ -220,14 +218,17 @@ type NodeRegistrationOptions struct {
 	CRISocket string
 
 	// Taints specifies the taints the Node API object should be registered with. If this field is unset, i.e. nil, in the `kubeadm init` process
-	// it will be defaulted to []v1.Taint{'node-role.kubernetes.io/master=""'}. If you don't want to taint your master node, set this field to an
-	// empty slice, i.e. `taints: {}` in the YAML file. This field is solely used for Node registration.
+	// it will be defaulted to []v1.Taint{'node-role.kubernetes.io/master=""'}. If you don't want to taint your control-plane node, set this field to an
+	// empty slice, i.e. `taints: []` in the YAML file. This field is solely used for Node registration.
 	Taints []v1.Taint
 
 	// KubeletExtraArgs passes through extra arguments to the kubelet. The arguments here are passed to the kubelet command line via the environment file
 	// kubeadm writes at runtime for the kubelet to source. This overrides the generic base-level configuration in the kubelet-config-1.X ConfigMap
 	// Flags have higher priority when parsing. These values are local and specific to the node kubeadm is executing on.
 	KubeletExtraArgs map[string]string
+
+	// IgnorePreflightErrors provides a slice of pre-flight errors to be ignored when the current node is registered.
+	IgnorePreflightErrors []string
 }
 
 // Networking contains elements describing cluster's networking configuration.
@@ -244,7 +245,7 @@ type Networking struct {
 // TODO: The BootstrapToken object should move out to either k8s.io/client-go or k8s.io/api in the future
 // (probably as part of Bootstrap Tokens going GA). It should not be staged under the kubeadm API as it is now.
 type BootstrapToken struct {
-	// Token is used for establishing bidirectional trust between nodes and masters.
+	// Token is used for establishing bidirectional trust between nodes and control-planes.
 	// Used for joining nodes in the cluster.
 	Token *BootstrapTokenString
 	// Description sets a human-friendly message why this token exists and what it's used
@@ -315,11 +316,11 @@ type ExternalEtcd struct {
 type JoinConfiguration struct {
 	metav1.TypeMeta
 
-	// NodeRegistration holds fields that relate to registering the new master node to the cluster
+	// NodeRegistration holds fields that relate to registering the new control-plane node to the cluster
 	NodeRegistration NodeRegistrationOptions
 
 	// CACertPath is the path to the SSL certificate authority used to
-	// secure comunications between node and master.
+	// secure comunications between node and control-plane.
 	// Defaults to "/etc/kubernetes/pki/ca.crt".
 	CACertPath string
 
@@ -335,6 +336,10 @@ type JoinConfiguration struct {
 type JoinControlPlane struct {
 	// LocalAPIEndpoint represents the endpoint of the API server instance to be deployed on this node.
 	LocalAPIEndpoint APIEndpoint
+
+	// CertificateKey is the key that is used for decryption of certificates after they are downloaded from the secret
+	// upon joining a new control plane node. The corresponding encryption key is in the InitConfiguration.
+	CertificateKey string
 }
 
 // Discovery specifies the options for the kubelet to use during the TLS Bootstrap process
@@ -359,7 +364,7 @@ type Discovery struct {
 // BootstrapTokenDiscovery is used to set the options for bootstrap token based discovery
 type BootstrapTokenDiscovery struct {
 	// Token is a token used to validate cluster information
-	// fetched from the master.
+	// fetched from the control-plane.
 	Token string
 
 	// APIServerEndpoint is an IP or domain name to the API server from which info will be fetched.
@@ -371,13 +376,12 @@ type BootstrapTokenDiscovery struct {
 	// pinning, which can be unsafe. Each hash is specified as "<type>:<value>",
 	// where the only currently supported type is "sha256". This is a hex-encoded
 	// SHA-256 hash of the Subject Public Key Info (SPKI) object in DER-encoded
-	// ASN.1. These hashes can be calculated using, for example, OpenSSL:
-	// openssl x509 -pubkey -in ca.crt openssl rsa -pubin -outform der 2>&/dev/null | openssl dgst -sha256 -hex
+	// ASN.1. These hashes can be calculated using, for example, OpenSSL.
 	CACertHashes []string
 
 	// UnsafeSkipCAVerification allows token-based discovery
 	// without CA verification via CACertHashes. This can weaken
-	// the security of kubeadm since other nodes can impersonate the master.
+	// the security of kubeadm since other nodes can impersonate the control-plane.
 	UnsafeSkipCAVerification bool
 }
 
@@ -399,6 +403,15 @@ func (cfg *ClusterConfiguration) GetControlPlaneImageRepository() string {
 	return cfg.ImageRepository
 }
 
+// PublicKeyAlgorithm returns the type of encryption keys used in the cluster.
+func (cfg *ClusterConfiguration) PublicKeyAlgorithm() x509.PublicKeyAlgorithm {
+	if features.Enabled(cfg.FeatureGates, features.PublicKeysECDSA) {
+		return x509.ECDSA
+	}
+
+	return x509.RSA
+}
+
 // HostPathMount contains elements describing volumes that are mounted from the
 // host.
 type HostPathMount struct {
@@ -415,49 +428,24 @@ type HostPathMount struct {
 	PathType v1.HostPathType
 }
 
-// CommonConfiguration defines the list of common configuration elements and the getter
-// methods that must exist for both the InitConfiguration and JoinConfiguration objects.
-// This is used internally to deduplicate the kubeadm preflight checks.
-type CommonConfiguration interface {
-	GetCRISocket() string
-	GetNodeName() string
-	GetKubernetesVersion() string
+// DocumentMap is a convenient way to describe a map between a YAML document and its GVK type
+// +k8s:deepcopy-gen=false
+type DocumentMap map[schema.GroupVersionKind][]byte
+
+// ComponentConfig holds a known component config
+type ComponentConfig interface {
+	// DeepCopy should create a new deep copy of the component config in place
+	DeepCopy() ComponentConfig
+
+	// Marshal is marshalling the config into a YAML document returned as a byte slice
+	Marshal() ([]byte, error)
+
+	// Unmarshal loads the config from a document map. No config in the document map is no error.
+	Unmarshal(docmap DocumentMap) error
+
+	// Default patches the component config with kubeadm preferred defaults
+	Default(cfg *ClusterConfiguration, localAPIEndpoint *APIEndpoint, nodeRegOpts *NodeRegistrationOptions)
 }
 
-// GetCRISocket will return the CRISocket that is defined for the InitConfiguration.
-// This is used internally to deduplicate the kubeadm preflight checks.
-func (cfg *InitConfiguration) GetCRISocket() string {
-	return cfg.NodeRegistration.CRISocket
-}
-
-// GetNodeName will return the NodeName that is defined for the InitConfiguration.
-// This is used internally to deduplicate the kubeadm preflight checks.
-func (cfg *InitConfiguration) GetNodeName() string {
-	return cfg.NodeRegistration.Name
-}
-
-// GetKubernetesVersion will return the KubernetesVersion that is defined for the InitConfiguration.
-// This is used internally to deduplicate the kubeadm preflight checks.
-func (cfg *InitConfiguration) GetKubernetesVersion() string {
-	return cfg.KubernetesVersion
-}
-
-// GetCRISocket will return the CRISocket that is defined for the JoinConfiguration.
-// This is used internally to deduplicate the kubeadm preflight checks.
-func (cfg *JoinConfiguration) GetCRISocket() string {
-	return cfg.NodeRegistration.CRISocket
-}
-
-// GetNodeName will return the NodeName that is defined for the JoinConfiguration.
-// This is used internally to deduplicate the kubeadm preflight checks.
-func (cfg *JoinConfiguration) GetNodeName() string {
-	return cfg.NodeRegistration.Name
-}
-
-// GetKubernetesVersion will return an empty string since KubernetesVersion is not a
-// defined property for JoinConfiguration. This will just cause the regex validation
-// of the defined version to be skipped during the preflight checks.
-// This is used internally to deduplicate the kubeadm preflight checks.
-func (cfg *JoinConfiguration) GetKubernetesVersion() string {
-	return ""
-}
+// ComponentConfigMap is a map between a group name (as in GVK group) and a ComponentConfig
+type ComponentConfigMap map[string]ComponentConfig

@@ -29,6 +29,8 @@ spec:
     spec:
       serviceAccountName: metadata-agent
       priorityClassName: system-node-critical
+      nodeSelector:
+        kubernetes.io/os: linux
       containers:
       - image: gcr.io/stackdriver-agents/stackdriver-metadata-agent:0.2-0.0.21-1
         imagePullPolicy: IfNotPresent
@@ -43,8 +45,8 @@ spec:
           failureThreshold: 1
           successThreshold: 1
         args:
-        - -o KubernetesUseWatch=true 
-        - -o KubernetesClusterLevelMetadata=false 
+        - -o KubernetesUseWatch=true
+        - -o KubernetesClusterLevelMetadata=false
         - -o MetadataReporterPurgeDeleted=true
         ports:
         - containerPort: 8000
@@ -91,6 +93,8 @@ spec:
     spec:
       serviceAccountName: metadata-agent
       priorityClassName: system-cluster-critical
+      nodeSelector:
+        kubernetes.io/os: linux
       containers:
       - image: gcr.io/stackdriver-agents/stackdriver-metadata-agent:0.2-0.0.21-1
         imagePullPolicy: IfNotPresent
@@ -105,8 +109,8 @@ spec:
           failureThreshold: 1
           successThreshold: 1
         args:
-        - -o KubernetesUseWatch=true 
-        - -o KubernetesClusterLevelMetadata=true 
+        - -o KubernetesUseWatch=true
+        - -o KubernetesClusterLevelMetadata=true
         - -o MetadataReporterPurgeDeleted=true
         ports:
         - containerPort: 8000

@@ -29,10 +29,10 @@ import (
 	"k8s.io/kubernetes/pkg/controller/volume/attachdetach/cache"
 	"k8s.io/kubernetes/pkg/controller/volume/attachdetach/statusupdater"
 	controllervolumetesting "k8s.io/kubernetes/pkg/controller/volume/attachdetach/testing"
-	stringutil "k8s.io/kubernetes/pkg/util/strings"
 	volumetesting "k8s.io/kubernetes/pkg/volume/testing"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 	"k8s.io/kubernetes/pkg/volume/util/types"
+	utilstrings "k8s.io/utils/strings"
 )
 
 const (
@@ -263,7 +263,7 @@ func Test_Run_Positive_OneDesiredVolumeAttachThenDetachWithMountedVolume(t *test
 			nodeName)
 	}
 
-	// Assert -- Timer will triger detach
+	// Assert -- Timer will trigger detach
 	waitForNewDetacherCallCount(t, 1 /* expectedCallCount */, fakePlugin)
 	verifyNewAttacherCallCount(t, false /* expectZeroNewAttacherCallCount */, fakePlugin)
 	waitForAttachCallCount(t, 1 /* expectedAttachCallCount */, fakePlugin)
@@ -415,7 +415,7 @@ func Test_Run_OneVolumeAttachAndDetachMultipleNodesWithReadWriteMany(t *testing.
 			nodeName1)
 	}
 
-	// Assert -- Timer will triger detach
+	// Assert -- Timer will trigger detach
 	waitForNewDetacherCallCount(t, 1 /* expectedCallCount */, fakePlugin)
 	verifyNewAttacherCallCount(t, false /* expectZeroNewAttacherCallCount */, fakePlugin)
 	waitForTotalAttachCallCount(t, 2 /* expectedAttachCallCount */, fakePlugin)
@@ -433,7 +433,7 @@ func Test_Run_OneVolumeAttachAndDetachMultipleNodesWithReadWriteMany(t *testing.
 			nodeName2)
 	}
 
-	// Assert -- Timer will triger detach
+	// Assert -- Timer will trigger detach
 	waitForNewDetacherCallCount(t, 2 /* expectedCallCount */, fakePlugin)
 	verifyNewAttacherCallCount(t, false /* expectZeroNewAttacherCallCount */, fakePlugin)
 	waitForTotalAttachCallCount(t, 2 /* expectedAttachCallCount */, fakePlugin)
@@ -692,7 +692,7 @@ func Test_ReportMultiAttachError(t *testing.T) {
 			[]string{"Warning FailedAttachVolume Multi-Attach error for volume \"volume-name\" Volume is already used by pod(s) pod2"},
 		},
 		{
-			"pods in anotother namespace use the volume",
+			"pods in another namespace use the volume",
 			[]nodeWithPods{
 				{"node1", []string{"ns1/pod1"}},
 				{"node2", []string{"ns2/pod2"}},
@@ -700,7 +700,7 @@ func Test_ReportMultiAttachError(t *testing.T) {
 			[]string{"Warning FailedAttachVolume Multi-Attach error for volume \"volume-name\" Volume is already used by 1 pod(s) in different namespaces"},
 		},
 		{
-			"pods both in the same and anotother namespace use the volume",
+			"pods both in the same and another namespace use the volume",
 			[]nodeWithPods{
 				{"node1", []string{"ns1/pod1"}},
 				{"node2", []string{"ns2/pod2"}},
@@ -738,7 +738,7 @@ func Test_ReportMultiAttachError(t *testing.T) {
 				volumeSpec := controllervolumetesting.GetTestVolumeSpec(string(volumeName), volumeName)
 				volumeSpec.PersistentVolume.Spec.AccessModes = []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce}
 				uid := string(n.name) + "-" + podName // unique UID
-				namespace, name := stringutil.SplitQualifiedName(podName)
+				namespace, name := utilstrings.SplitQualifiedName(podName)
 				pod := controllervolumetesting.NewPod(uid, name)
 				pod.Namespace = namespace
 				_, err := dsw.AddPod(types.UniquePodName(uid), pod, volumeSpec, n.name)

@@ -26,38 +26,39 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
+	utilsnet "k8s.io/utils/net"
 )
 
-// GetMasterEndpoint returns a properly formatted endpoint for the control plane built according following rules:
-// - If the ControlPlaneEndpoint is defined, use it.
-// - if the ControlPlaneEndpoint is defined but without a port number, use the ControlPlaneEndpoint + api.BindPort is used.
-// - Otherwise, in case the ControlPlaneEndpoint is not defined, use the api.AdvertiseAddress + the api.BindPort.
-func GetMasterEndpoint(cfg *kubeadmapi.InitConfiguration) (string, error) {
+// GetControlPlaneEndpoint returns a properly formatted endpoint for the control plane built according following rules:
+// - If the controlPlaneEndpoint is defined, use it.
+// - if the controlPlaneEndpoint is defined but without a port number, use the controlPlaneEndpoint + localEndpoint.BindPort is used.
+// - Otherwise, in case the controlPlaneEndpoint is not defined, use the localEndpoint.AdvertiseAddress + the localEndpoint.BindPort.
+func GetControlPlaneEndpoint(controlPlaneEndpoint string, localEndpoint *kubeadmapi.APIEndpoint) (string, error) {
 	// parse the bind port
-	bindPortString := strconv.Itoa(int(cfg.LocalAPIEndpoint.BindPort))
+	bindPortString := strconv.Itoa(int(localEndpoint.BindPort))
 	if _, err := ParsePort(bindPortString); err != nil {
-		return "", errors.Wrapf(err, "invalid value %q given for api.bindPort", cfg.LocalAPIEndpoint.BindPort)
+		return "", errors.Wrapf(err, "invalid value %q given for api.bindPort", localEndpoint.BindPort)
 	}
 
 	// parse the AdvertiseAddress
-	var ip = net.ParseIP(cfg.LocalAPIEndpoint.AdvertiseAddress)
+	var ip = net.ParseIP(localEndpoint.AdvertiseAddress)
 	if ip == nil {
-		return "", errors.Errorf("invalid value `%s` given for api.advertiseAddress", cfg.LocalAPIEndpoint.AdvertiseAddress)
+		return "", errors.Errorf("invalid value `%s` given for api.advertiseAddress", localEndpoint.AdvertiseAddress)
 	}
 
-	// set the master url using cfg.API.AdvertiseAddress + the cfg.API.BindPort
-	masterURL := &url.URL{
+	// set the control-plane url using localEndpoint.AdvertiseAddress + the localEndpoint.BindPort
+	controlPlaneURL := &url.URL{
 		Scheme: "https",
 		Host:   net.JoinHostPort(ip.String(), bindPortString),
 	}
 
 	// if the controlplane endpoint is defined
-	if len(cfg.ControlPlaneEndpoint) > 0 {
+	if len(controlPlaneEndpoint) > 0 {
 		// parse the controlplane endpoint
 		var host, port string
 		var err error
-		if host, port, err = ParseHostPort(cfg.ControlPlaneEndpoint); err != nil {
-			return "", errors.Wrapf(err, "invalid value %q given for controlPlaneEndpoint", cfg.ControlPlaneEndpoint)
+		if host, port, err = ParseHostPort(controlPlaneEndpoint); err != nil {
+			return "", errors.Wrapf(err, "invalid value %q given for controlPlaneEndpoint", controlPlaneEndpoint)
 		}
 
 		// if a port is provided within the controlPlaneAddress warn the users we are using it, else use the bindport
@@ -69,14 +70,14 @@ func GetMasterEndpoint(cfg *kubeadmapi.InitConfiguration) (string, error) {
 			port = bindPortString
 		}
 
-		// overrides the master url using the controlPlaneAddress (and eventually the bindport)
-		masterURL = &url.URL{
+		// overrides the control-plane url using the controlPlaneAddress (and eventually the bindport)
+		controlPlaneURL = &url.URL{
 			Scheme: "https",
 			Host:   net.JoinHostPort(host, port),
 		}
 	}
 
-	return masterURL.String(), nil
+	return controlPlaneURL.String(), nil
 }
 
 // ParseHostPort parses a network address of the form "host:port", "ipv4:port", "[ipv6]:port" into host and port;
@@ -115,7 +116,7 @@ func ParseHostPort(hostport string) (string, string, error) {
 // ParsePort parses a string representing a TCP port.
 // If the string is not a valid representation of a TCP port, ParsePort returns an error.
 func ParsePort(port string) (int, error) {
-	portInt, err := strconv.Atoi(port)
+	portInt, err := utilsnet.ParsePort(port, true)
 	if err == nil && (1 <= portInt && portInt <= 65535) {
 		return portInt, nil
 	}

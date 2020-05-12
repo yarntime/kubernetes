@@ -17,12 +17,13 @@ limitations under the License.
 package v1beta1
 
 import (
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// DEPRECATED - This group version of InitConfiguration is deprecated by apis/kubeadm/v1beta2/InitConfiguration.
 // InitConfiguration contains a list of elements that is specific "kubeadm init"-only runtime
 // information.
 type InitConfiguration struct {
@@ -42,7 +43,7 @@ type InitConfiguration struct {
 	// This information IS NOT uploaded to the kubeadm cluster configmap, partly because of its sensitive nature
 	BootstrapTokens []BootstrapToken `json:"bootstrapTokens,omitempty"`
 
-	// NodeRegistration holds fields that relate to registering the new master node to the cluster
+	// NodeRegistration holds fields that relate to registering the new control-plane node to the cluster
 	NodeRegistration NodeRegistrationOptions `json:"nodeRegistration,omitempty"`
 
 	// LocalAPIEndpoint represents the endpoint of the API server instance that's deployed on this control plane node
@@ -56,6 +57,7 @@ type InitConfiguration struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// DEPRECATED - This group version of ClusterConfiguration is deprecated by apis/kubeadm/v1beta2/ClusterConfiguration.
 // ClusterConfiguration contains cluster-wide configuration for a kubeadm cluster
 type ClusterConfiguration struct {
 	metav1.TypeMeta `json:",inline"`
@@ -104,6 +106,8 @@ type ClusterConfiguration struct {
 	ImageRepository string `json:"imageRepository"`
 
 	// UseHyperKubeImage controls if hyperkube should be used for Kubernetes components instead of their respective separate images
+	// DEPRECATED: As hyperkube is itself deprecated, this fields is too. It will be removed in future kubeadm config versions, kubeadm
+	// will print multiple warnings when set to true, and at some point it may become ignored.
 	UseHyperKubeImage bool `json:"useHyperKubeImage,omitempty"`
 
 	// FeatureGates enabled by the user.
@@ -191,10 +195,10 @@ type APIEndpoint struct {
 	BindPort int32 `json:"bindPort"`
 }
 
-// NodeRegistrationOptions holds fields that relate to registering a new master or node to the cluster, either via "kubeadm init" or "kubeadm join"
+// NodeRegistrationOptions holds fields that relate to registering a new control-plane or node to the cluster, either via "kubeadm init" or "kubeadm join"
 type NodeRegistrationOptions struct {
 
-	// Name is the `.Metadata.Name` field of the Node API object that will be created in this `kubeadm init` or `kubeadm joiń` operation.
+	// Name is the `.Metadata.Name` field of the Node API object that will be created in this `kubeadm init` or `kubeadm join` operation.
 	// This field is also used in the CommonName field of the kubelet's client certificate to the API server.
 	// Defaults to the hostname of the node if not provided.
 	Name string `json:"name,omitempty"`
@@ -203,8 +207,8 @@ type NodeRegistrationOptions struct {
 	CRISocket string `json:"criSocket,omitempty"`
 
 	// Taints specifies the taints the Node API object should be registered with. If this field is unset, i.e. nil, in the `kubeadm init` process
-	// it will be defaulted to []v1.Taint{'node-role.kubernetes.io/master=""'}. If you don't want to taint your master node, set this field to an
-	// empty slice, i.e. `taints: {}` in the YAML file. This field is solely used for Node registration.
+	// it will be defaulted to []v1.Taint{'node-role.kubernetes.io/master=""'}. If you don't want to taint your control-plane node, set this field to an
+	// empty slice, i.e. `taints: []` in the YAML file. This field is solely used for Node registration.
 	Taints []v1.Taint `json:"taints,omitempty"`
 
 	// KubeletExtraArgs passes through extra arguments to the kubelet. The arguments here are passed to the kubelet command line via the environment file
@@ -225,7 +229,7 @@ type Networking struct {
 
 // BootstrapToken describes one bootstrap token, stored as a Secret in the cluster
 type BootstrapToken struct {
-	// Token is used for establishing bidirectional trust between nodes and masters.
+	// Token is used for establishing bidirectional trust between nodes and control-planes.
 	// Used for joining nodes in the cluster.
 	Token *BootstrapTokenString `json:"token"`
 	// Description sets a human-friendly message why this token exists and what it's used
@@ -297,15 +301,16 @@ type ExternalEtcd struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// DEPRECATED - This group version of JoinConfiguration is deprecated by apis/kubeadm/v1beta2/JoinConfiguration.
 // JoinConfiguration contains elements describing a particular node.
 type JoinConfiguration struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// NodeRegistration holds fields that relate to registering the new master node to the cluster
+	// NodeRegistration holds fields that relate to registering the new control-plane node to the cluster
 	NodeRegistration NodeRegistrationOptions `json:"nodeRegistration"`
 
 	// CACertPath is the path to the SSL certificate authority used to
-	// secure comunications between node and master.
+	// secure comunications between node and control-plane.
 	// Defaults to "/etc/kubernetes/pki/ca.crt".
 	CACertPath string `json:"caCertPath"`
 
@@ -345,7 +350,7 @@ type Discovery struct {
 // BootstrapTokenDiscovery is used to set the options for bootstrap token based discovery
 type BootstrapTokenDiscovery struct {
 	// Token is a token used to validate cluster information
-	// fetched from the master.
+	// fetched from the control-plane.
 	Token string `json:"token"`
 
 	// APIServerEndpoint is an IP or domain name to the API server from which info will be fetched.
@@ -357,13 +362,12 @@ type BootstrapTokenDiscovery struct {
 	// pinning, which can be unsafe. Each hash is specified as "<type>:<value>",
 	// where the only currently supported type is "sha256". This is a hex-encoded
 	// SHA-256 hash of the Subject Public Key Info (SPKI) object in DER-encoded
-	// ASN.1. These hashes can be calculated using, for example, OpenSSL:
-	// openssl x509 -pubkey -in ca.crt openssl rsa -pubin -outform der 2>&/dev/null | openssl dgst -sha256 -hex
+	// ASN.1. These hashes can be calculated using, for example, OpenSSL.
 	CACertHashes []string `json:"caCertHashes,omitempty"`
 
 	// UnsafeSkipCAVerification allows token-based discovery
 	// without CA verification via CACertHashes. This can weaken
-	// the security of kubeadm since other nodes can impersonate the master.
+	// the security of kubeadm since other nodes can impersonate the control-plane.
 	UnsafeSkipCAVerification bool `json:"unsafeSkipCAVerification"`
 }
 

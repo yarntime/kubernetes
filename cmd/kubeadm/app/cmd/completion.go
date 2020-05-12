@@ -20,12 +20,10 @@ import (
 	"bytes"
 	"io"
 
+	"github.com/lithammer/dedent"
 	"github.com/pkg/errors"
-	"github.com/renstrom/dedent"
 	"github.com/spf13/cobra"
 	"k8s.io/klog"
-
-	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 )
 
 const defaultBoilerPlate = `
@@ -50,7 +48,7 @@ var (
 		The shell code must be evaluated to provide interactive
 		completion of kubeadm commands. This can be done by sourcing it from
 		the .bash_profile.
-		
+
 		Note: this requires the bash-completion framework.
 
 		To install it on Mac use homebrew:
@@ -102,12 +100,11 @@ func GetSupportedShells() []string {
 func NewCmdCompletion(out io.Writer, boilerPlate string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "completion SHELL",
-		Short:   "Output shell completion code for the specified shell (bash or zsh).",
+		Short:   "Output shell completion code for the specified shell (bash or zsh)",
 		Long:    completionLong,
 		Example: completionExample,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := RunCompletion(out, boilerPlate, cmd, args)
-			kubeadmutil.CheckErr(err)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return RunCompletion(out, boilerPlate, cmd, args)
 		},
 		ValidArgs: GetSupportedShells(),
 	}
@@ -117,10 +114,9 @@ func NewCmdCompletion(out io.Writer, boilerPlate string) *cobra.Command {
 
 // RunCompletion checks given arguments and executes command
 func RunCompletion(out io.Writer, boilerPlate string, cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
+	if length := len(args); length == 0 {
 		return errors.New("shell not specified")
-	}
-	if len(args) > 1 {
+	} else if length > 1 {
 		return errors.New("too many arguments. expected only the shell type")
 	}
 	run, found := completionShells[args[0]]

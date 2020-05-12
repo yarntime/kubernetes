@@ -17,6 +17,7 @@ limitations under the License.
 package banflunder_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -28,8 +29,8 @@ import (
 	"k8s.io/sample-apiserver/pkg/admission/plugin/banflunder"
 	"k8s.io/sample-apiserver/pkg/admission/wardleinitializer"
 	wardle "k8s.io/sample-apiserver/pkg/apis/wardle/v1alpha1"
-	"k8s.io/sample-apiserver/pkg/client/clientset/versioned/fake"
-	informers "k8s.io/sample-apiserver/pkg/client/informers/externalversions"
+	"k8s.io/sample-apiserver/pkg/generated/clientset/versioned/fake"
+	informers "k8s.io/sample-apiserver/pkg/generated/informers/externalversions"
 )
 
 // TestBanfluderAdmissionPlugin tests various test cases against
@@ -127,7 +128,7 @@ func TestBanflunderAdmissionPlugin(t *testing.T) {
 			informersFactory.WaitForCacheSync(stop)
 
 			// act
-			err = target.Admit(admission.NewAttributesRecord(
+			err = target.Admit(context.TODO(), admission.NewAttributesRecord(
 				&scenario.admissionInput,
 				nil,
 				scenario.admissionInputKind,
@@ -136,8 +137,10 @@ func TestBanflunderAdmissionPlugin(t *testing.T) {
 				scenario.admissionInputResource,
 				"",
 				admission.Create,
+				&metav1.CreateOptions{},
 				false,
 				nil),
+				nil,
 			)
 
 			// validate

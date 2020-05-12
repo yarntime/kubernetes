@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@io_kubernetes_build//defs:go.bzl", "go_genrule")
+load("@io_k8s_repo_infra//defs:go.bzl", "go_genrule")
 load(
     "@io_bazel_rules_go//go:def.bzl",
     "go_library",
@@ -14,6 +14,7 @@ go_library(
         "doc.go",
         "empty.go",
         "int.go",
+        "int32.go",
         "int64.go",
         "string.go",
     ],
@@ -37,7 +38,7 @@ go_genrule(
     ],
     cmd = """
 $(location //vendor/k8s.io/code-generator/cmd/set-gen) \
-    --input-dirs k8s.io/kubernetes/vendor/k8s.io/apimachinery/pkg/util/sets/types \
+    --input-dirs k8s.io/apimachinery/pkg/util/sets/types \
     --output-base $$(dirname $$(dirname $(location :byte.go))) \
     --go-header-file $(location //hack/boilerplate:boilerplate.generatego.txt) \
     --output-package sets

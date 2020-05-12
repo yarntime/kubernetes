@@ -21,8 +21,7 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	apiserverflag "k8s.io/apiserver/pkg/util/flag"
-	componentbaseconfig "k8s.io/component-base/config"
+	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/kubernetes/pkg/client/leaderelectionconfig"
 	kubectrlmgrconfig "k8s.io/kubernetes/pkg/controller/apis/config"
 )
@@ -39,16 +38,14 @@ type GenericControllerManagerConfigurationOptions struct {
 func NewGenericControllerManagerConfigurationOptions(cfg *kubectrlmgrconfig.GenericControllerManagerConfiguration) *GenericControllerManagerConfigurationOptions {
 	o := &GenericControllerManagerConfigurationOptions{
 		GenericControllerManagerConfiguration: cfg,
-		Debugging: &DebuggingOptions{
-			DebuggingConfiguration: &componentbaseconfig.DebuggingConfiguration{},
-		},
+		Debugging:                             RecommendedDebuggingOptions(),
 	}
 
 	return o
 }
 
 // AddFlags adds flags related to generic for controller manager to the specified FlagSet.
-func (o *GenericControllerManagerConfigurationOptions) AddFlags(fss *apiserverflag.NamedFlagSets, allControllers, disabledByDefaultControllers []string) {
+func (o *GenericControllerManagerConfigurationOptions) AddFlags(fss *cliflag.NamedFlagSets, allControllers, disabledByDefaultControllers []string) {
 	if o == nil {
 		return
 	}
@@ -103,9 +100,7 @@ func (o *GenericControllerManagerConfigurationOptions) Validate(allControllers [
 		if controller == "*" {
 			continue
 		}
-		if strings.HasPrefix(controller, "-") {
-			controller = controller[1:]
-		}
+		controller = strings.TrimPrefix(controller, "-")
 		if !allControllersSet.Has(controller) {
 			errs = append(errs, fmt.Errorf("%q is not in the list of known controllers", controller))
 		}

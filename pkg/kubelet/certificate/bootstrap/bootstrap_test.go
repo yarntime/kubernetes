@@ -17,6 +17,7 @@ limitations under the License.
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -29,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	certificatesclient "k8s.io/client-go/kubernetes/typed/certificates/v1beta1"
 	restclient "k8s.io/client-go/rest"
-	certutil "k8s.io/client-go/util/cert"
+	"k8s.io/client-go/util/keyutil"
 )
 
 func TestLoadRESTClientConfig(t *testing.T) {
@@ -104,7 +105,7 @@ func TestRequestNodeCertificateErrorCreatingCSR(t *testing.T) {
 	client := &fakeClient{
 		failureType: createError,
 	}
-	privateKeyData, err := certutil.MakeEllipticPrivateKeyPEM()
+	privateKeyData, err := keyutil.MakeEllipticPrivateKeyPEM()
 	if err != nil {
 		t.Fatalf("Unable to generate a new private key: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestRequestNodeCertificateErrorCreatingCSR(t *testing.T) {
 }
 
 func TestRequestNodeCertificate(t *testing.T) {
-	privateKeyData, err := certutil.MakeEllipticPrivateKeyPEM()
+	privateKeyData, err := keyutil.MakeEllipticPrivateKeyPEM()
 	if err != nil {
 		t.Fatalf("Unable to generate a new private key: %v", err)
 	}
@@ -147,7 +148,7 @@ type fakeClient struct {
 	failureType failureType
 }
 
-func (c *fakeClient) Create(*certificates.CertificateSigningRequest) (*certificates.CertificateSigningRequest, error) {
+func (c *fakeClient) Create(context.Context, *certificates.CertificateSigningRequest, metav1.CreateOptions) (*certificates.CertificateSigningRequest, error) {
 	if c.failureType == createError {
 		return nil, fmt.Errorf("fakeClient failed creating request")
 	}
@@ -160,11 +161,11 @@ func (c *fakeClient) Create(*certificates.CertificateSigningRequest) (*certifica
 	return &csr, nil
 }
 
-func (c *fakeClient) List(opts metav1.ListOptions) (*certificates.CertificateSigningRequestList, error) {
+func (c *fakeClient) List(_ context.Context, opts metav1.ListOptions) (*certificates.CertificateSigningRequestList, error) {
 	return &certificates.CertificateSigningRequestList{}, nil
 }
 
-func (c *fakeClient) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+func (c *fakeClient) Watch(_ context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	c.watch = watch.NewFakeWithChanSize(1, false)
 	c.watch.Add(c.generateCSR())
 	c.watch.Stop()

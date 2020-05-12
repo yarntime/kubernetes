@@ -1,8 +1,10 @@
-reviewers:
-  - coffeepac
-  - monotek
-  - piosz
+# See the OWNERS docs at https://go.k8s.io/owners
+
 approvers:
-  - coffeepac
-  - monotek
-  - piosz
+- coffeepac
+- monotek
+- sig-instrumentation-approvers
+reviewers:
+- sig-instrumentation-reviewers
+labels:
+- sig/instrumentation

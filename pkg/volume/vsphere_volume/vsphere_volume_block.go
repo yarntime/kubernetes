@@ -1,3 +1,5 @@
+// +build !providerless
+
 /*
 Copyright 2018 The Kubernetes Authors.
 
@@ -18,17 +20,17 @@ package vsphere_volume
 
 import (
 	"fmt"
-	"path"
 	"path/filepath"
 	"strings"
 
-	"k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/mount"
-	kstrings "k8s.io/kubernetes/pkg/util/strings"
+	"k8s.io/utils/mount"
+	utilstrings "k8s.io/utils/strings"
+
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
 )
 
@@ -48,10 +50,10 @@ func (plugin *vsphereVolumePlugin) ConstructBlockVolumeSpec(podUID types.UID, vo
 	if len(globalMapPath) <= 1 {
 		return nil, fmt.Errorf("failed to get volume plugin information from globalMapPathUUID: %v", globalMapPathUUID)
 	}
-	return getVolumeSpecFromGlobalMapPath(globalMapPath)
+	return getVolumeSpecFromGlobalMapPath(volumeName, globalMapPath)
 }
 
-func getVolumeSpecFromGlobalMapPath(globalMapPath string) (*volume.Spec, error) {
+func getVolumeSpecFromGlobalMapPath(volumeName, globalMapPath string) (*volume.Spec, error) {
 	// Construct volume spec from globalMapPath
 	// globalMapPath example:
 	//   plugins/kubernetes.io/{PluginName}/{DefaultKubeletVolumeDevicesDirName}/{volumeID}
@@ -63,6 +65,9 @@ func getVolumeSpecFromGlobalMapPath(globalMapPath string) (*volume.Spec, error) 
 	}
 	block := v1.PersistentVolumeBlock
 	vsphereVolume := &v1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: volumeName,
+		},
 		Spec: v1.PersistentVolumeSpec{
 			PersistentVolumeSource: v1.PersistentVolumeSource{
 				VsphereVolume: &v1.VsphereVirtualDiskVolumeSource{
@@ -128,22 +133,10 @@ type vsphereBlockVolumeMapper struct {
 	*vsphereVolume
 }
 
-func (v vsphereBlockVolumeMapper) SetUpDevice() (string, error) {
-	return "", nil
-}
-
-func (v vsphereBlockVolumeMapper) MapDevice(devicePath, globalMapPath, volumeMapPath, volumeMapName string, podUID types.UID) error {
-	return util.MapBlockVolume(devicePath, globalMapPath, volumeMapPath, volumeMapName, podUID)
-}
-
 var _ volume.BlockVolumeUnmapper = &vsphereBlockVolumeUnmapper{}
 
 type vsphereBlockVolumeUnmapper struct {
 	*vsphereVolume
-}
-
-func (v *vsphereBlockVolumeUnmapper) TearDownDevice(mapPath, devicePath string) error {
-	return nil
 }
 
 // GetGlobalMapPath returns global map path and error
@@ -153,9 +146,9 @@ func (v *vsphereVolume) GetGlobalMapPath(spec *volume.Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return path.Join(v.plugin.host.GetVolumeDevicePluginDir(vsphereVolumePluginName), string(volumeSource.VolumePath)), nil
+	return filepath.Join(v.plugin.host.GetVolumeDevicePluginDir(vsphereVolumePluginName), string(volumeSource.VolumePath)), nil
 }
 
 func (v *vsphereVolume) GetPodDeviceMapPath() (string, string) {
-	return v.plugin.host.GetPodVolumeDeviceDir(v.podUID, kstrings.EscapeQualifiedNameForDisk(vsphereVolumePluginName)), v.volName
+	return v.plugin.host.GetPodVolumeDeviceDir(v.podUID, utilstrings.EscapeQualifiedName(vsphereVolumePluginName)), v.volName
 }

@@ -69,6 +69,10 @@ func ensureNoTags(gvk schema.GroupVersionKind, tp reflect.Type, parents []reflec
 		return errs
 	}
 
+	// Don't look at the same type multiple times
+	if containsType(parents, tp) {
+		return nil
+	}
 	parents = append(parents, tp)
 
 	switch tp.Kind() {
@@ -106,6 +110,10 @@ func ensureTags(gvk schema.GroupVersionKind, tp reflect.Type, parents []reflect.
 		return errs
 	}
 
+	// Don't look at the same type multiple times
+	if containsType(parents, tp) {
+		return nil
+	}
 	parents = append(parents, tp)
 
 	switch tp.Kind() {
@@ -120,12 +128,12 @@ func ensureTags(gvk schema.GroupVersionKind, tp reflect.Type, parents []reflect.
 			f := tp.Field(i)
 			jsonTag := f.Tag.Get("json")
 			if len(jsonTag) == 0 {
-				errs = append(errs, fmt.Errorf("External types should have json tags. %#v tags on field %v are: %s.\n%s", gvk, f.Name, f.Tag, fmtParentString(parents)))
+				errs = append(errs, fmt.Errorf("external types should have json tags. %#v tags on field %v are: %s.\n%s", gvk, f.Name, f.Tag, fmtParentString(parents)))
 			}
 
 			jsonTagName := strings.Split(jsonTag, ",")[0]
 			if len(jsonTagName) > 0 && (jsonTagName[0] < 'a' || jsonTagName[0] > 'z') && jsonTagName != "-" && allowedNonstandardJSONNames[tp] != jsonTagName {
-				errs = append(errs, fmt.Errorf("External types should have json names starting with lowercase letter. %#v has json tag on field %v with name %s.\n%s", gvk, f.Name, jsonTagName, fmtParentString(parents)))
+				errs = append(errs, fmt.Errorf("external types should have json names starting with lowercase letter. %#v has json tag on field %v with name %s.\n%s", gvk, f.Name, jsonTagName, fmtParentString(parents)))
 			}
 
 			errs = append(errs, ensureTags(gvk, f.Type, parents, allowedNonstandardJSONNames)...)
@@ -143,4 +151,14 @@ func fmtParentString(parents []reflect.Type) string {
 		str += fmt.Sprintf("%s%v\n", strings.Repeat(" ", i), tp)
 	}
 	return str
+}
+
+// containsType returns true if s contains t, false otherwise
+func containsType(s []reflect.Type, t reflect.Type) bool {
+	for _, u := range s {
+		if t == u {
+			return true
+		}
+	}
+	return false
 }

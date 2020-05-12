@@ -22,13 +22,15 @@ import (
 
 	"github.com/pkg/errors"
 	apps "k8s.io/api/apps/v1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/images"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/apiclient"
+	utilpointer "k8s.io/utils/pointer"
 )
 
 const (
@@ -42,7 +44,7 @@ type Prepuller interface {
 	DeleteFunc(string) error
 }
 
-// DaemonSetPrepuller makes sure the control plane images are available on all masters
+// DaemonSetPrepuller makes sure the control-plane images are available on all control-planes
 type DaemonSetPrepuller struct {
 	client clientset.Interface
 	cfg    *kubeadmapi.ClusterConfiguration
@@ -66,7 +68,8 @@ func (d *DaemonSetPrepuller) CreateFunc(component string) error {
 	} else {
 		image = images.GetKubernetesImage(component, d.cfg)
 	}
-	ds := buildPrePullDaemonSet(component, image)
+	pauseImage := images.GetPauseImage(d.cfg)
+	ds := buildPrePullDaemonSet(component, image, pauseImage)
 
 	// Create the DaemonSet in the API Server
 	if err := apiclient.CreateOrUpdateDaemonSet(d.client, ds); err != nil {
@@ -84,7 +87,9 @@ func (d *DaemonSetPrepuller) WaitFunc(component string) {
 // DeleteFunc deletes the DaemonSet used for making the image available on every relevant node
 func (d *DaemonSetPrepuller) DeleteFunc(component string) error {
 	dsName := addPrepullPrefix(component)
-	if err := apiclient.DeleteDaemonSetForeground(d.client, metav1.NamespaceSystem, dsName); err != nil {
+	// TODO: The IsNotFound() check is required in cases where the DaemonSet is missing.
+	// Investigate why this happens: https://github.com/kubernetes/kubeadm/issues/1700
+	if err := apiclient.DeleteDaemonSetForeground(d.client, metav1.NamespaceSystem, dsName); err != nil && !apierrors.IsNotFound(err) {
 		return errors.Wrapf(err, "unable to cleanup the DaemonSet used for prepulling %s", component)
 	}
 	fmt.Printf("[upgrade/prepull] Prepulled image for component %s.\n", component)
@@ -131,7 +136,7 @@ func waitForItemsFromChan(timeoutChan <-chan time.Time, stringChan chan string, 
 	for {
 		select {
 		case <-timeoutChan:
-			return errors.New("The prepull operation timed out")
+			return errors.New("the prepull operation timed out")
 		case result := <-stringChan:
 			i++
 			// If the cleanup function errors; error here as well
@@ -151,8 +156,7 @@ func addPrepullPrefix(component string) string {
 }
 
 // buildPrePullDaemonSet builds the DaemonSet that ensures the control plane image is available
-func buildPrePullDaemonSet(component, image string) *apps.DaemonSet {
-	var gracePeriodSecs int64
+func buildPrePullDaemonSet(component, image, pauseImage string) *apps.DaemonSet {
 	return &apps.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      addPrepullPrefix(component),
@@ -171,18 +175,37 @@ func buildPrePullDaemonSet(component, image string) *apps.DaemonSet {
 					},
 				},
 				Spec: v1.PodSpec{
-					Containers: []v1.Container{
+					// Use an init container to prepull the target component image.
+					// Once the prepull completes, the "component --version" command is executed
+					// to get an exit code of 0.
+					// After the init container completes a regular container with "pause"
+					// will start to get this Pod in Running state with a blocking container process.
+					// Note that DaemonSet Pods can only use RestartPolicy of Always, so there has
+					// to be a blocking process to achieve the Running state.
+					InitContainers: []v1.Container{
 						{
 							Name:    component,
 							Image:   image,
-							Command: []string{"/bin/sleep", "3600"},
+							Command: []string{component, "--version"},
+						},
+					},
+					Containers: []v1.Container{
+						{
+							Name:    "pause",
+							Image:   pauseImage,
+							Command: []string{"/pause"},
 						},
 					},
 					NodeSelector: map[string]string{
 						constants.LabelNodeRoleMaster: "",
 					},
-					Tolerations:                   []v1.Toleration{constants.MasterToleration},
-					TerminationGracePeriodSeconds: &gracePeriodSecs,
+					Tolerations:                   []v1.Toleration{constants.ControlPlaneToleration},
+					TerminationGracePeriodSeconds: utilpointer.Int64Ptr(0),
+					// Explicitly add a PodSecurityContext to allow these Pods to run as non-root.
+					// This prevents restrictive PSPs from blocking the Pod creation.
+					SecurityContext: &v1.PodSecurityContext{
+						RunAsUser: utilpointer.Int64Ptr(999),
+					},
 				},
 			},
 		},

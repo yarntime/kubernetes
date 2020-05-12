@@ -16,6 +16,7 @@ go_test(
         "helpers_test.go",
         "labels_test.go",
         "micro_time_test.go",
+        "options_test.go",
         "time_test.go",
         "types_test.go",
     ],
@@ -37,6 +38,7 @@ go_library(
     srcs = [
         "controller_ref.go",
         "conversion.go",
+        "deepcopy.go",
         "doc.go",
         "duration.go",
         "generated.pb.go",
@@ -52,6 +54,7 @@ go_library(
         "types.go",
         "types_swagger_doc_generated.go",
         "watch.go",
+        "zz_generated.conversion.go",
         "zz_generated.deepcopy.go",
         "zz_generated.defaults.go",
     ],

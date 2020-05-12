@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "builder_flags.go",
         "builder_flags_fake.go",
+        "client_config.go",
         "config_flags.go",
         "config_flags_fake.go",
         "doc.go",
@@ -25,9 +26,10 @@ go_library(
         "//staging/src/k8s.io/apimachinery/pkg/api/meta:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/json:go_default_library",
-        "//staging/src/k8s.io/cli-runtime/pkg/genericclioptions/printers:go_default_library",
-        "//staging/src/k8s.io/cli-runtime/pkg/genericclioptions/resource:go_default_library",
+        "//staging/src/k8s.io/cli-runtime/pkg/printers:go_default_library",
+        "//staging/src/k8s.io/cli-runtime/pkg/resource:go_default_library",
         "//staging/src/k8s.io/client-go/discovery:go_default_library",
+        "//staging/src/k8s.io/client-go/discovery/cached/disk:go_default_library",
         "//staging/src/k8s.io/client-go/rest:go_default_library",
         "//staging/src/k8s.io/client-go/restmapper:go_default_library",
         "//staging/src/k8s.io/client-go/tools/clientcmd:go_default_library",
@@ -48,11 +50,7 @@ filegroup(
 
 filegroup(
     name = "all-srcs",
-    srcs = [
-        ":package-srcs",
-        "//staging/src/k8s.io/cli-runtime/pkg/genericclioptions/printers:all-srcs",
-        "//staging/src/k8s.io/cli-runtime/pkg/genericclioptions/resource:all-srcs",
-    ],
+    srcs = [":package-srcs"],
     tags = ["automanaged"],
     visibility = ["//visibility:public"],
 )
@@ -63,11 +61,15 @@ go_test(
         "json_yaml_flags_test.go",
         "jsonpath_flags_test.go",
         "name_flags_test.go",
+        "print_flags_test.go",
         "template_flags_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
         "//staging/src/k8s.io/api/core/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/apis/meta/v1/unstructured:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
+        "//staging/src/k8s.io/client-go/kubernetes/scheme:go_default_library",
     ],
 )

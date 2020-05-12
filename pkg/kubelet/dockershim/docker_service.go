@@ -1,3 +1,5 @@
+// +build !dockerless
+
 /*
 Copyright 2016 The Kubernetes Authors.
 
@@ -30,8 +32,8 @@ import (
 	"k8s.io/klog"
 
 	"k8s.io/api/core/v1"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager/errors"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
@@ -40,6 +42,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/network/cni"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/network/hostport"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/network/kubenet"
+	"k8s.io/kubernetes/pkg/kubelet/legacy"
 	"k8s.io/kubernetes/pkg/kubelet/server/streaming"
 	"k8s.io/kubernetes/pkg/kubelet/util/cache"
 
@@ -97,7 +100,7 @@ type DockerService interface {
 	http.Handler
 
 	// For supporting legacy features.
-	DockerLegacyService
+	legacy.DockerLegacyService
 }
 
 // NetworkPluginSettings is the subset of kubelet runtime args we pass
@@ -112,7 +115,7 @@ type NetworkPluginSettings struct {
 	NonMasqueradeCIDR string
 	// PluginName is the name of the plugin, runtime shim probes for
 	PluginName string
-	// PluginBinDirsString is a list of directiores delimited by commas, in
+	// PluginBinDirString is a list of directiores delimited by commas, in
 	// which the binaries for the plugin with PluginName may be found.
 	PluginBinDirString string
 	// PluginBinDirs is an array of directories in which the binaries for
@@ -123,6 +126,8 @@ type NetworkPluginSettings struct {
 	// Depending on the plugin, this may be an optional field, eg: kubenet
 	// generates its own plugin conf.
 	PluginConfDir string
+	// PluginCacheDir is the directory in which CNI should store cache files.
+	PluginCacheDir string
 	// MTU is the desired MTU for network devices created by the plugin.
 	MTU int
 }
@@ -155,7 +160,7 @@ type dockerNetworkHost struct {
 	*portMappingGetter
 }
 
-var internalLabelKeys []string = []string{containerTypeLabelKey, containerLogPathLabelKey, sandboxIDLabelKey}
+var internalLabelKeys = []string{containerTypeLabelKey, containerLogPathLabelKey, sandboxIDLabelKey}
 
 // ClientConfig is parameters used to initialize docker client
 type ClientConfig struct {
@@ -177,8 +182,6 @@ func NewDockerClientFromConfig(config *ClientConfig) libdocker.Interface {
 			config.DockerEndpoint,
 			config.RuntimeRequestTimeout,
 			config.ImagePullProgressDeadline,
-			config.WithTraceDisabled,
-			config.EnableSleep,
 		)
 		return client
 	}
@@ -186,6 +189,7 @@ func NewDockerClientFromConfig(config *ClientConfig) libdocker.Interface {
 	return nil
 }
 
+// NewDockerService creates a new `DockerService` struct.
 // NOTE: Anything passed to DockerService should be eventually handled in another way when we switch to running the shim as a different process.
 func NewDockerService(config *ClientConfig, podSandboxImage string, streamingConfig *streaming.Config, pluginSettings *NetworkPluginSettings,
 	cgroupsName string, kubeCgroupDriver string, dockershimRootDir string, startLocalStreamingServer bool) (DockerService, error) {
@@ -211,6 +215,7 @@ func NewDockerService(config *ClientConfig, podSandboxImage string, streamingCon
 		checkpointManager:         checkpointManager,
 		startLocalStreamingServer: startLocalStreamingServer,
 		networkReady:              make(map[string]bool),
+		containerCleanupInfos:     make(map[string]*containerCleanupInfo),
 	}
 
 	// check docker version compatibility.
@@ -237,8 +242,8 @@ func NewDockerService(config *ClientConfig, podSandboxImage string, streamingCon
 
 	// dockershim currently only supports CNI plugins.
 	pluginSettings.PluginBinDirs = cni.SplitDirs(pluginSettings.PluginBinDirString)
-	cniPlugins := cni.ProbeNetworkPlugins(pluginSettings.PluginConfDir, pluginSettings.PluginBinDirs)
-	cniPlugins = append(cniPlugins, kubenet.NewPlugin(pluginSettings.PluginBinDirs))
+	cniPlugins := cni.ProbeNetworkPlugins(pluginSettings.PluginConfDir, pluginSettings.PluginCacheDir, pluginSettings.PluginBinDirs)
+	cniPlugins = append(cniPlugins, kubenet.NewPlugin(pluginSettings.PluginBinDirs, pluginSettings.PluginCacheDir))
 	netHost := &dockerNetworkHost{
 		&namespaceGetter{ds},
 		&portMappingGetter{ds},
@@ -305,6 +310,12 @@ type dockerService struct {
 	// startLocalStreamingServer indicates whether dockershim should start a
 	// streaming server on localhost.
 	startLocalStreamingServer bool
+
+	// containerCleanupInfos maps container IDs to the `containerCleanupInfo` structs
+	// needed to clean up after containers have been removed.
+	// (see `applyPlatformSpecificDockerConfig` and `performPlatformSpecificContainerCleanup`
+	// methods for more info).
+	containerCleanupInfos map[string]*containerCleanupInfo
 }
 
 // TODO: handle context.
@@ -323,7 +334,7 @@ func (ds *dockerService) Version(_ context.Context, r *runtimeapi.VersionRequest
 	}, nil
 }
 
-// dockerVersion gets the version information from docker.
+// getDockerVersion gets the version information from docker.
 func (ds *dockerService) getDockerVersion() (*dockertypes.Version, error) {
 	v, err := ds.client.Version()
 	if err != nil {
@@ -387,6 +398,7 @@ func (ds *dockerService) GetPodPortMappings(podSandboxID string) ([]*hostport.Po
 			HostPort:      *pm.HostPort,
 			ContainerPort: *pm.ContainerPort,
 			Protocol:      proto,
+			HostIP:        pm.HostIP,
 		})
 	}
 	return portMappings, nil
@@ -394,6 +406,8 @@ func (ds *dockerService) GetPodPortMappings(podSandboxID string) ([]*hostport.Po
 
 // Start initializes and starts components in dockerService.
 func (ds *dockerService) Start() error {
+	ds.initCleanup()
+
 	// Initialize the legacy cleanup flag.
 	if ds.startLocalStreamingServer {
 		go func() {
@@ -403,6 +417,16 @@ func (ds *dockerService) Start() error {
 		}()
 	}
 	return ds.containerManager.Start()
+}
+
+// initCleanup is responsible for cleaning up any crufts left by previous
+// runs. If there are any errors, it simply logs them.
+func (ds *dockerService) initCleanup() {
+	errors := ds.platformSpecificContainerInitCleanup()
+
+	for _, err := range errors {
+		klog.Warningf("initialization error: %v", err)
+	}
 }
 
 // Status returns the status of the runtime.
@@ -504,7 +528,7 @@ func (ds *dockerService) getDockerVersionFromCache() (*dockertypes.Version, erro
 	}
 	dv, ok := value.(*dockertypes.Version)
 	if !ok {
-		return nil, fmt.Errorf("Converted to *dockertype.Version error")
+		return nil, fmt.Errorf("converted to *dockertype.Version error")
 	}
 	return dv, nil
 }

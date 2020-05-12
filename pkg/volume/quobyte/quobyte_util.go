@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"k8s.io/api/core/v1"
-	"k8s.io/kubernetes/pkg/volume/util"
+	volumehelpers "k8s.io/cloud-provider/volume/helpers"
 
 	quobyteapi "github.com/quobyte/api"
 	"k8s.io/klog"
@@ -35,11 +35,11 @@ type quobyteVolumeManager struct {
 
 func (manager *quobyteVolumeManager) createVolume(provisioner *quobyteVolumeProvisioner, createQuota bool) (quobyte *v1.QuobyteVolumeSource, size int, err error) {
 	capacity := provisioner.options.PVC.Spec.Resources.Requests[v1.ResourceName(v1.ResourceStorage)]
-	volumeSize, err := util.RoundUpToGiBInt(capacity)
+	volumeSize, err := volumehelpers.RoundUpToGiBInt(capacity)
 	if err != nil {
 		return nil, 0, err
 	}
-	// Quobyte has the concept of Volumes which doen't have a specific size (they can grow unlimited)
+	// Quobyte has the concept of Volumes which doesn't have a specific size (they can grow unlimited)
 	// to simulate a size constraint we set here a Quota for logical space
 	volumeRequest := &quobyteapi.CreateVolumeRequest{
 		Name:              provisioner.volume,

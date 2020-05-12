@@ -18,13 +18,15 @@ package apiregistration
 
 import (
 	"sort"
-	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/version"
 )
 
+// SortedByGroupAndVersion sorts APIServices into their different groups, and then sorts them based on their versions.
+// For example, the first element of the first array contains the APIService with the highest version number, in the
+// group with the highest priority; while the last element of the last array contains the APIService with the lowest
+// version number, in the group with the lowest priority.
 func SortedByGroupAndVersion(servers []*APIService) [][]*APIService {
 	serversByGroupPriorityMinimum := ByGroupPriorityMinimum(servers)
 	sort.Sort(serversByGroupPriorityMinimum)
@@ -78,13 +80,6 @@ func (s ByVersionPriority) Less(i, j int) bool {
 		return s[i].Spec.VersionPriority > s[j].Spec.VersionPriority
 	}
 	return version.CompareKubeAwareVersionStrings(s[i].Spec.Version, s[j].Spec.Version) > 0
-}
-
-// APIServiceNameToGroupVersion returns the GroupVersion for a given apiServiceName.  The name
-// must be valid, but any object you get back from an informer will be valid.
-func APIServiceNameToGroupVersion(apiServiceName string) schema.GroupVersion {
-	tokens := strings.SplitN(apiServiceName, ".", 2)
-	return schema.GroupVersion{Group: tokens[1], Version: tokens[0]}
 }
 
 // NewLocalAvailableAPIServiceCondition returns a condition for an available local APIService.

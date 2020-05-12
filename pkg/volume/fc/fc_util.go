@@ -20,14 +20,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
-	"k8s.io/api/core/v1"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/features"
+	"k8s.io/utils/mount"
+
 	"k8s.io/kubernetes/pkg/volume"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
 )
@@ -130,20 +129,47 @@ func scsiHostRescan(io ioHandler) {
 	}
 }
 
-// make a directory like /var/lib/kubelet/plugins/kubernetes.io/fc/target-lun-0
+// make a directory like /var/lib/kubelet/plugins/kubernetes.io/fc/target1-target2-lun-0
 func makePDNameInternal(host volume.VolumeHost, wwns []string, lun string, wwids []string) string {
 	if len(wwns) != 0 {
-		return path.Join(host.GetPluginDir(fcPluginName), wwns[0]+"-lun-"+lun)
+		w := strings.Join(wwns, "-")
+		return filepath.Join(host.GetPluginDir(fcPluginName), w+"-lun-"+lun)
 	}
-	return path.Join(host.GetPluginDir(fcPluginName), wwids[0])
+	return filepath.Join(host.GetPluginDir(fcPluginName), strings.Join(wwids, "-"))
 }
 
 // make a directory like /var/lib/kubelet/plugins/kubernetes.io/fc/volumeDevices/target-lun-0
 func makeVDPDNameInternal(host volume.VolumeHost, wwns []string, lun string, wwids []string) string {
 	if len(wwns) != 0 {
-		return path.Join(host.GetVolumeDevicePluginDir(fcPluginName), wwns[0]+"-lun-"+lun)
+		w := strings.Join(wwns, "-")
+		return filepath.Join(host.GetVolumeDevicePluginDir(fcPluginName), w+"-lun-"+lun)
 	}
-	return path.Join(host.GetVolumeDevicePluginDir(fcPluginName), wwids[0])
+	return filepath.Join(host.GetVolumeDevicePluginDir(fcPluginName), strings.Join(wwids, "-"))
+}
+
+func parsePDName(path string) (wwns []string, lun int32, wwids []string, err error) {
+	// parse directory name created by makePDNameInternal or makeVDPDNameInternal
+	dirname := filepath.Base(path)
+	components := strings.Split(dirname, "-")
+	l := len(components)
+	if l == 1 {
+		// No '-', it must be single WWID
+		return nil, 0, components, nil
+	}
+	if components[l-2] == "lun" {
+		// it has -lun-, it's list of WWNs + lun number as the last component
+		if l == 2 {
+			return nil, 0, nil, fmt.Errorf("no wwn in: %s", dirname)
+		}
+		lun, err := strconv.Atoi(components[l-1])
+		if err != nil {
+			return nil, 0, nil, err
+		}
+
+		return components[:l-2], int32(lun), nil, nil
+	}
+	// no -lun-, it's just list of WWIDs
+	return nil, 0, components, nil
 }
 
 type fcUtil struct{}
@@ -214,37 +240,8 @@ func (util *fcUtil) AttachDisk(b fcDiskMounter) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// TODO: remove feature gate check after no longer needed
-	if utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) {
-		// If the volumeMode is 'Block', plugin don't have to format the volume.
-		// The globalPDPath will be created by operationexecutor. Just return devicePath here.
-		klog.V(5).Infof("fc: AttachDisk volumeMode: %s, devicePath: %s", b.volumeMode, devicePath)
-		if b.volumeMode == v1.PersistentVolumeBlock {
-			return devicePath, nil
-		}
-	}
 
-	// mount it
-	globalPDPath := util.MakeGlobalPDName(*b.fcDisk)
-	if err := os.MkdirAll(globalPDPath, 0750); err != nil {
-		return devicePath, fmt.Errorf("fc: failed to mkdir %s, error", globalPDPath)
-	}
-
-	noMnt, err := b.mounter.IsLikelyNotMountPoint(globalPDPath)
-	if err != nil {
-		return devicePath, fmt.Errorf("Heuristic determination of mount point failed:%v", err)
-	}
-	if !noMnt {
-		klog.Infof("fc: %s already mounted", globalPDPath)
-		return devicePath, nil
-	}
-
-	err = b.mounter.FormatAndMount(devicePath, globalPDPath, b.fsType, nil)
-	if err != nil {
-		return devicePath, fmt.Errorf("fc: failed to mount fc volume %s [%s] to %s, error %v", devicePath, b.fsType, globalPDPath, err)
-	}
-
-	return devicePath, err
+	return devicePath, nil
 }
 
 // DetachDisk removes scsi device file such as /dev/sdX from the node.
@@ -319,7 +316,7 @@ func (util *fcUtil) DetachBlockFCDisk(c fcDiskUnmapper, mapPath, devicePath stri
 	}
 	volumeInfo := arr[len(arr)-1]
 
-	// Search symbolick link which matches volumeInfo under /dev/disk/by-path or /dev/disk/by-id
+	// Search symbolic link which matches volumeInfo under /dev/disk/by-path or /dev/disk/by-id
 	// then find destination device path from the link
 	searchPath := byID
 	if strings.Contains(volumeInfo, "-lun-") {
@@ -331,7 +328,7 @@ func (util *fcUtil) DetachBlockFCDisk(c fcDiskUnmapper, mapPath, devicePath stri
 	}
 	for _, fi := range fis {
 		if strings.Contains(fi.Name(), volumeInfo) {
-			devicePath = path.Join(searchPath, fi.Name())
+			devicePath = filepath.Join(searchPath, fi.Name())
 			klog.V(5).Infof("fc: updated devicePath: %s", devicePath)
 			break
 		}
@@ -375,7 +372,7 @@ func (util *fcUtil) DetachBlockFCDisk(c fcDiskUnmapper, mapPath, devicePath stri
 }
 
 func checkPathExists(path string) (bool, error) {
-	if pathExists, pathErr := volumeutil.PathExists(path); pathErr != nil {
+	if pathExists, pathErr := mount.PathExists(path); pathErr != nil {
 		return pathExists, fmt.Errorf("Error checking if path exists: %v", pathErr)
 	} else if !pathExists {
 		klog.Warningf("Warning: Unmap skipped because path does not exist: %v", path)

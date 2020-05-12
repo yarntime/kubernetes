@@ -18,33 +18,36 @@ package etcd
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
 
+	"github.com/lithammer/dedent"
+
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	etcdutil "k8s.io/kubernetes/cmd/kubeadm/app/util/etcd"
+	staticpodutil "k8s.io/kubernetes/cmd/kubeadm/app/util/staticpod"
 	testutil "k8s.io/kubernetes/cmd/kubeadm/test"
 )
 
 func TestGetEtcdPodSpec(t *testing.T) {
-	// Creates a Master Configuration
-	cfg := &kubeadmapi.InitConfiguration{
-		ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-			KubernetesVersion: "v1.7.0",
-			Etcd: kubeadmapi.Etcd{
-				Local: &kubeadmapi.LocalEtcd{
-					DataDir: "/var/lib/etcd",
-				},
+	// Creates a ClusterConfiguration
+	cfg := &kubeadmapi.ClusterConfiguration{
+		KubernetesVersion: "v1.7.0",
+		Etcd: kubeadmapi.Etcd{
+			Local: &kubeadmapi.LocalEtcd{
+				DataDir: "/var/lib/etcd",
 			},
 		},
 	}
+	endpoint := &kubeadmapi.APIEndpoint{}
 
 	// Executes GetEtcdPodSpec
-	spec := GetEtcdPodSpec(cfg, []etcdutil.Member{})
+	spec := GetEtcdPodSpec(cfg, endpoint, "", []etcdutil.Member{})
 
 	// Assert each specs refers to the right pod
 	if spec.Spec.Containers[0].Name != kubeadmconstants.Etcd {
@@ -58,35 +61,31 @@ func TestCreateLocalEtcdStaticPodManifestFile(t *testing.T) {
 	defer os.RemoveAll(tmpdir)
 
 	var tests = []struct {
-		cfg           *kubeadmapi.InitConfiguration
+		cfg           *kubeadmapi.ClusterConfiguration
 		expectedError bool
 	}{
 		{
-			cfg: &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					KubernetesVersion: "v1.7.0",
-					Etcd: kubeadmapi.Etcd{
-						Local: &kubeadmapi.LocalEtcd{
-							DataDir: tmpdir + "/etcd",
-						},
+			cfg: &kubeadmapi.ClusterConfiguration{
+				KubernetesVersion: "v1.7.0",
+				Etcd: kubeadmapi.Etcd{
+					Local: &kubeadmapi.LocalEtcd{
+						DataDir: tmpdir + "/etcd",
 					},
 				},
 			},
 			expectedError: false,
 		},
 		{
-			cfg: &kubeadmapi.InitConfiguration{
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					KubernetesVersion: "v1.7.0",
-					Etcd: kubeadmapi.Etcd{
-						External: &kubeadmapi.ExternalEtcd{
-							Endpoints: []string{
-								"https://etcd-instance:2379",
-							},
-							CAFile:   "/etc/kubernetes/pki/etcd/ca.crt",
-							CertFile: "/etc/kubernetes/pki/etcd/apiserver-etcd-client.crt",
-							KeyFile:  "/etc/kubernetes/pki/etcd/apiserver-etcd-client.key",
+			cfg: &kubeadmapi.ClusterConfiguration{
+				KubernetesVersion: "v1.7.0",
+				Etcd: kubeadmapi.Etcd{
+					External: &kubeadmapi.ExternalEtcd{
+						Endpoints: []string{
+							"https://etcd-instance:2379",
 						},
+						CAFile:   "/etc/kubernetes/pki/etcd/ca.crt",
+						CertFile: "/etc/kubernetes/pki/etcd/apiserver-etcd-client.crt",
+						KeyFile:  "/etc/kubernetes/pki/etcd/apiserver-etcd-client.key",
 					},
 				},
 			},
@@ -97,7 +96,7 @@ func TestCreateLocalEtcdStaticPodManifestFile(t *testing.T) {
 	for _, test := range tests {
 		// Execute createStaticPodFunction
 		manifestPath := filepath.Join(tmpdir, kubeadmconstants.ManifestsSubDirName)
-		err := CreateLocalEtcdStaticPodManifestFile(manifestPath, test.cfg)
+		err := CreateLocalEtcdStaticPodManifestFile(manifestPath, "", "", test.cfg, &kubeadmapi.APIEndpoint{})
 
 		if !test.expectedError {
 			if err != nil {
@@ -109,6 +108,61 @@ func TestCreateLocalEtcdStaticPodManifestFile(t *testing.T) {
 		} else {
 			testutil.AssertError(t, err, "etcd static pod manifest cannot be generated for cluster using external etcd")
 		}
+	}
+}
+
+func TestCreateLocalEtcdStaticPodManifestFileKustomize(t *testing.T) {
+	// Create temp folder for the test case
+	tmpdir := testutil.SetupTempDir(t)
+	defer os.RemoveAll(tmpdir)
+
+	// Creates a Cluster Configuration
+	cfg := &kubeadmapi.ClusterConfiguration{
+		KubernetesVersion: "v1.7.0",
+		Etcd: kubeadmapi.Etcd{
+			Local: &kubeadmapi.LocalEtcd{
+				DataDir: tmpdir + "/etcd",
+			},
+		},
+	}
+
+	kustomizePath := filepath.Join(tmpdir, "kustomize")
+	err := os.MkdirAll(kustomizePath, 0777)
+	if err != nil {
+		t.Fatalf("Couldn't create %s", kustomizePath)
+	}
+
+	patchString := dedent.Dedent(`
+    apiVersion: v1
+    kind: Pod
+    metadata:
+        name: etcd
+        namespace: kube-system
+        annotations:
+            kustomize: patch for etcd
+    `)
+
+	err = ioutil.WriteFile(filepath.Join(kustomizePath, "patch.yaml"), []byte(patchString), 0644)
+	if err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
+
+	// Execute createStaticPodFunction with kustomizations
+	manifestPath := filepath.Join(tmpdir, kubeadmconstants.ManifestsSubDirName)
+	err = CreateLocalEtcdStaticPodManifestFile(manifestPath, kustomizePath, "", cfg, &kubeadmapi.APIEndpoint{})
+	if err != nil {
+		t.Errorf("Error executing createStaticPodFunction: %v", err)
+		return
+	}
+
+	pod, err := staticpodutil.ReadStaticPodFromDisk(filepath.Join(manifestPath, fmt.Sprintf("%s.yaml", kubeadmconstants.Etcd)))
+	if err != nil {
+		t.Errorf("Error executing ReadStaticPodFromDisk: %v", err)
+		return
+	}
+
+	if _, ok := pod.ObjectMeta.Annotations["kustomize"]; !ok {
+		t.Error("Kustomize did not apply patches corresponding to the resource")
 	}
 }
 
@@ -129,6 +183,7 @@ func TestGetEtcdCommand(t *testing.T) {
 				"etcd",
 				"--name=foo",
 				fmt.Sprintf("--listen-client-urls=https://127.0.0.1:%d,https://1.2.3.4:%d", kubeadmconstants.EtcdListenClientPort, kubeadmconstants.EtcdListenClientPort),
+				fmt.Sprintf("--listen-metrics-urls=http://127.0.0.1:%d", kubeadmconstants.EtcdMetricsPort),
 				fmt.Sprintf("--advertise-client-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenClientPort),
 				fmt.Sprintf("--listen-peer-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenPeerPort),
 				fmt.Sprintf("--initial-advertise-peer-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenPeerPort),
@@ -157,6 +212,7 @@ func TestGetEtcdCommand(t *testing.T) {
 				"etcd",
 				"--name=foo",
 				fmt.Sprintf("--listen-client-urls=https://127.0.0.1:%d,https://1.2.3.4:%d", kubeadmconstants.EtcdListenClientPort, kubeadmconstants.EtcdListenClientPort),
+				fmt.Sprintf("--listen-metrics-urls=http://127.0.0.1:%d", kubeadmconstants.EtcdMetricsPort),
 				fmt.Sprintf("--advertise-client-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenClientPort),
 				fmt.Sprintf("--listen-peer-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenPeerPort),
 				fmt.Sprintf("--initial-advertise-peer-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenPeerPort),
@@ -186,6 +242,7 @@ func TestGetEtcdCommand(t *testing.T) {
 				"etcd",
 				"--name=bar",
 				"--listen-client-urls=https://10.0.1.10:2379",
+				fmt.Sprintf("--listen-metrics-urls=http://127.0.0.1:%d", kubeadmconstants.EtcdMetricsPort),
 				"--advertise-client-urls=https://10.0.1.10:2379",
 				fmt.Sprintf("--listen-peer-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenPeerPort),
 				fmt.Sprintf("--initial-advertise-peer-urls=https://1.2.3.4:%d", kubeadmconstants.EtcdListenPeerPort),
@@ -209,7 +266,8 @@ func TestGetEtcdCommand(t *testing.T) {
 			expected: []string{
 				"etcd",
 				"--name=foo",
-				fmt.Sprintf("--listen-client-urls=https://127.0.0.1:%d,https://[2001:db8::3]:%d", kubeadmconstants.EtcdListenClientPort, kubeadmconstants.EtcdListenClientPort),
+				fmt.Sprintf("--listen-client-urls=https://[::1]:%d,https://[2001:db8::3]:%d", kubeadmconstants.EtcdListenClientPort, kubeadmconstants.EtcdListenClientPort),
+				fmt.Sprintf("--listen-metrics-urls=http://[::1]:%d", kubeadmconstants.EtcdMetricsPort),
 				fmt.Sprintf("--advertise-client-urls=https://[2001:db8::3]:%d", kubeadmconstants.EtcdListenClientPort),
 				fmt.Sprintf("--listen-peer-urls=https://[2001:db8::3]:%d", kubeadmconstants.EtcdListenPeerPort),
 				fmt.Sprintf("--initial-advertise-peer-urls=https://[2001:db8::3]:%d", kubeadmconstants.EtcdListenPeerPort),
@@ -230,23 +288,18 @@ func TestGetEtcdCommand(t *testing.T) {
 
 	for _, rt := range tests {
 		t.Run(rt.name, func(t *testing.T) {
-			cfg := &kubeadmapi.InitConfiguration{
-				LocalAPIEndpoint: kubeadmapi.APIEndpoint{
-					AdvertiseAddress: rt.advertiseAddress,
-				},
-				NodeRegistration: kubeadmapi.NodeRegistrationOptions{
-					Name: rt.nodeName,
-				},
-				ClusterConfiguration: kubeadmapi.ClusterConfiguration{
-					Etcd: kubeadmapi.Etcd{
-						Local: &kubeadmapi.LocalEtcd{
-							DataDir:   "/var/lib/etcd",
-							ExtraArgs: rt.extraArgs,
-						},
+			endpoint := &kubeadmapi.APIEndpoint{
+				AdvertiseAddress: rt.advertiseAddress,
+			}
+			cfg := &kubeadmapi.ClusterConfiguration{
+				Etcd: kubeadmapi.Etcd{
+					Local: &kubeadmapi.LocalEtcd{
+						DataDir:   "/var/lib/etcd",
+						ExtraArgs: rt.extraArgs,
 					},
 				},
 			}
-			actual := getEtcdCommand(cfg, rt.initialCluster)
+			actual := getEtcdCommand(cfg, endpoint, rt.nodeName, rt.initialCluster)
 			sort.Strings(actual)
 			sort.Strings(rt.expected)
 			if !reflect.DeepEqual(actual, rt.expected) {

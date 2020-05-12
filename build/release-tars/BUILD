@@ -1,7 +1,44 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@io_kubernetes_build//defs:build.bzl", "release_filegroup")
-load("@io_kubernetes_build//defs:pkg.bzl", "pkg_tar")
+load(
+    "//build:platforms.bzl",
+    "CLIENT_PLATFORMS",
+    "NODE_PLATFORMS",
+    "SERVER_PLATFORMS",
+    "TEST_PLATFORMS",
+    "for_platforms",
+    "go_platform_constraint",
+)
+load("@io_k8s_repo_infra//defs:build.bzl", "release_filegroup")
+load("@io_k8s_repo_infra//defs:pkg.bzl", "pkg_tar")
+load("//staging:repos_generated.bzl", "staging_repos")
+
+# Bazel doesn't make the output filename
+# (such as kubernetes-server-{OS}-{ARCH}.tar.gz) configurable, so we instead
+# create rules for all platforms and tag them manual.
+# We then select the correct set of platform-specific tarballs in this filegroup
+# using a select() statement.
+# Thus the release-tars target always selects the correct set of tarballs
+# for the configured platform being built.
+release_filegroup(
+    name = "release-tars",
+    conditioned_srcs = for_platforms(
+        for_all = [
+            ":kubernetes.tar.gz",
+            ":kubernetes-src.tar.gz",
+        ],
+        for_client = [":kubernetes-client-{OS}-{ARCH}.tar.gz"],
+        for_node = [":kubernetes-node-{OS}-{ARCH}.tar.gz"],
+        for_server = [
+            ":kubernetes-server-{OS}-{ARCH}.tar.gz",
+            ":kubernetes-manifests.tar.gz",
+        ],
+        for_test = [
+            ":kubernetes-test-portable.tar.gz",
+            ":kubernetes-test-{OS}-{ARCH}.tar.gz",
+        ],
+    ),
+)
 
 filegroup(
     name = "package-srcs",
@@ -16,52 +53,37 @@ filegroup(
     tags = ["automanaged"],
 )
 
-config_setting(
-    name = "package_src",
-    values = {
-        "define": "PACKAGE_SRC=true",
-    },
-    visibility = ["//visibility:private"],
-)
-
-genrule(
-    name = "kubernetes-src-readme",
-    outs = ["README-src.txt"],
-    cmd = """
-echo For build efficiency, the src was not included in this release.>$@
-echo The full source code can be viewed at >>$@
-echo -n https://github.com/kubernetes/kubernetes/tree/ >>$@
-grep ^STABLE_BUILD_GIT_COMMIT bazel-out/stable-status.txt | cut -d' ' -f2 >>$@
-""",
-    stamp = 1,
-)
-
 pkg_tar(
     name = "kubernetes-src",
-    srcs = select({
-        ":package_src": ["//:all-srcs"],
-        "//conditions:default": ["README-src.txt"],
-    }),
+    srcs = ["//:all-srcs"],
     extension = "tar.gz",
     package_dir = "kubernetes",
-    strip_prefix = select({
-        ":package_src": "//",
-        "//conditions:default": ".",
-    }),
-    tags = ["no-cache"],
+    strip_prefix = "//",
+    symlinks = {
+        "kubernetes/vendor/%s" % repo: "../../staging/src/%s" % repo
+        for repo in staging_repos
+    },
+    tags = [
+        "manual",
+        "no-cache",
+    ],
 )
 
-# FIXME: this should be configurable/auto-detected
-PLATFORM_ARCH_STRING = "linux-amd64"
-
 # Included in node and server tarballs.
-filegroup(
-    name = "license-targets",
+pkg_tar(
+    name = "license-artifacts",
     srcs = [
-        ":kubernetes-src.tar.gz",
-        "//:Godeps/LICENSES",
+        ":kubernetes-src.tar.gz",  # we want the tar file itself
+    ],
+    mode = "0755",
+    tags = [
+        "manual",
+        "no-cache",
     ],
     visibility = ["//visibility:private"],
+    deps = [
+        "//:LICENSES",  # we want to expand this
+    ],
 )
 
 pkg_tar(
@@ -69,19 +91,23 @@ pkg_tar(
     srcs = ["//build:client-targets"],
     mode = "0755",
     package_dir = "client/bin",
-    tags = ["no-cache"],
+    tags = [
+        "manual",
+        "no-cache",
+    ],
     visibility = ["//visibility:private"],
 )
 
-pkg_tar(
-    name = "kubernetes-client-%s" % PLATFORM_ARCH_STRING,
+[[pkg_tar(
+    name = "kubernetes-client-%s-%s" % (os, arch),
     extension = "tar.gz",
     package_dir = "kubernetes",
-    tags = ["no-cache"],
-    deps = [
-        ":_client-bin",
+    tags = [
+        "manual",
+        "no-cache",
     ],
-)
+    deps = select({go_platform_constraint(os, arch): [":_client-bin"]}),
+) for arch in archs] for os, archs in CLIENT_PLATFORMS.items()]
 
 pkg_tar(
     name = "_node-bin",
@@ -91,21 +117,27 @@ pkg_tar(
     ],
     mode = "0755",
     package_dir = "node/bin",
-    tags = ["no-cache"],
+    tags = [
+        "manual",
+        "no-cache",
+    ],
     visibility = ["//visibility:private"],
 )
 
-pkg_tar(
-    name = "kubernetes-node-%s" % PLATFORM_ARCH_STRING,
-    srcs = [":license-targets"],
+[[pkg_tar(
+    name = "kubernetes-node-%s-%s" % (os, arch),
+    srcs = [],
     extension = "tar.gz",
     mode = "0644",
     package_dir = "kubernetes",
-    tags = ["no-cache"],
-    deps = [
-        ":_node-bin",
+    tags = [
+        "manual",
+        "no-cache",
     ],
-)
+    deps = select({go_platform_constraint(os, arch): [":_node-bin"]}) + [
+        ":license-artifacts",
+    ],
+) for arch in archs] for os, archs in NODE_PLATFORMS.items()]
 
 pkg_tar(
     name = "_server-bin",
@@ -117,7 +149,10 @@ pkg_tar(
     ],
     mode = "0755",
     package_dir = "server/bin",
-    tags = ["no-cache"],
+    tags = [
+        "manual",
+        "no-cache",
+    ],
     visibility = ["//visibility:private"],
 )
 
@@ -135,45 +170,65 @@ pkg_tar(
         ":.dummy",
     ],
     package_dir = "addons",
-    tags = ["no-cache"],
+    tags = [
+        "manual",
+        "no-cache",
+    ],
     visibility = ["//visibility:private"],
 )
 
-pkg_tar(
-    name = "kubernetes-server-%s" % PLATFORM_ARCH_STRING,
-    srcs = [":license-targets"],
+[[pkg_tar(
+    name = "kubernetes-server-%s-%s" % (os, arch),
+    srcs = [],
     extension = "tar.gz",
     mode = "0644",
     package_dir = "kubernetes",
-    tags = ["no-cache"],
-    deps = [
-        ":_server-addons",
-        ":_server-bin",
+    tags = [
+        "manual",
+        "no-cache",
     ],
+    deps = select({
+        go_platform_constraint(os, arch): [
+            ":_server-addons",
+            ":_server-bin",
+        ],
+    }) + [
+        ":license-artifacts",
+    ],
+) for arch in archs] for os, archs in SERVER_PLATFORMS.items()]
+
+pkg_tar(
+    name = "kubernetes-test-portable",
+    srcs = ["//build:test-portable-targets"],
+    extension = "tar.gz",
+    package_dir = "kubernetes",
+    strip_prefix = "//",
+    tags = ["no-cache"],
 )
 
 pkg_tar(
     name = "_test-bin",
     srcs = ["//build:test-targets"],
     mode = "0755",
-    package_dir = "platforms/" + PLATFORM_ARCH_STRING.replace("-", "/"),
-    tags = ["no-cache"],
-    # TODO: how to make this multiplatform?
+    package_dir = "test/bin",
+    tags = [
+        "manual",
+        "no-cache",
+    ],
     visibility = ["//visibility:private"],
 )
 
-pkg_tar(
-    name = "kubernetes-test",
-    srcs = ["//build:test-portable-targets"],
+[[pkg_tar(
+    name = "kubernetes-test-%s-%s" % (os, arch),
     extension = "tar.gz",
     package_dir = "kubernetes",
     strip_prefix = "//",
-    tags = ["no-cache"],
-    deps = [
-        # TODO: how to make this multiplatform?
-        ":_test-bin",
+    tags = [
+        "manual",
+        "no-cache",
     ],
-)
+    deps = select({go_platform_constraint(os, arch): [":_test-bin"]}),
+) for arch in archs] for os, archs in TEST_PLATFORMS.items()]
 
 pkg_tar(
     name = "_full_server",
@@ -181,14 +236,16 @@ pkg_tar(
         ":kubernetes-manifests.tar.gz",
     ],
     package_dir = "server",
-    tags = ["no-cache"],
+    tags = [
+        "manual",
+        "no-cache",
+    ],
     visibility = ["//visibility:private"],
 )
 
 pkg_tar(
     name = "kubernetes",
     srcs = [
-        "//:Godeps/LICENSES",
         "//:README.md",
         "//:version",
         "//cluster:all-srcs",
@@ -198,9 +255,15 @@ pkg_tar(
     extension = "tar.gz",
     package_dir = "kubernetes",
     strip_prefix = "//",
+    symlinks = {
+        "kubernetes/cluster/gce/cos/": "gci",
+        "kubernetes/cluster/gce/custom/": "gci",
+        "kubernetes/cluster/gce/ubuntu/": "gci",
+    },
     tags = ["no-cache"],
     deps = [
         ":_full_server",
+        ":license-artifacts",
     ],
 )
 
@@ -210,18 +273,5 @@ pkg_tar(
     tags = ["no-cache"],
     deps = [
         "//cluster:manifests",
-    ],
-)
-
-release_filegroup(
-    name = "release-tars",
-    srcs = [
-        ":kubernetes.tar.gz",
-        ":kubernetes-client-%s.tar.gz" % PLATFORM_ARCH_STRING,
-        ":kubernetes-node-%s.tar.gz" % PLATFORM_ARCH_STRING,
-        ":kubernetes-server-%s.tar.gz" % PLATFORM_ARCH_STRING,
-        ":kubernetes-manifests.tar.gz",
-        ":kubernetes-src.tar.gz",
-        ":kubernetes-test.tar.gz",
     ],
 )

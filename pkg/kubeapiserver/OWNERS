@@ -1,3 +1,5 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
 approvers:
 - deads2k
 - lavalamp
@@ -9,6 +11,7 @@ reviewers:
 - liggitt
 - sttts
 - cheftako
+- logicalhan
 labels:
 - sig/api-machinery
 - area/apiserver

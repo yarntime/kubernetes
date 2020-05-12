@@ -26,7 +26,7 @@ import (
 
 	apps "k8s.io/api/apps/v1"
 	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	"k8s.io/kubernetes/cmd/kubeadm/app/util"
+	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 )
 
 const (
@@ -34,8 +34,6 @@ const (
 apiVersion: v1
 kind: Pod
 metadata:
-  annotations:
-    scheduler.alpha.kubernetes.io/critical-pod: ""
   creationTimestamp: null
   name: kube-apiserver
   namespace: kube-system
@@ -59,7 +57,7 @@ spec:
     - --requestheader-username-headers=X-Remote-User
     - --requestheader-extra-headers-prefix=X-Remote-Extra-
     - --requestheader-allowed-names=front-proxy-client
-    - --admission-control=Initializers,NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,NodeRestriction,ResourceQuota
+    - --admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,NodeRestriction,ResourceQuota
     - --allow-privileged=true
     - --client-ca-file=/etc/kubernetes/pki/ca.crt
     - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
@@ -91,6 +89,7 @@ spec:
       name: ca-certs-etc-pki
       readOnly: true
   hostNetwork: true
+  priorityClassName: system-cluster-critical
   volumes:
   - hostPath:
       path: /etc/kubernetes/pki
@@ -141,7 +140,7 @@ spec:
         - --requestheader-username-headers=X-Remote-User
         - --requestheader-extra-headers-prefix=X-Remote-Extra-
         - --requestheader-allowed-names=front-proxy-client
-        - --admission-control=Initializers,NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,NodeRestriction,ResourceQuota
+        - --admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,NodeRestriction,ResourceQuota
         - --allow-privileged=true
         - --client-ca-file=/etc/kubernetes/pki/ca.crt
         - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
@@ -181,6 +180,7 @@ spec:
       hostNetwork: true
       nodeSelector:
         node-role.kubernetes.io/master: ""
+      priorityClassName: system-cluster-critical
       tolerations:
       - effect: NoSchedule
         key: node-role.kubernetes.io/master
@@ -207,8 +207,6 @@ status:
 apiVersion: v1
 kind: Pod
 metadata:
-  annotations:
-    scheduler.alpha.kubernetes.io/critical-pod: ""
   creationTimestamp: null
   name: kube-controller-manager
   namespace: kube-system
@@ -232,8 +230,8 @@ spec:
       httpGet:
         host: 127.0.0.1
         path: /healthz
-        port: 10252
-        scheme: HTTP
+        port: 10257
+        scheme: HTTPS
       initialDelaySeconds: 15
       timeoutSeconds: 15
     name: kube-controller-manager
@@ -254,6 +252,7 @@ spec:
       name: ca-certs-etc-pki
       readOnly: true
   hostNetwork: true
+  priorityClassName: system-cluster-critical
   volumes:
   - hostPath:
       path: /etc/kubernetes/pki
@@ -308,8 +307,8 @@ spec:
           httpGet:
             host: 127.0.0.1
             path: /healthz
-            port: 10252
-            scheme: HTTP
+            port: 10257
+            scheme: HTTPS
           initialDelaySeconds: 15
           timeoutSeconds: 15
         name: kube-controller-manager
@@ -333,6 +332,7 @@ spec:
       hostNetwork: true
       nodeSelector:
         node-role.kubernetes.io/master: ""
+      priorityClassName: system-cluster-critical
       tolerations:
       - effect: NoSchedule
         key: node-role.kubernetes.io/master
@@ -363,8 +363,6 @@ status:
 apiVersion: v1
 kind: Pod
 metadata:
-  annotations:
-    scheduler.alpha.kubernetes.io/critical-pod: ""
   creationTimestamp: null
   name: kube-scheduler
   namespace: kube-system
@@ -381,8 +379,8 @@ spec:
       httpGet:
         host: 127.0.0.1
         path: /healthz
-        port: 10251
-        scheme: HTTP
+        port: 10259
+        scheme: HTTPS
       initialDelaySeconds: 15
       timeoutSeconds: 15
     name: kube-scheduler
@@ -394,6 +392,7 @@ spec:
       name: kubeconfig
       readOnly: true
   hostNetwork: true
+  priorityClassName: system-cluster-critical
   volumes:
   - hostPath:
       path: /etc/kubernetes/scheduler.conf
@@ -432,8 +431,8 @@ spec:
           httpGet:
             host: 127.0.0.1
             path: /healthz
-            port: 10251
-            scheme: HTTP
+            port: 10259
+            scheme: HTTPS
           initialDelaySeconds: 15
           timeoutSeconds: 15
         name: kube-scheduler
@@ -448,6 +447,7 @@ spec:
       hostNetwork: true
       nodeSelector:
         node-role.kubernetes.io/master: ""
+      priorityClassName: system-cluster-critical
       tolerations:
       - effect: NoSchedule
         key: node-role.kubernetes.io/master
@@ -503,7 +503,7 @@ func TestBuildDaemonSet(t *testing.T) {
 			}
 
 			ds := BuildDaemonSet(rt.component, podSpec, GetDefaultMutators())
-			dsBytes, err := util.MarshalToYaml(ds, apps.SchemeGroupVersion)
+			dsBytes, err := kubeadmutil.MarshalToYaml(ds, apps.SchemeGroupVersion)
 			if err != nil {
 				t.Fatalf("failed to marshal daemonset to YAML: %v", err)
 			}

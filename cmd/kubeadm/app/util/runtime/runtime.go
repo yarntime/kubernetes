@@ -24,7 +24,7 @@ import (
 	"github.com/pkg/errors"
 
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
-	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
+	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	utilsexec "k8s.io/utils/exec"
 )
 
@@ -54,7 +54,7 @@ func NewContainerRuntime(execer utilsexec.Interface, criSocket string) (Containe
 	var toolName string
 	var runtime ContainerRuntime
 
-	if criSocket != kubeadmapiv1beta1.DefaultCRISocket {
+	if criSocket != constants.DefaultDockerCRISocket {
 		toolName = "crictl"
 		// !!! temporary work around crictl warning:
 		// Using "/var/run/crio/crio.sock" as endpoint is deprecated,
@@ -108,9 +108,7 @@ func (runtime *CRIRuntime) ListKubeContainers() ([]string, error) {
 		return nil, errors.Wrapf(err, "output: %s, error", string(out))
 	}
 	pods := []string{}
-	for _, pod := range strings.Fields(string(out)) {
-		pods = append(pods, pod)
-	}
+	pods = append(pods, strings.Fields(string(out))...)
 	return pods, nil
 }
 
@@ -153,20 +151,28 @@ func (runtime *DockerRuntime) RemoveContainers(containers []string) error {
 
 // PullImage pulls the image
 func (runtime *CRIRuntime) PullImage(image string) error {
-	out, err := runtime.exec.Command("crictl", "-r", runtime.criSocket, "pull", image).CombinedOutput()
-	if err != nil {
-		return errors.Wrapf(err, "output: %s, error", string(out))
+	var err error
+	var out []byte
+	for i := 0; i < constants.PullImageRetry; i++ {
+		out, err = runtime.exec.Command("crictl", "-r", runtime.criSocket, "pull", image).CombinedOutput()
+		if err == nil {
+			return nil
+		}
 	}
-	return nil
+	return errors.Wrapf(err, "output: %s, error", out)
 }
 
 // PullImage pulls the image
 func (runtime *DockerRuntime) PullImage(image string) error {
-	out, err := runtime.exec.Command("docker", "pull", image).CombinedOutput()
-	if err != nil {
-		return errors.Wrapf(err, "output: %s, error", string(out))
+	var err error
+	var out []byte
+	for i := 0; i < constants.PullImageRetry; i++ {
+		out, err = runtime.exec.Command("docker", "pull", image).CombinedOutput()
+		if err == nil {
+			return nil
+		}
 	}
-	return nil
+	return errors.Wrapf(err, "output: %s, error", out)
 }
 
 // ImageExists checks to see if the image exists on the system
@@ -179,4 +185,45 @@ func (runtime *CRIRuntime) ImageExists(image string) (bool, error) {
 func (runtime *DockerRuntime) ImageExists(image string) (bool, error) {
 	err := runtime.exec.Command("docker", "inspect", image).Run()
 	return err == nil, nil
+}
+
+// detectCRISocketImpl is separated out only for test purposes, DON'T call it directly, use DetectCRISocket instead
+func detectCRISocketImpl(isSocket func(string) bool) (string, error) {
+	foundCRISockets := []string{}
+	knownCRISockets := []string{
+		// Docker and containerd sockets are special cased below, hence not to be included here
+		"/var/run/crio/crio.sock",
+	}
+
+	if isSocket(dockerSocket) {
+		// the path in dockerSocket is not CRI compatible, hence we should replace it with a CRI compatible socket
+		foundCRISockets = append(foundCRISockets, constants.DefaultDockerCRISocket)
+	} else if isSocket(containerdSocket) {
+		// Docker 18.09 gets bundled together with containerd, thus having both dockerSocket and containerdSocket present.
+		// For compatibility reasons, we use the containerd socket only if Docker is not detected.
+		foundCRISockets = append(foundCRISockets, containerdSocket)
+	}
+
+	for _, socket := range knownCRISockets {
+		if isSocket(socket) {
+			foundCRISockets = append(foundCRISockets, socket)
+		}
+	}
+
+	switch len(foundCRISockets) {
+	case 0:
+		// Fall back to Docker if no CRI is detected, we can error out later on if we need it
+		return constants.DefaultDockerCRISocket, nil
+	case 1:
+		// Precisely one CRI found, use that
+		return foundCRISockets[0], nil
+	default:
+		// Multiple CRIs installed?
+		return "", errors.Errorf("Found multiple CRI sockets, please use --cri-socket to select one: %s", strings.Join(foundCRISockets, ", "))
+	}
+}
+
+// DetectCRISocket uses a list of known CRI sockets to detect one. If more than one or none is discovered, an error is returned.
+func DetectCRISocket() (string, error) {
+	return detectCRISocketImpl(isExistingSocket)
 }

@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 )
@@ -40,18 +40,18 @@ func GetDefaultMutators() map[string][]PodSpecMutatorFunc {
 	return map[string][]PodSpecMutatorFunc{
 		kubeadmconstants.KubeAPIServer: {
 			addNodeSelectorToPodSpec,
-			setMasterTolerationOnPodSpec,
+			setControlPlaneTolerationOnPodSpec,
 			setRightDNSPolicyOnPodSpec,
 			setHostIPOnPodSpec,
 		},
 		kubeadmconstants.KubeControllerManager: {
 			addNodeSelectorToPodSpec,
-			setMasterTolerationOnPodSpec,
+			setControlPlaneTolerationOnPodSpec,
 			setRightDNSPolicyOnPodSpec,
 		},
 		kubeadmconstants.KubeScheduler: {
 			addNodeSelectorToPodSpec,
-			setMasterTolerationOnPodSpec,
+			setControlPlaneTolerationOnPodSpec,
 			setRightDNSPolicyOnPodSpec,
 		},
 	}
@@ -82,7 +82,7 @@ func mutatePodSpec(mutators map[string][]PodSpecMutatorFunc, name string, podSpe
 	}
 }
 
-// addNodeSelectorToPodSpec makes Pod require to be scheduled on a node marked with the master label
+// addNodeSelectorToPodSpec makes Pod require to be scheduled on a node marked with the control-plane label
 func addNodeSelectorToPodSpec(podSpec *v1.PodSpec) {
 	if podSpec.NodeSelector == nil {
 		podSpec.NodeSelector = map[string]string{kubeadmconstants.LabelNodeRoleMaster: ""}
@@ -92,14 +92,14 @@ func addNodeSelectorToPodSpec(podSpec *v1.PodSpec) {
 	podSpec.NodeSelector[kubeadmconstants.LabelNodeRoleMaster] = ""
 }
 
-// setMasterTolerationOnPodSpec makes the Pod tolerate the master taint
-func setMasterTolerationOnPodSpec(podSpec *v1.PodSpec) {
+// setControlPlaneTolerationOnPodSpec makes the Pod tolerate the control-plane taint
+func setControlPlaneTolerationOnPodSpec(podSpec *v1.PodSpec) {
 	if podSpec.Tolerations == nil {
-		podSpec.Tolerations = []v1.Toleration{kubeadmconstants.MasterToleration}
+		podSpec.Tolerations = []v1.Toleration{kubeadmconstants.ControlPlaneToleration}
 		return
 	}
 
-	podSpec.Tolerations = append(podSpec.Tolerations, kubeadmconstants.MasterToleration)
+	podSpec.Tolerations = append(podSpec.Tolerations, kubeadmconstants.ControlPlaneToleration)
 }
 
 // setHostIPOnPodSpec sets the environment variable HOST_IP using downward API
@@ -191,7 +191,14 @@ func setSelfHostedVolumesForScheduler(podSpec *v1.PodSpec) {
 	// This is not a problem with hostPath mounts as hostPath supports mounting one file only, instead of always a full directory. Secrets and Projected Volumes
 	// don't support that.
 	podSpec.Containers[0].Command = kubeadmutil.ReplaceArgument(podSpec.Containers[0].Command, func(argMap map[string]string) map[string]string {
-		argMap["kubeconfig"] = filepath.Join(selfHostedKubeConfigDir, kubeadmconstants.SchedulerKubeConfigFileName)
+		schedulerKubeConfigPath := filepath.Join(selfHostedKubeConfigDir, kubeadmconstants.SchedulerKubeConfigFileName)
+		argMap["kubeconfig"] = schedulerKubeConfigPath
+		if _, ok := argMap["authentication-kubeconfig"]; ok {
+			argMap["authentication-kubeconfig"] = schedulerKubeConfigPath
+		}
+		if _, ok := argMap["authorization-kubeconfig"]; ok {
+			argMap["authorization-kubeconfig"] = schedulerKubeConfigPath
+		}
 		return argMap
 	})
 }
