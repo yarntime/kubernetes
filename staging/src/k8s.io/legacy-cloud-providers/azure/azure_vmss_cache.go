@@ -28,7 +28,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/to"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	azcache "k8s.io/legacy-cloud-providers/azure/cache"
 )
 
@@ -182,7 +182,7 @@ func (ss *scaleSet) newVMSSVirtualMachinesCache() (*azcache.TimedCache, error) {
 			for name, vmEntry := range oldCache {
 				// if the nil cache entry has existed for 15 minutes in the cache
 				// then it should not be added back to the cache
-				if vmEntry.virtualMachine == nil || time.Since(vmEntry.lastUpdate) > 15*time.Minute {
+				if vmEntry.virtualMachine == nil && time.Since(vmEntry.lastUpdate) > 15*time.Minute {
 					klog.V(5).Infof("ignoring expired entries from old cache for %s", name)
 					continue
 				}

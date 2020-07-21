@@ -131,7 +131,7 @@ var _ = SIGDescribe("DisruptionController", func() {
 		framework.ExpectHaveKey(updated.Status.DisruptedPods, pod.Name, "Expecting the DisruptedPods have %s", pod.Name)
 
 		ginkgo.By("Patching PodDisruptionBudget status")
-		patched, _ := patchPDBOrDie(cs, dc, ns, defaultName, func(old *policyv1beta1.PodDisruptionBudget) (bytes []byte, err error) {
+		patched := patchPDBOrDie(cs, dc, ns, defaultName, func(old *policyv1beta1.PodDisruptionBudget) (bytes []byte, err error) {
 			oldBytes, err := json.Marshal(old)
 			framework.ExpectNoError(err, "failed to marshal JSON for old data")
 			old.Status.DisruptedPods = make(map[string]metav1.Time)
@@ -276,10 +276,10 @@ var _ = SIGDescribe("DisruptionController", func() {
 		createReplicaSetOrDie(cs, ns, 3, false)
 
 		ginkgo.By("First trying to evict a pod which shouldn't be evictable")
+		waitForPodsOrDie(cs, ns, 3) // make sure that they are running and so would be evictable with a different pdb
+
 		pod, err := locateRunningPod(cs, ns)
 		framework.ExpectNoError(err)
-
-		waitForPodsOrDie(cs, ns, 3) // make sure that they are running and so would be evictable with a different pdb
 		e := &policyv1beta1.Eviction{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      pod.Name,
@@ -314,9 +314,9 @@ var _ = SIGDescribe("DisruptionController", func() {
 			return jsonpatch.CreateMergePatch(oldData, newData)
 		})
 
+		waitForPodsOrDie(cs, ns, 3)
 		pod, err = locateRunningPod(cs, ns) // locate a new running pod
 		framework.ExpectNoError(err)
-		waitForPodsOrDie(cs, ns, 3)
 		e = &policyv1beta1.Eviction{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      pod.Name,
@@ -374,8 +374,8 @@ type updateFunc func(pdb *policyv1beta1.PodDisruptionBudget) *policyv1beta1.PodD
 type updateRestAPI func(ctx context.Context, podDisruptionBudget *policyv1beta1.PodDisruptionBudget, opts metav1.UpdateOptions) (*policyv1beta1.PodDisruptionBudget, error)
 type patchFunc func(pdb *policyv1beta1.PodDisruptionBudget) ([]byte, error)
 
-func updatePDBOrDie(cs kubernetes.Interface, ns string, name string, f updateFunc, api updateRestAPI) (updated *policyv1beta1.PodDisruptionBudget, err error) {
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+func updatePDBOrDie(cs kubernetes.Interface, ns string, name string, f updateFunc, api updateRestAPI) (updated *policyv1beta1.PodDisruptionBudget) {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		old, err := cs.PolicyV1beta1().PodDisruptionBudgets(ns).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -389,22 +389,24 @@ func updatePDBOrDie(cs kubernetes.Interface, ns string, name string, f updateFun
 
 	framework.ExpectNoError(err, "Waiting for the PDB update to be processed in namespace %s", ns)
 	waitForPdbToBeProcessed(cs, ns, name)
-	return updated, err
+	return updated
 }
 
-func patchPDBOrDie(cs kubernetes.Interface, dc dynamic.Interface, ns string, name string, f patchFunc, subresources ...string) (updated *policyv1beta1.PodDisruptionBudget, err error) {
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+func patchPDBOrDie(cs kubernetes.Interface, dc dynamic.Interface, ns string, name string, f patchFunc, subresources ...string) (updated *policyv1beta1.PodDisruptionBudget) {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		old := getPDBStatusOrDie(dc, ns, name)
 		patchBytes, err := f(old)
+		framework.ExpectNoError(err)
 		if updated, err = cs.PolicyV1beta1().PodDisruptionBudgets(ns).Patch(context.TODO(), old.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{}, subresources...); err != nil {
 			return err
 		}
+		framework.ExpectNoError(err)
 		return nil
 	})
 
 	framework.ExpectNoError(err, "Waiting for the pdb update to be processed in namespace %s", ns)
 	waitForPdbToBeProcessed(cs, ns, name)
-	return updated, err
+	return updated
 }
 
 func deletePDBOrDie(cs kubernetes.Interface, ns string, name string) {
@@ -459,8 +461,8 @@ func createPodsOrDie(cs kubernetes.Interface, ns string, n int) {
 			Spec: v1.PodSpec{
 				Containers: []v1.Container{
 					{
-						Name:  "busybox",
-						Image: imageutils.GetE2EImage(imageutils.EchoServer),
+						Name:  "donothing",
+						Image: imageutils.GetPauseImageName(),
 					},
 				},
 				RestartPolicy: v1.RestartPolicyAlways,
@@ -489,7 +491,7 @@ func waitForPodsOrDie(cs kubernetes.Interface, ns string, n int) {
 		ready := 0
 		for i := range pods.Items {
 			pod := pods.Items[i]
-			if podutil.IsPodReady(&pod) {
+			if podutil.IsPodReady(&pod) && pod.ObjectMeta.DeletionTimestamp.IsZero() {
 				ready++
 			}
 		}
@@ -504,8 +506,8 @@ func waitForPodsOrDie(cs kubernetes.Interface, ns string, n int) {
 
 func createReplicaSetOrDie(cs kubernetes.Interface, ns string, size int32, exclusive bool) {
 	container := v1.Container{
-		Name:  "busybox",
-		Image: imageutils.GetE2EImage(imageutils.EchoServer),
+		Name:  "donothing",
+		Image: imageutils.GetPauseImageName(),
 	}
 	if exclusive {
 		container.Ports = []v1.ContainerPort{
@@ -548,7 +550,7 @@ func locateRunningPod(cs kubernetes.Interface, ns string) (pod *v1.Pod, err erro
 
 		for i := range podList.Items {
 			p := podList.Items[i]
-			if podutil.IsPodReady(&p) {
+			if podutil.IsPodReady(&p) && p.ObjectMeta.DeletionTimestamp.IsZero() {
 				pod = &p
 				return true, nil
 			}
@@ -607,6 +609,7 @@ func waitForPdbToObserveHealthyPods(cs kubernetes.Interface, ns string, healthyC
 func getPDBStatusOrDie(dc dynamic.Interface, ns string, name string) *policyv1beta1.PodDisruptionBudget {
 	pdbStatusResource := policyv1beta1.SchemeGroupVersion.WithResource("poddisruptionbudgets")
 	unstruct, err := dc.Resource(pdbStatusResource).Namespace(ns).Get(context.TODO(), name, metav1.GetOptions{}, "status")
+	framework.ExpectNoError(err)
 	pdb, err := unstructuredToPDB(unstruct)
 	framework.ExpectNoError(err, "Getting the status of the pdb %s in namespace %s", name, ns)
 	return pdb

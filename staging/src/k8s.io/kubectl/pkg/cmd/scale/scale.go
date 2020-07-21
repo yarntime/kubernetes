@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
@@ -60,10 +60,6 @@ var (
 
 		# Scale statefulset named 'web' to 3.
 		kubectl scale --replicas=3 statefulset/web`))
-)
-
-const (
-	timeout = 5 * time.Minute
 )
 
 type ScaleOptions struct {
@@ -234,7 +230,7 @@ func (o *ScaleOptions) RunScale() error {
 
 	var waitForReplicas *scale.RetryParams
 	if o.Timeout != 0 && o.dryRunStrategy == cmdutil.DryRunNone {
-		waitForReplicas = scale.NewRetryParams(1*time.Second, timeout)
+		waitForReplicas = scale.NewRetryParams(1*time.Second, o.Timeout)
 	}
 
 	counter := 0

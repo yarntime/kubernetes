@@ -24,7 +24,7 @@ import (
 	"github.com/blang/semver"
 	dockertypes "github.com/docker/docker/api/types"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 func DefaultMemorySwap() int64 {
@@ -34,6 +34,11 @@ func DefaultMemorySwap() int64 {
 func (ds *dockerService) getSecurityOpts(seccompProfile string, separator rune) ([]string, error) {
 	klog.Warningf("getSecurityOpts is unsupported in this build")
 	return nil, nil
+}
+
+func (ds *dockerService) getSandBoxSecurityOpts(separator rune) []string {
+	klog.Warningf("getSandBoxSecurityOpts is unsupported in this build")
+	return nil
 }
 
 func (ds *dockerService) updateCreateConfig(

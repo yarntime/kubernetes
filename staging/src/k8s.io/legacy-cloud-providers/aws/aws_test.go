@@ -583,68 +583,46 @@ func testHasNodeAddress(t *testing.T, addrs []v1.NodeAddress, addressType v1.Nod
 	t.Errorf("Did not find expected address: %s:%s in %v", addressType, address, addrs)
 }
 
-func TestNodeAddresses(t *testing.T) {
-	// Note instance0 and instance1 have the same name
-	// (we test that this produces an error)
-	var instance0 ec2.Instance
-	var instance1 ec2.Instance
-	var instance2 ec2.Instance
-
-	// ClusterID needs to be set
+func makeInstance(num int, privateIP, publicIP, privateDNSName, publicDNSName string, setNetInterface bool) ec2.Instance {
 	var tag ec2.Tag
 	tag.Key = aws.String(TagNameKubernetesClusterLegacy)
 	tag.Value = aws.String(TestClusterID)
 	tags := []*ec2.Tag{&tag}
 
-	//0
-	instance0.InstanceId = aws.String("i-0")
-	instance0.PrivateDnsName = aws.String("instance-same.ec2.internal")
-	instance0.PrivateIpAddress = aws.String("192.168.0.1")
-	instance0.PublicDnsName = aws.String("instance-same.ec2.external")
-	instance0.PublicIpAddress = aws.String("1.2.3.4")
-	instance0.NetworkInterfaces = []*ec2.InstanceNetworkInterface{
-		{
-			Status: aws.String(ec2.NetworkInterfaceStatusInUse),
-			PrivateIpAddresses: []*ec2.InstancePrivateIpAddress{
-				{
-					PrivateIpAddress: aws.String("192.168.0.1"),
-				},
-			},
+	instance := ec2.Instance{
+		InstanceId:       aws.String(fmt.Sprintf("i-%d", num)),
+		PrivateDnsName:   aws.String(privateDNSName),
+		PrivateIpAddress: aws.String(privateIP),
+		PublicDnsName:    aws.String(publicDNSName),
+		PublicIpAddress:  aws.String(publicIP),
+		InstanceType:     aws.String("c3.large"),
+		Tags:             tags,
+		Placement:        &ec2.Placement{AvailabilityZone: aws.String("us-east-1a")},
+		State: &ec2.InstanceState{
+			Name: aws.String("running"),
 		},
 	}
-	instance0.InstanceType = aws.String("c3.large")
-	instance0.Placement = &ec2.Placement{AvailabilityZone: aws.String("us-east-1a")}
-	instance0.Tags = tags
-	state0 := ec2.InstanceState{
-		Name: aws.String("running"),
+	if setNetInterface == true {
+		instance.NetworkInterfaces = []*ec2.InstanceNetworkInterface{
+			{
+				Status: aws.String(ec2.NetworkInterfaceStatusInUse),
+				PrivateIpAddresses: []*ec2.InstancePrivateIpAddress{
+					{
+						PrivateIpAddress: aws.String(privateIP),
+					},
+				},
+			},
+		}
 	}
-	instance0.State = &state0
+	return instance
+}
 
-	//1
-	instance1.InstanceId = aws.String("i-1")
-	instance1.PrivateDnsName = aws.String("instance-same.ec2.internal")
-	instance1.PrivateIpAddress = aws.String("192.168.0.2")
-	instance1.InstanceType = aws.String("c3.large")
-	instance1.Placement = &ec2.Placement{AvailabilityZone: aws.String("us-east-1a")}
-	instance1.Tags = tags
-	state1 := ec2.InstanceState{
-		Name: aws.String("running"),
-	}
-	instance1.State = &state1
-
-	//2
-	instance2.InstanceId = aws.String("i-2")
-	instance2.PrivateDnsName = aws.String("instance-other.ec2.internal")
-	instance2.PrivateIpAddress = aws.String("192.168.0.1")
-	instance2.PublicIpAddress = aws.String("1.2.3.4")
-	instance2.InstanceType = aws.String("c3.large")
-	instance2.Placement = &ec2.Placement{AvailabilityZone: aws.String("us-east-1a")}
-	instance2.Tags = tags
-	state2 := ec2.InstanceState{
-		Name: aws.String("running"),
-	}
-	instance2.State = &state2
-
+func TestNodeAddresses(t *testing.T) {
+	// Note instance0 and instance1 have the same name
+	// (we test that this produces an error)
+	instance0 := makeInstance(0, "192.168.0.1", "1.2.3.4", "instance-same.ec2.internal", "instance-same.ec2.external", true)
+	instance1 := makeInstance(1, "192.168.0.2", "", "instance-same.ec2.internal", "", false)
+	instance2 := makeInstance(2, "192.168.0.1", "1.2.3.4", "instance-other.ec2.internal", "", false)
 	instances := []*ec2.Instance{&instance0, &instance1, &instance2}
 
 	aws1, _ := mockInstancesResp(&instance0, []*ec2.Instance{&instance0})
@@ -677,26 +655,7 @@ func TestNodeAddresses(t *testing.T) {
 }
 
 func TestNodeAddressesWithMetadata(t *testing.T) {
-	var instance ec2.Instance
-
-	// ClusterID needs to be set
-	var tag ec2.Tag
-	tag.Key = aws.String(TagNameKubernetesClusterLegacy)
-	tag.Value = aws.String(TestClusterID)
-	tags := []*ec2.Tag{&tag}
-
-	instanceName := "instance.ec2.internal"
-	instance.InstanceId = aws.String("i-0")
-	instance.PrivateDnsName = &instanceName
-	instance.PublicIpAddress = aws.String("2.3.4.5")
-	instance.InstanceType = aws.String("c3.large")
-	instance.Placement = &ec2.Placement{AvailabilityZone: aws.String("us-east-1a")}
-	instance.Tags = tags
-	state := ec2.InstanceState{
-		Name: aws.String("running"),
-	}
-	instance.State = &state
-
+	instance := makeInstance(0, "", "2.3.4.5", "instance.ec2.internal", "", false)
 	instances := []*ec2.Instance{&instance}
 	awsCloud, awsServices := mockInstancesResp(&instance, instances)
 
@@ -720,6 +679,23 @@ func TestNodeAddressesWithMetadata(t *testing.T) {
 	if index1 > index2 {
 		t.Errorf("Addresses in incorrect order: %v", addrs)
 	}
+}
+
+func TestInstanceMetadataByProviderID(t *testing.T) {
+	instance0 := makeInstance(0, "192.168.0.1", "1.2.3.4", "instance-same.ec2.internal", "instance-same.ec2.external", true)
+	aws1, _ := mockInstancesResp(&instance0, []*ec2.Instance{&instance0})
+	// change node name so it uses the instance instead of metadata
+	aws1.selfAWSInstance.nodeName = "foo"
+
+	md, err := aws1.InstanceMetadataByProviderID(context.TODO(), "/us-east-1a/i-0")
+	if err != nil {
+		t.Errorf("should not error when instance found")
+	}
+	if md.ProviderID != "/us-east-1a/i-0" || md.Type != "c3.large" {
+		t.Errorf("expect providerID %s get %s, expect type %s get %s", "/us-east-1a/i-0", md.ProviderID, "c3.large", md.Type)
+	}
+	testHasNodeAddress(t, md.NodeAddresses, v1.NodeInternalIP, "192.168.0.1")
+	testHasNodeAddress(t, md.NodeAddresses, v1.NodeExternalIP, "1.2.3.4")
 }
 
 func TestParseMetadataLocalHostname(t *testing.T) {
@@ -1395,6 +1371,53 @@ func TestDescribeLoadBalancerOnEnsure(t *testing.T) {
 	c.EnsureLoadBalancer(context.TODO(), TestClusterName, &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "myservice", UID: "id"}}, []*v1.Node{})
 }
 
+func TestCheckProtocol(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		port        v1.ServicePort
+		wantErr     error
+	}{
+		{
+			name:        "TCP with ELB",
+			annotations: make(map[string]string),
+			port:        v1.ServicePort{Protocol: v1.ProtocolTCP, Port: int32(8080)},
+			wantErr:     nil,
+		},
+		{
+			name:        "TCP with NLB",
+			annotations: map[string]string{ServiceAnnotationLoadBalancerType: "nlb"},
+			port:        v1.ServicePort{Protocol: v1.ProtocolTCP, Port: int32(8080)},
+			wantErr:     nil,
+		},
+		{
+			name:        "UDP with ELB",
+			annotations: make(map[string]string),
+			port:        v1.ServicePort{Protocol: v1.ProtocolUDP, Port: int32(8080)},
+			wantErr:     fmt.Errorf("Protocol UDP not supported by load balancer"),
+		},
+		{
+			name:        "UDP with NLB",
+			annotations: map[string]string{ServiceAnnotationLoadBalancerType: "nlb"},
+			port:        v1.ServicePort{Protocol: v1.ProtocolUDP, Port: int32(8080)},
+			wantErr:     nil,
+		},
+	}
+	for _, test := range tests {
+		tt := test
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := checkProtocol(tt.port, tt.annotations)
+			if tt.wantErr != nil && err == nil {
+				t.Errorf("Expected error: want=%s got =%s", tt.wantErr, err)
+			}
+			if tt.wantErr == nil && err != nil {
+				t.Errorf("Unexpected error: want=%s got =%s", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestBuildListener(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1554,7 +1577,7 @@ func TestProxyProtocolEnabled(t *testing.T) {
 	assert.False(t, result, "did not expect to find %s in %s", ProxyProtocolPolicyName, policies)
 }
 
-func TestGetLoadBalancerAdditionalTags(t *testing.T) {
+func TestGetKeyValuePropertiesFromAnnotation(t *testing.T) {
 	tagTests := []struct {
 		Annotations map[string]string
 		Tags        map[string]string
@@ -1605,7 +1628,7 @@ func TestGetLoadBalancerAdditionalTags(t *testing.T) {
 	}
 
 	for _, tagTest := range tagTests {
-		result := getLoadBalancerAdditionalTags(tagTest.Annotations)
+		result := getKeyValuePropertiesFromAnnotation(tagTest.Annotations, ServiceAnnotationLoadBalancerAdditionalTags)
 		for k, v := range result {
 			if len(result) != len(tagTest.Tags) {
 				t.Errorf("incorrect expected length: %v != %v", result, tagTest.Tags)
@@ -2557,4 +2580,83 @@ func newMockedFakeAWSServices(id string) *FakeAWSServices {
 	s.ec2 = &MockedFakeEC2{FakeEC2Impl: s.ec2.(*FakeEC2Impl)}
 	s.elb = &MockedFakeELB{FakeELB: s.elb.(*FakeELB)}
 	return s
+}
+
+func TestAzToRegion(t *testing.T) {
+	testCases := []struct {
+		az     string
+		region string
+	}{
+		{"us-west-2a", "us-west-2"},
+		{"us-west-2-lax-1a", "us-west-2"},
+		{"ap-northeast-2a", "ap-northeast-2"},
+		{"us-gov-east-1a", "us-gov-east-1"},
+		{"us-iso-east-1a", "us-iso-east-1"},
+		{"us-isob-east-1a", "us-isob-east-1"},
+	}
+
+	for _, testCase := range testCases {
+		result, err := azToRegion(testCase.az)
+		assert.NoError(t, err)
+		assert.Equal(t, testCase.region, result)
+	}
+}
+
+func TestCloud_sortELBSecurityGroupList(t *testing.T) {
+	type args struct {
+		securityGroupIDs []string
+		annotations      map[string]string
+	}
+	tests := []struct {
+		name                 string
+		args                 args
+		wantSecurityGroupIDs []string
+	}{
+		{
+			name: "with no annotation",
+			args: args{
+				securityGroupIDs: []string{"sg-1"},
+				annotations:      map[string]string{},
+			},
+			wantSecurityGroupIDs: []string{"sg-1"},
+		},
+		{
+			name: "with service.beta.kubernetes.io/aws-load-balancer-security-groups",
+			args: args{
+				securityGroupIDs: []string{"sg-2", "sg-1", "sg-3"},
+				annotations: map[string]string{
+					"service.beta.kubernetes.io/aws-load-balancer-security-groups": "sg-3,sg-2,sg-1",
+				},
+			},
+			wantSecurityGroupIDs: []string{"sg-3", "sg-2", "sg-1"},
+		},
+		{
+			name: "with service.beta.kubernetes.io/aws-load-balancer-extra-security-groups",
+			args: args{
+				securityGroupIDs: []string{"sg-2", "sg-1", "sg-3", "sg-4"},
+				annotations: map[string]string{
+					"service.beta.kubernetes.io/aws-load-balancer-extra-security-groups": "sg-3,sg-2,sg-1",
+				},
+			},
+			wantSecurityGroupIDs: []string{"sg-4", "sg-3", "sg-2", "sg-1"},
+		},
+		{
+			name: "with both annotation",
+			args: args{
+				securityGroupIDs: []string{"sg-2", "sg-1", "sg-3", "sg-4", "sg-5", "sg-6"},
+				annotations: map[string]string{
+					"service.beta.kubernetes.io/aws-load-balancer-security-groups":       "sg-3,sg-2,sg-1",
+					"service.beta.kubernetes.io/aws-load-balancer-extra-security-groups": "sg-6,sg-5",
+				},
+			},
+			wantSecurityGroupIDs: []string{"sg-3", "sg-2", "sg-1", "sg-4", "sg-6", "sg-5"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Cloud{}
+			c.sortELBSecurityGroupList(tt.args.securityGroupIDs, tt.args.annotations)
+			assert.Equal(t, tt.wantSecurityGroupIDs, tt.args.securityGroupIDs)
+		})
+	}
 }

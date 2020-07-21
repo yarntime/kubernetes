@@ -8,6 +8,7 @@ load(
 go_library(
     name = "go_default_library",
     srcs = [
+        "conntrack.go",
         "dns.go",
         "dns_common.go",
         "dns_configmap.go",
@@ -15,6 +16,7 @@ go_library(
         "doc.go",
         "dual_stack.go",
         "endpointslice.go",
+        "endpointslicemirroring.go",
         "example_cluster_dns.go",
         "firewall.go",
         "fixture.go",
@@ -47,6 +49,7 @@ go_library(
         "//staging/src/k8s.io/api/rbac/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/api/errors:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/apis/meta/v1/unstructured:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/fields:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/labels:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
@@ -82,6 +85,7 @@ go_library(
         "//test/e2e/framework/skipper:go_default_library",
         "//test/e2e/framework/ssh:go_default_library",
         "//test/e2e/network/scale:go_default_library",
+        "//test/e2e/storage/utils:go_default_library",
         "//test/utils:go_default_library",
         "//test/utils/image:go_default_library",
         "//vendor/github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud:go_default_library",

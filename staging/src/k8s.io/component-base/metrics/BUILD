@@ -33,7 +33,7 @@ go_library(
         "//vendor/github.com/prometheus/client_model/go:go_default_library",
         "//vendor/github.com/prometheus/procfs:go_default_library",
         "//vendor/github.com/spf13/pflag:go_default_library",
-        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
     ],
 )
 
@@ -45,6 +45,7 @@ go_test(
         "desc_test.go",
         "gauge_test.go",
         "histogram_test.go",
+        "http_test.go",
         "opts_test.go",
         "registry_test.go",
         "summary_test.go",

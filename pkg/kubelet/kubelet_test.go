@@ -180,6 +180,7 @@ func newTestKubeletWithImageList(
 	kubelet.sourcesReady = config.NewSourcesReady(func(_ sets.String) bool { return true })
 	kubelet.masterServiceNamespace = metav1.NamespaceDefault
 	kubelet.serviceLister = testServiceLister{}
+	kubelet.serviceHasSynced = func() bool { return true }
 	kubelet.nodeLister = testNodeLister{
 		nodes: []*v1.Node{
 			{
@@ -220,7 +221,7 @@ func newTestKubeletWithImageList(
 	kubelet.secretManager = secretManager
 	configMapManager := configmap.NewSimpleConfigMapManager(kubelet.kubeClient)
 	kubelet.configMapManager = configMapManager
-	kubelet.podManager = kubepod.NewBasicPodManager(fakeMirrorClient, kubelet.secretManager, kubelet.configMapManager, podtest.NewMockCheckpointManager())
+	kubelet.podManager = kubepod.NewBasicPodManager(fakeMirrorClient, kubelet.secretManager, kubelet.configMapManager)
 	kubelet.statusManager = status.NewManager(fakeKubeClient, kubelet.podManager, &statustest.FakePodDeletionSafetyProvider{})
 
 	kubelet.containerRuntime = fakeRuntime
@@ -266,7 +267,7 @@ func newTestKubeletWithImageList(
 		ImageGCManager:   imageGCManager,
 	}
 	kubelet.containerLogManager = logs.NewStubContainerLogManager()
-	containerGCPolicy := kubecontainer.ContainerGCPolicy{
+	containerGCPolicy := kubecontainer.GCPolicy{
 		MinAge:             time.Duration(0),
 		MaxPerPodContainer: 1,
 		MaxContainers:      -1,
@@ -278,7 +279,7 @@ func newTestKubeletWithImageList(
 	fakeClock := clock.NewFakeClock(time.Now())
 	kubelet.backOff = flowcontrol.NewBackOff(time.Second, time.Minute)
 	kubelet.backOff.Clock = fakeClock
-	kubelet.podKillingCh = make(chan *kubecontainer.PodPair, 20)
+	kubelet.podKiller = NewPodKiller(kubelet)
 	kubelet.resyncInterval = 10 * time.Second
 	kubelet.workQueue = queue.NewBasicWorkQueue(fakeClock)
 	// Relist period does not affect the tests.
@@ -291,8 +292,9 @@ func newTestKubeletWithImageList(
 		UID:       types.UID(kubelet.nodeName),
 		Namespace: "",
 	}
+	etcHostsPathFunc := func(podUID types.UID) string { return getEtcHostsPath(kubelet.getPodDir(podUID)) }
 	// setup eviction manager
-	evictionManager, evictionAdmitHandler := eviction.NewManager(kubelet.resourceAnalyzer, eviction.Config{}, killPodNow(kubelet.podWorkers, fakeRecorder), kubelet.podManager.GetMirrorPodByPod, kubelet.imageManager, kubelet.containerGC, fakeRecorder, nodeRef, kubelet.clock)
+	evictionManager, evictionAdmitHandler := eviction.NewManager(kubelet.resourceAnalyzer, eviction.Config{}, killPodNow(kubelet.podWorkers, fakeRecorder), kubelet.podManager.GetMirrorPodByPod, kubelet.imageManager, kubelet.containerGC, fakeRecorder, nodeRef, kubelet.clock, etcHostsPathFunc)
 
 	kubelet.evictionManager = evictionManager
 	kubelet.admitHandlers.AddPodAdmitHandler(evictionAdmitHandler)
@@ -1400,13 +1402,13 @@ func TestGenerateAPIPodStatusWithSortedContainers(t *testing.T) {
 	kubelet := testKubelet.kubelet
 	numContainers := 10
 	expectedOrder := []string{}
-	cStatuses := []*kubecontainer.ContainerStatus{}
+	cStatuses := []*kubecontainer.Status{}
 	specContainerList := []v1.Container{}
 	for i := 0; i < numContainers; i++ {
 		id := fmt.Sprintf("%v", i)
 		containerName := fmt.Sprintf("%vcontainer", id)
 		expectedOrder = append(expectedOrder, containerName)
-		cStatus := &kubecontainer.ContainerStatus{
+		cStatus := &kubecontainer.Status{
 			ID:   kubecontainer.BuildContainerID("test", id),
 			Name: containerName,
 		}
@@ -1414,7 +1416,7 @@ func TestGenerateAPIPodStatusWithSortedContainers(t *testing.T) {
 		if i%2 == 0 {
 			cStatuses = append(cStatuses, cStatus)
 		} else {
-			cStatuses = append([]*kubecontainer.ContainerStatus{cStatus}, cStatuses...)
+			cStatuses = append([]*kubecontainer.Status{cStatus}, cStatuses...)
 		}
 		specContainerList = append(specContainerList, v1.Container{Name: containerName})
 	}
@@ -1467,7 +1469,7 @@ func TestGenerateAPIPodStatusWithReasonCache(t *testing.T) {
 	}
 	tests := []struct {
 		containers    []v1.Container
-		statuses      []*kubecontainer.ContainerStatus
+		statuses      []*kubecontainer.Status
 		reasons       map[string]error
 		oldStatuses   []v1.ContainerStatus
 		expectedState map[string]v1.ContainerState
@@ -1479,7 +1481,7 @@ func TestGenerateAPIPodStatusWithReasonCache(t *testing.T) {
 		// old status from apiserver.
 		{
 			containers: []v1.Container{{Name: "without-old-record"}, {Name: "with-old-record"}},
-			statuses:   []*kubecontainer.ContainerStatus{},
+			statuses:   []*kubecontainer.Status{},
 			reasons:    map[string]error{},
 			oldStatuses: []v1.ContainerStatus{{
 				Name:                 "with-old-record",
@@ -1508,7 +1510,7 @@ func TestGenerateAPIPodStatusWithReasonCache(t *testing.T) {
 		// For running container, State should be Running, LastTerminationState should be retrieved from latest terminated status.
 		{
 			containers: []v1.Container{{Name: "running"}},
-			statuses: []*kubecontainer.ContainerStatus{
+			statuses: []*kubecontainer.Status{
 				{
 					Name:      "running",
 					State:     kubecontainer.ContainerStateRunning,
@@ -1544,7 +1546,7 @@ func TestGenerateAPIPodStatusWithReasonCache(t *testing.T) {
 		// terminated status.
 		{
 			containers: []v1.Container{{Name: "without-reason"}, {Name: "with-reason"}},
-			statuses: []*kubecontainer.ContainerStatus{
+			statuses: []*kubecontainer.Status{
 				{
 					Name:     "without-reason",
 					State:    kubecontainer.ContainerStateExited,
@@ -1649,7 +1651,7 @@ func TestGenerateAPIPodStatusWithDifferentRestartPolicies(t *testing.T) {
 		ID:        pod.UID,
 		Name:      pod.Name,
 		Namespace: pod.Namespace,
-		ContainerStatuses: []*kubecontainer.ContainerStatus{
+		ContainerStatuses: []*kubecontainer.Status{
 			{
 				Name:     "succeed",
 				State:    kubecontainer.ContainerStateExited,

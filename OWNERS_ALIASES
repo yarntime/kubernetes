@@ -113,15 +113,16 @@ aliases:
 
   # SIG Release
   sig-release-approvers:
-    - calebamiles # SIG Chair
+    - alejandrox1 # SIG Technical Lead
     - justaugustus # SIG Chair
+    - saschagrunert # SIG Technical Lead
     - tpepper # SIG Chair
   release-engineering-approvers:
-    - calebamiles # SIG Chair
+    - alejandrox1 # SIG Technical Lead
     - justaugustus # SIG Chair
-    - tpepper # SIG Chair / Patch Release Team
+    - saschagrunert # SIG Technical Lead
+    - tpepper # SIG Chair
   release-engineering-reviewers:
-    - calebamiles # SIG Chair
     - cpanato # Branch Manager
     - feiskyer # Patch Release Team
     - hasheddan # Branch Manager
@@ -142,19 +143,36 @@ aliases:
     - justaugustus
     - listx
 
+  sig-storage-approvers:
+    - saad-ali
+    - thockin
+    - jsafrane
+    - gnufied
+    - msau42
+  # emeritus:
+  # - rootfs
   sig-storage-reviewers:
     - saad-ali
+    - jsafrane
+    - rootfs
+    - jingxu97
+    - msau42
+    - gnufied
+    - verult
+    - humblec
+  # emeritus:
+  # - davidz627
 
   sig-scheduling-maintainers:
     - alculquicondor
-    - bsalamat
     - k82cn
     - wojtek-t
     - ravisantoshgudimetla
     - Huang-Wei
     - ahg-g
+  # emeritus:
+  # - bsalamat
   sig-scheduling:
-    - bsalamat
     - k82cn
     - resouer
     - ravisantoshgudimetla
@@ -215,7 +233,6 @@ aliases:
     - Random-Liu
     - dchen1107
     - derekwaynecarr
-    - tallclair
     - vishh
     - yujuhong
   sig-node-reviewers:
@@ -229,14 +246,13 @@ aliases:
     - pmorie
     - resouer
     - sjenning
-    - tallclair
     - vishh
     - yifan-gu
     - yujuhong
     - krmayankk
     - mattjmcnaughton
     - matthyx
-
+    - odinuge
   sig-network-driver-approvers:
     - dcbw
     - freehan
@@ -393,7 +409,6 @@ aliases:
     - sttts
     - dchen1107
     - saad-ali
-    - zmerlynn
     - luxas
     - janetkuo
     - justinsb
@@ -401,7 +416,6 @@ aliases:
     - ncdc
     - tallclair
     - yifan-gu
-    - eparis
     - mwielgus
     - timothysc
     - soltysh
@@ -451,11 +465,12 @@ aliases:
     - mm4tt
     - wojtek-t
 
-  sig-scheduling-api-reviewers:
-      - bsalamat
-      - k82cn
+  # sig-scheduling-api-reviewers:
+  #   -
+  #   -
 
   sig-storage-api-reviewers:
+    - deads2k
     - saad-ali
     - msau42
     - jsafrane
@@ -486,6 +501,7 @@ aliases:
     - dchen1107       # Node
     - deads2k         # API Machinery
     - derekwaynecarr  # Node
+    - dims            # Architecture
     - jdumars         # Architecture, Release
     - kow3ns          # Apps
     - lavalamp        # API Machinery
@@ -512,3 +528,4 @@ aliases:
     - bgrant0607
     - smarterclayton
     - johnbelamaric
+    - spiffxp
